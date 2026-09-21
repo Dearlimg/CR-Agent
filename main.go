@@ -123,7 +123,7 @@ func main() {
 		return "规则检查通过", nil
 	})
 	r := gin.Default()
-	r.StaticFS("/", http.Dir("web"))
+	r.StaticFile("/", "web/index.html")
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	r.POST("/api/reviews", func(c *gin.Context) {
 		var req ReviewRequest

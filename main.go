@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"

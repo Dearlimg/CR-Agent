@@ -30,7 +30,7 @@ func (DBReviewJob) TableName() string { return "review_jobs" }
 
 type DBReviewComment struct {
 	ID          uint      `gorm:"primaryKey"`
-	JobID       uint      `gorm:"not null;index;uniqueIndex:idx_review_comment_fingerprint"`
+	JobID       uint      `gorm:"not null;index:idx_review_comment_job_created;uniqueIndex:idx_review_comment_fingerprint"`
 	TraceID     string    `gorm:"size:32;not null;index"`
 	Fingerprint string    `gorm:"size:64;not null;uniqueIndex:idx_review_comment_fingerprint"`
 	File        string    `gorm:"size:512;not null"`
@@ -39,14 +39,14 @@ type DBReviewComment struct {
 	Confidence  string    `gorm:"size:16;not null;index"`
 	Body        string    `gorm:"type:text;not null"`
 	Status      string    `gorm:"size:16;not null;default:'open';index"`
-	CreatedAt   time.Time `gorm:"not null"`
+	CreatedAt   time.Time `gorm:"not null;index:idx_review_comment_job_created"`
 }
 
 func (DBReviewComment) TableName() string { return "review_comments" }
 
 type DBTraceEvent struct {
 	ID         uint      `gorm:"primaryKey"`
-	JobID      uint      `gorm:"not null;index"`
+	JobID      uint      `gorm:"not null;index:idx_trace_job_created"`
 	TraceID    string    `gorm:"size:32;not null;uniqueIndex"`
 	Tool       string    `gorm:"size:64;not null;index"`
 	Phase      string    `gorm:"size:32;not null;index"`
@@ -55,7 +55,7 @@ type DBTraceEvent struct {
 	Prompt     string    `gorm:"type:longtext"`
 	ModelReply string    `gorm:"type:longtext"`
 	DurationMs int64     `gorm:"not null;default:0"`
-	CreatedAt  time.Time `gorm:"not null;index"`
+	CreatedAt  time.Time `gorm:"not null;index:idx_trace_job_created"`
 }
 
 func (DBTraceEvent) TableName() string { return "trace_events" }
@@ -117,14 +117,14 @@ type DBBackgroundTask struct {
 	ID              string     `gorm:"primaryKey;size:32"`
 	Subject         string     `gorm:"size:512;not null"`
 	RunnerKind      string     `gorm:"size:64;not null;index"`
-	Status          string     `gorm:"size:16;not null;index"`
+	Status          string     `gorm:"size:16;not null;index:idx_background_status_notification"`
 	Result          string     `gorm:"type:longtext"`
 	ErrorMessage    string     `gorm:"type:text"`
 	Attempt         int        `gorm:"not null;default:0"`
 	CancelRequested bool       `gorm:"not null;default:false;index"`
 	LeaseOwner      string     `gorm:"size:128;index"`
 	LeaseUntil      *time.Time `gorm:"index"`
-	NotifiedAt      *time.Time `gorm:"index"`
+	NotifiedAt      *time.Time `gorm:"index:idx_background_status_notification"`
 	Version         int64      `gorm:"not null;default:0"`
 	CreatedAt       time.Time  `gorm:"not null;index"`
 	StartedAt       *time.Time `gorm:"index"`
@@ -149,16 +149,16 @@ func (DBBackgroundTaskEvent) TableName() string { return "background_task_events
 type DBTeamMessage struct {
 	ID             uint       `gorm:"primaryKey"`
 	MessageID      string     `gorm:"size:64;not null;uniqueIndex"`
-	JobID          string     `gorm:"size:32;index"`
+	JobID          string     `gorm:"size:32;index:idx_team_delivery"`
 	FromAgent      string     `gorm:"size:128;not null;index"`
-	ToAgent        string     `gorm:"size:128;not null;index"`
+	ToAgent        string     `gorm:"size:128;not null;index:idx_team_delivery"`
 	MessageType    string     `gorm:"size:32;not null;index"`
 	Content        string     `gorm:"type:longtext;not null"`
-	DeliveryStatus string     `gorm:"size:16;not null;index"`
+	DeliveryStatus string     `gorm:"size:16;not null;index:idx_team_delivery"`
 	LeaseOwner     string     `gorm:"size:128;index"`
 	LeaseUntil     *time.Time `gorm:"index"`
 	ConsumedAt     *time.Time `gorm:"index"`
-	CreatedAt      time.Time  `gorm:"not null;index"`
+	CreatedAt      time.Time  `gorm:"not null;index:idx_team_delivery"`
 }
 
 func (DBTeamMessage) TableName() string { return "team_messages" }
@@ -187,8 +187,8 @@ func (DBAgentRun) TableName() string { return "agent_runs" }
 
 type DBWorkflowEvent struct {
 	ID        uint      `gorm:"primaryKey"`
-	RunID     string    `gorm:"size:64;not null;index"`
-	EventSeq  int64     `gorm:"not null"`
+	RunID     string    `gorm:"size:64;not null;index:idx_workflow_event_run_seq"`
+	EventSeq  int64     `gorm:"not null;index:idx_workflow_event_run_seq"`
 	EventType string    `gorm:"size:64;not null;index"`
 	Phase     string    `gorm:"size:128;index"`
 	Label     string    `gorm:"size:256;index"`

@@ -21,6 +21,7 @@ func OpenMySQL(dsn string) (*MySQLStore, error) {
 		return nil, fmt.Errorf("mysql dsn 不能为空")
 	}
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		PrepareStmt:    true,
 		TranslateError: true,
 	})
 	if err != nil {
@@ -29,6 +30,9 @@ func OpenMySQL(dsn string) (*MySQLStore, error) {
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, err
+	}
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("检查 mysql 连接: %w", err)
 	}
 	sqlDB.SetMaxOpenConns(20)
 	sqlDB.SetMaxIdleConns(5)

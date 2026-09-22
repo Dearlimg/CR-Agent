@@ -242,13 +242,20 @@ func (s *MySQLTaskRepository) loadTaskTx(tx *gorm.DB, row model.DBAgentTask) (mo
 }
 
 func (s *MySQLTaskRepository) loadTasks(rows []model.DBAgentTask) ([]model.Task, error) {
+	if len(rows) == 0 {
+		return []model.Task{}, nil
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	dependencies, err := s.dependenciesForTasks(s.db, ids)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]model.Task, 0, len(rows))
 	for _, row := range rows {
-		task, err := s.loadTask(row)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, task)
+		result = append(result, taskFromRow(row, dependencies[row.ID]))
 	}
 	return result, nil
 }
@@ -265,6 +272,21 @@ func (s *MySQLTaskRepository) dependenciesFor(tx *gorm.DB, taskID string) ([]mod
 	var dependencies []model.DBAgentTaskDependency
 	if err := tx.Where("task_id = ?", taskID).Order("created_at asc").Find(&dependencies).Error; err != nil {
 		return nil, fmt.Errorf("读取任务依赖: %w", err)
+	}
+	return dependencies, nil
+}
+
+func (s *MySQLTaskRepository) dependenciesForTasks(tx *gorm.DB, taskIDs []string) (map[string][]model.DBAgentTaskDependency, error) {
+	dependencies := map[string][]model.DBAgentTaskDependency{}
+	if len(taskIDs) == 0 {
+		return dependencies, nil
+	}
+	var rows []model.DBAgentTaskDependency
+	if err := tx.Where("task_id IN ?", taskIDs).Order("created_at asc").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("读取任务依赖: %w", err)
+	}
+	for _, row := range rows {
+		dependencies[row.TaskID] = append(dependencies[row.TaskID], row)
 	}
 	return dependencies, nil
 }
@@ -288,23 +310,33 @@ func (s *MySQLTaskRepository) readyTasks(tx *gorm.DB) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]string, 0, len(rows))
+	statusByID := make(map[string]string, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+		statusByID[row.ID] = row.Status
+	}
+	dependenciesByTask, err := s.dependenciesForTasks(tx, ids)
+	if err != nil {
+		return nil, err
+	}
 	ready := map[string]bool{}
 	for _, row := range rows {
 		if row.Status != string(model.TaskPending) {
 			continue
 		}
-		dependencies, dependenciesErr := s.dependenciesFor(tx, row.ID)
-		if dependenciesErr != nil {
-			return nil, dependenciesErr
-		}
+		dependencies := dependenciesByTask[row.ID]
 		if len(dependencies) == 0 {
 			continue
 		}
-		incomplete, incompleteErr := s.incompleteDependencies(tx, dependencies)
-		if incompleteErr != nil {
-			return nil, incompleteErr
+		allCompleted := true
+		for _, dependency := range dependencies {
+			if statusByID[dependency.DependsOnID] != string(model.TaskCompleted) {
+				allCompleted = false
+				break
+			}
 		}
-		if len(incomplete) == 0 {
+		if allCompleted {
 			ready[row.ID] = true
 		}
 	}

@@ -4,7 +4,9 @@ import (
 	"CR-Agent/internal/model"
 	"context"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestReviewTeamClaimsSpecialistsAndDeliversEvents(t *testing.T) {
@@ -58,5 +60,30 @@ func TestMessageBusKeepsOtherJobsForTheirLeadTurn(t *testing.T) {
 	second, err := bus.Consume("lead", "job_two")
 	if err != nil || len(second) != 1 || second[0].TaskID != "job_two" {
 		t.Fatalf("second=%#v err=%v", second, err)
+	}
+}
+
+func TestReviewTeamLimitsSpecialistConcurrency(t *testing.T) {
+	team := NewReviewTeam(NewTaskStore(t.TempDir()), NewMessageBus(t.TempDir()), Config{TeamMaxConcurrency: 1})
+	var active int32
+	var peak int32
+	team.RunWorker = func(_ context.Context, _ Config, agent ReviewSubagent, _ string, _ ReviewPromptContext) SubagentResult {
+		current := atomic.AddInt32(&active, 1)
+		for {
+			previous := atomic.LoadInt32(&peak)
+			if current <= previous || atomic.CompareAndSwapInt32(&peak, previous, current) {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond)
+		atomic.AddInt32(&active, -1)
+		return SubagentResult{Name: agent.Name, Summary: "ok"}
+	}
+	results, _, err := team.Run(context.Background(), "job_limit", "parent", "diff", ReviewPromptContext{})
+	if err != nil || len(results) != 3 {
+		t.Fatalf("results=%d err=%v", len(results), err)
+	}
+	if peak != 1 {
+		t.Fatalf("peak concurrency=%d, want 1", peak)
 	}
 }

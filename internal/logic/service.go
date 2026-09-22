@@ -147,7 +147,7 @@ func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 	}
 	if err := s.Background.Launch(backgroundTask.ID, func(ctx context.Context) (string, error) {
 		s.run(ctx, j, req)
-		if j.Status != "completed" {
+		if j.Status != "completed" && j.Status != "completed_with_warnings" {
 			return "", fmt.Errorf("审查任务失败：%s", j.Error)
 		}
 		return fmt.Sprintf("审查任务 %s 已完成", j.ID), nil
@@ -196,6 +196,7 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 		_ = s.Store.Save(j)
 		return
 	}
+	teamWarnings := false
 	if s.SkillError != nil {
 		j.Status = "failed"
 		j.Error = fmt.Sprintf("加载 Agent skills 失败：%v", s.SkillError)
@@ -256,6 +257,9 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	}
 	contextMessages := make([]ContextMessage, 0, len(subResults))
 	for _, result := range subResults {
+		if result.Error != nil {
+			teamWarnings = true
+		}
 		toolName := "subagent_" + result.Name
 		traceID := id(toolName + j.ID)
 		if result.Error != nil {
@@ -300,6 +304,7 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	prompt := BuildReviewSynthesisPrompt(promptContext, renderContextMessages(compacted.Messages))
 	modelStarted := time.Now()
 	reply, err := EinoReviewAgent(ctx, s.Config, prompt)
+	synthesisWarning := err != nil
 	modelTraceID := id("deepseek-review" + j.ID)
 	modelDuration := time.Since(modelStarted).Milliseconds()
 	if err != nil {
@@ -334,7 +339,11 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 		_ = s.Store.Save(j)
 		return
 	}
-	j.Status = "completed"
+	if teamWarnings || synthesisWarning {
+		j.Status = "completed_with_warnings"
+	} else {
+		j.Status = "completed"
+	}
 	j.UpdatedAt = time.Now()
 	s.extractReviewMemories(ctx, j, req)
 	s.completeReviewTask(j)

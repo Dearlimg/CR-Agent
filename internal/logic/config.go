@@ -17,6 +17,9 @@ type Config struct {
 	BackgroundTasksDir   string
 	CronFile             string
 	TeamMailboxDir       string
+	TeamMaxConcurrency   int
+	ModelMaxRetries      int
+	ModelRetryBaseMs     int
 	CronPollIntervalMs   int
 	MemoryMaxRecall      int
 	MemoryMaxChars       int
@@ -52,6 +55,9 @@ func LoadConfig() Config {
 		BackgroundTasksDir:   b("AGENT_BACKGROUND_TASKS_DIR", ".background-tasks"),
 		CronFile:             b("AGENT_CRON_FILE", ".cron-jobs.json"),
 		TeamMailboxDir:       b("AGENT_TEAM_MAILBOX_DIR", ".team-mailboxes"),
+		TeamMaxConcurrency:   intEnv(b, "AGENT_TEAM_MAX_CONCURRENCY", 2),
+		ModelMaxRetries:      intEnv(b, "MODEL_MAX_RETRIES", 2),
+		ModelRetryBaseMs:     intEnv(b, "MODEL_RETRY_BASE_MS", 500),
 		CronPollIntervalMs:   intEnv(b, "CRON_POLL_INTERVAL_MS", 1000),
 		MemoryMaxRecall:      intEnv(b, "MEMORY_MAX_RECALL", 5),
 		MemoryMaxChars:       intEnv(b, "MEMORY_MAX_CHARS", 6000),

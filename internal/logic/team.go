@@ -106,14 +106,27 @@ func safeMailboxName(name string) string {
 }
 
 type ReviewTeam struct {
-	Tasks     *TaskStore
-	Bus       *MessageBus
-	Cfg       Config
-	RunWorker func(context.Context, Config, ReviewSubagent, string, ReviewPromptContext) SubagentResult
+	Tasks          *TaskStore
+	Bus            *MessageBus
+	Cfg            Config
+	MaxConcurrency int
+	slots          chan struct{}
+	RunWorker      func(context.Context, Config, ReviewSubagent, string, ReviewPromptContext) SubagentResult
 }
 
 func NewReviewTeam(tasks *TaskStore, bus *MessageBus, cfg Config) *ReviewTeam {
-	return &ReviewTeam{Tasks: tasks, Bus: bus, Cfg: cfg, RunWorker: RunReviewSpecialist}
+	maxConcurrency := cfg.TeamMaxConcurrency
+	if maxConcurrency <= 0 {
+		maxConcurrency = 2
+	}
+	return &ReviewTeam{
+		Tasks:          tasks,
+		Bus:            bus,
+		Cfg:            cfg,
+		MaxConcurrency: maxConcurrency,
+		slots:          make(chan struct{}, maxConcurrency),
+		RunWorker:      RunReviewSpecialist,
+	}
 }
 
 // Run starts short-lived specialists for one review. The lead owns the user
@@ -124,6 +137,14 @@ func (t *ReviewTeam) Run(ctx context.Context, jobID, parentTaskID, diff string, 
 	}
 	specialists := ReviewSpecialists()
 	results := make([]SubagentResult, len(specialists))
+	semaphore := t.slots
+	if semaphore == nil {
+		limit := t.MaxConcurrency
+		if limit <= 0 {
+			limit = 1
+		}
+		semaphore = make(chan struct{}, limit)
+	}
 	var wg sync.WaitGroup
 	var firstErr error
 	var errMu sync.Mutex
@@ -139,6 +160,13 @@ func (t *ReviewTeam) Run(ctx context.Context, jobID, parentTaskID, diff string, 
 		wg.Add(1)
 		go func(i int, a ReviewSubagent, taskID, taskOwner string) {
 			defer wg.Done()
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				results[i] = SubagentResult{Name: a.Name, Error: ctx.Err()}
+				return
+			}
 			result := t.RunWorker(ctx, t.Cfg, a, diff, prompt)
 			results[i] = result
 			content := result.Summary

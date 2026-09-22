@@ -71,6 +71,10 @@ Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。每�
 包含 `task_id`，审查完成后任务自动完成。失败的审查任务会保留 `in_progress`，以便
 恢复或人工检查，而不会被错误标记为已完成。
 
+模型调用对 EOF、连接中断、超时、限流和 5xx 做有限指数退避重试；团队默认最多同时运行 2
+个专项调用，避免一次审查向模型服务突发 3 个请求。专项调用失败但最终汇总成功时，Job 状态为
+`completed_with_warnings`，不会伪装成完全成功。
+
 ## Agent Team
 
 Lead 负责向调用方交付最终结论；专项队友只负责 correctness、security、dependency 三个彼此独立的审查维度。每位队友拥有独立模型上下文，完成后会在 `.team-mailboxes/lead.jsonl` 发送两个持久化事件：`result`（审查产出）和 `idle_notification`（可继续接收工作）。Lead 在最终汇总前消费当前 Job 的事件，并将其返回在 `team_events` 中。

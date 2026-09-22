@@ -15,6 +15,11 @@ type ReviewComment struct {
 	Body       string `json:"body"`
 	TraceID    string `json:"trace_id"`
 }
+type TodoItem struct {
+	Content string `json:"content"`
+	Status  string `json:"status"`
+	Order   int    `json:"order"`
+}
 type TraceEvent struct {
 	ID         string    `json:"id"`
 	Tool       string    `json:"tool"`
@@ -31,6 +36,7 @@ type ReviewJob struct {
 	Status     string          `json:"status"`
 	Source     string          `json:"source"`
 	Comments   []ReviewComment `json:"comments"`
+	Todos      []TodoItem      `json:"todos"`
 	Trace      []TraceEvent    `json:"trace"`
 	SpentCents int             `json:"spent_cents"`
 	UpdatedAt  time.Time       `json:"updated_at"`

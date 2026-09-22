@@ -20,6 +20,7 @@ type DBReviewJob struct {
 	DeletedAt    gorm.DeletedAt    `gorm:"index"`
 	Comments     []DBReviewComment `gorm:"foreignKey:JobID"`
 	Traces       []DBTraceEvent    `gorm:"foreignKey:JobID"`
+	Todos        []DBTodoItem      `gorm:"foreignKey:JobID"`
 }
 
 func (DBReviewJob) TableName() string { return "review_jobs" }
@@ -69,3 +70,15 @@ type DBToolCall struct {
 }
 
 func (DBToolCall) TableName() string { return "tool_calls" }
+
+type DBTodoItem struct {
+	ID        uint      `gorm:"primaryKey"`
+	JobID     uint      `gorm:"not null;index"`
+	Content   string    `gorm:"type:text;not null"`
+	Status    string    `gorm:"size:16;not null;index"`
+	SortOrder int       `gorm:"not null"`
+	CreatedAt time.Time `gorm:"not null"`
+	UpdatedAt time.Time `gorm:"not null"`
+}
+
+func (DBTodoItem) TableName() string { return "todo_items" }

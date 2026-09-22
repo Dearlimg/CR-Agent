@@ -36,7 +36,7 @@ func (s *MySQLStore) CreateJob(ctx context.Context, j *model.DBReviewJob) error 
 }
 func (s *MySQLStore) FindJob(ctx context.Context, id string) (*model.DBReviewJob, error) {
 	var j model.DBReviewJob
-	err := s.db.WithContext(ctx).Where("public_id = ?", id).Preload("Comments").Preload("Traces").First(&j).Error
+	err := s.db.WithContext(ctx).Where("public_id = ?", id).Preload("Comments").Preload("Traces").Preload("Todos").First(&j).Error
 	if err != nil {
 		return nil, err
 	}
@@ -84,21 +84,32 @@ func (s *MySQLStore) Save(j *model.ReviewJob) error {
 				return err
 			}
 		}
+		if err := tx.Where("job_id = ?", row.ID).Delete(&model.DBTodoItem{}).Error; err != nil {
+			return err
+		}
+		for _, todo := range j.Todos {
+			if err := tx.Create(&model.DBTodoItem{JobID: row.ID, Content: todo.Content, Status: todo.Status, SortOrder: todo.Order, CreatedAt: time.Now(), UpdatedAt: time.Now()}).Error; err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 }
 
 func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 	var row model.DBReviewJob
-	if s.db.Where("public_id = ?", id).Preload("Comments").Preload("Traces").First(&row).Error != nil {
+	if s.db.Where("public_id = ?", id).Preload("Comments").Preload("Traces").Preload("Todos").First(&row).Error != nil {
 		return nil, false
 	}
-	j := &model.ReviewJob{ID: row.PublicID, Status: row.Status, Source: row.SourceURL, SpentCents: row.SpentCents, UpdatedAt: row.UpdatedAt, Error: row.ErrorMessage, Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}}
+	j := &model.ReviewJob{ID: row.PublicID, Status: row.Status, Source: row.SourceURL, SpentCents: row.SpentCents, UpdatedAt: row.UpdatedAt, Error: row.ErrorMessage, Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}, Todos: []model.TodoItem{}}
 	for _, c := range row.Comments {
 		j.Comments = append(j.Comments, model.ReviewComment{File: c.File, Line: c.Line, Severity: c.Severity, Confidence: c.Confidence, Body: c.Body, TraceID: c.TraceID})
 	}
 	for _, t := range row.Traces {
 		j.Trace = append(j.Trace, model.TraceEvent{ID: t.TraceID, Tool: t.Tool, Phase: t.Phase, Input: t.Input, Output: t.Output, Prompt: t.Prompt, ModelReply: t.ModelReply, DurationMs: t.DurationMs, At: t.CreatedAt})
+	}
+	for _, todo := range row.Todos {
+		j.Todos = append(j.Todos, model.TodoItem{Content: todo.Content, Status: todo.Status, Order: todo.SortOrder})
 	}
 	return j, true
 }

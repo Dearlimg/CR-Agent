@@ -61,6 +61,7 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 		if !ok {
 			return fmt.Errorf("工具未注册: %s", step.Tool)
 		}
+		setTodoStatus(input.Job, i, "in_progress")
 		decision := a.Policy.Decide(tool.Permission)
 		if decision != PermissionAllow {
 			err := permissionError(step.Tool, tool.Permission, decision)
@@ -91,6 +92,7 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 			}
 			return err
 		}
+		setTodoStatus(input.Job, i, "completed")
 		duration := time.Since(started).Milliseconds()
 		input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: result.Output, At: time.Now(), DurationMs: duration, Phase: "action"})
 		if a.Record != nil {
@@ -116,4 +118,13 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 		a.Hooks.Emit(ctx, HookLoopStop, HookContext{JobID: input.Job.ID})
 	}
 	return nil
+}
+
+func setTodoStatus(job *model.ReviewJob, order int, status string) {
+	for i := range job.Todos {
+		if job.Todos[i].Order == order {
+			job.Todos[i].Status = status
+			return
+		}
+	}
 }

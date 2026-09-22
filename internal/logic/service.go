@@ -19,6 +19,9 @@ type Service struct {
 
 func NewService(store dao.Store, cfg Config) *Service {
 	registry := NewToolRegistry()
+	registry.RegisterWithPermission("todo_write", PermissionReadDiff, func(_ context.Context, in ToolInput) (ToolResult, error) {
+		return ToolResult{Output: renderTodos(in.Job.Todos)}, nil
+	})
 	registry.RegisterWithPermission("diff_reader", PermissionReadDiff, func(_ context.Context, in ToolInput) (ToolResult, error) {
 		return ToolResult{Output: fmt.Sprintf("读取并脱敏完成，diff_bytes=%d", len(in.Diff))}, nil
 	})
@@ -36,15 +39,33 @@ func NewService(store dao.Store, cfg Config) *Service {
 	record := func(jobID, traceID, tool, status, input, output, callErr string, durationMs int64) error {
 		return store.RecordToolCall(jobID, traceID, tool, status, input, output, callErr, durationMs)
 	}
-	plan := []LoopStep{{Tool: "diff_reader", Reason: "读取并脱敏 diff"}, {Tool: "parse_diff", Reason: "解析文件和变更范围"}, {Tool: "get_changed_lines", Reason: "提取新增行"}, {Tool: "static_check", Reason: "执行确定性规则检查"}, {Tool: "syntax_check", Reason: "前置语法和冲突检查"}, {Tool: "format_check", Reason: "前置格式检查"}, {Tool: "secret_scan", Reason: "扫描疑似敏感信息"}, {Tool: "dependency_diff", Reason: "检查依赖文件变更"}, {Tool: "get_file_context", Reason: "补充安全上下文"}, {Tool: "normalize_finding", Reason: "规范化审查输出"}}
+	plan := []LoopStep{{Tool: "todo_write", Reason: "创建并确认审查计划"}, {Tool: "diff_reader", Reason: "读取并脱敏 diff"}, {Tool: "parse_diff", Reason: "解析文件和变更范围"}, {Tool: "get_changed_lines", Reason: "提取新增行"}, {Tool: "static_check", Reason: "执行确定性规则检查"}, {Tool: "syntax_check", Reason: "前置语法和冲突检查"}, {Tool: "format_check", Reason: "前置格式检查"}, {Tool: "secret_scan", Reason: "扫描疑似敏感信息"}, {Tool: "dependency_diff", Reason: "检查依赖文件变更"}, {Tool: "get_file_context", Reason: "补充安全上下文"}, {Tool: "normalize_finding", Reason: "规范化审查输出"}}
 	return &Service{Store: store, Config: cfg, Loop: &AgentLoop{Registry: registry, Plan: plan, MaxSteps: len(plan), Record: record, Policy: DefaultPermissionPolicy(), Hooks: NewHookBus()}}
+}
+func renderTodos(todos []model.TodoItem) string {
+	lines := []string{}
+	for _, todo := range todos {
+		mark := "[ ]"
+		if todo.Status == "in_progress" {
+			mark = "[>]"
+		}
+		if todo.Status == "completed" {
+			mark = "[x]"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s", mark, todo.Content))
+	}
+	return strings.Join(lines, "\n")
 }
 func id(s string) string {
 	h := sha256.Sum256([]byte(s + time.Now().String()))
 	return hex.EncodeToString(h[:])[:16]
 }
 func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
-	j := &model.ReviewJob{ID: id(req.Source + req.Diff), Status: "queued", Source: req.Source, UpdatedAt: time.Now(), Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}}
+	todos := []model.TodoItem{}
+	for order, step := range s.Loop.Plan {
+		todos = append(todos, model.TodoItem{Content: step.Reason, Status: "pending", Order: order})
+	}
+	j := &model.ReviewJob{ID: id(req.Source + req.Diff), Status: "queued", Source: req.Source, UpdatedAt: time.Now(), Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}, Todos: todos}
 	if err := s.Store.Save(j); err != nil {
 		return nil, err
 	}

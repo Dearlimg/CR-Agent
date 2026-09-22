@@ -14,6 +14,12 @@ type JobStore struct {
 	dir  string
 }
 
+// Store is the persistence contract used by the review service.
+type Store interface {
+	Save(*model.ReviewJob) error
+	Get(string) (*model.ReviewJob, bool)
+}
+
 func NewJobStore(dir string) *JobStore {
 	return &JobStore{jobs: map[string]*model.ReviewJob{}, dir: dir}
 }

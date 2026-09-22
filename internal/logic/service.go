@@ -11,11 +11,11 @@ import (
 )
 
 type Service struct {
-	Store  *dao.JobStore
+	Store  dao.Store
 	Config Config
 }
 
-func NewService(store *dao.JobStore, cfg Config) *Service { return &Service{Store: store, Config: cfg} }
+func NewService(store dao.Store, cfg Config) *Service { return &Service{Store: store, Config: cfg} }
 func id(s string) string {
 	h := sha256.Sum256([]byte(s + time.Now().String()))
 	return hex.EncodeToString(h[:])[:16]

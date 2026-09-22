@@ -5,11 +5,25 @@ import (
 	"CR-Agent/internal/dao"
 	"CR-Agent/internal/logic"
 	"github.com/gin-gonic/gin"
+	"os"
 )
 
 func main() {
 	cfg := logic.LoadConfig()
-	svc := logic.NewService(dao.NewJobStore(".checkpoints"), cfg)
+	store := dao.Store(dao.NewJobStore(".checkpoints"))
+	if cfg.MySQLDSN != "" {
+		mysqlStore, err := dao.OpenMySQL(cfg.MySQLDSN)
+		if err != nil {
+			panic(err)
+		}
+		if os.Getenv("AUTO_MIGRATE") == "true" {
+			if err := mysqlStore.Migrate(); err != nil {
+				panic(err)
+			}
+		}
+		store = mysqlStore
+	}
+	svc := logic.NewService(store, cfg)
 	r := gin.Default()
 	r.StaticFile("/", "web/index.html")
 	controller.NewReviewController(svc).Register(r)

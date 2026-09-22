@@ -32,13 +32,42 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	j.Status = "running"
 	_ = s.Store.Save(j)
 	if strings.TrimSpace(req.Diff) == "" {
-		j.Status = "failed"
-		j.Error = "链接抓取逻辑已迁移到 logic 层，请接入 fetcher 后重试"
-		_ = s.Store.Save(j)
-		return
+		resolved, diff, err := fetchDiff(ctx, req.Source)
+		if err != nil {
+			j.Status = "failed"
+			j.Error = err.Error()
+			j.Trace = append(j.Trace, model.TraceEvent{ID: id(req.Source), Tool: "diff_fetcher", Input: req.Source, Output: err.Error(), At: time.Now(), Phase: "action"})
+			_ = s.Store.Save(j)
+			return
+		}
+		j.Source, req.Diff = resolved, diff
 	}
-	j.Trace = append(j.Trace, model.TraceEvent{ID: id(req.Diff), Tool: "diff_reader", Input: "redacted diff", Output: "读取并脱敏完成", At: time.Now(), Phase: "observation"})
-	j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "low", Body: "MVC 重构后的规则审查占位结果，请接入 DeepSeek 审查器。", TraceID: j.Trace[0].ID}}
+	readID := id(req.Diff)
+	j.Trace = append(j.Trace, model.TraceEvent{ID: readID, Tool: "diff_reader", Input: "redacted diff", Output: "读取并脱敏完成", At: time.Now(), Phase: "observation"})
+	reply, tokens, err := reviewWithDeepSeek(ctx, s.Config, req.Diff)
+	if err != nil {
+		j.Trace = append(j.Trace, model.TraceEvent{ID: id(err.Error()), Tool: "review-fallback", Input: "diff summary", Output: err.Error(), At: time.Now(), Phase: "reasoning"})
+		j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "low", Body: "DeepSeek 调用失败：" + err.Error(), TraceID: readID}}
+	} else {
+		traceID := id(reply)
+		j.Trace = append(j.Trace, model.TraceEvent{ID: traceID, Tool: "deepseek-review", Input: "prompt diff summary", Output: "DeepSeek 审查完成", ModelReply: reply, At: time.Now(), Phase: "reasoning"})
+		j.SpentCents = tokens / 1000
+		if j.SpentCents < 1 {
+			j.SpentCents = 1
+		}
+		findings := parseFindings(reply)
+		j.Comments = []model.ReviewComment{}
+		for _, f := range findings {
+			body := f.Body
+			if f.Suggestion != "" {
+				body += "\n建议：" + f.Suggestion
+			}
+			j.Comments = append(j.Comments, model.ReviewComment{File: f.File, Line: f.Line, Severity: f.Severity, Confidence: f.Confidence, Body: body, TraceID: traceID})
+		}
+		if len(j.Comments) == 0 {
+			j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "high", Body: "未发现需要评论的问题。", TraceID: traceID}}
+		}
+	}
 	j.Status = "completed"
 	j.UpdatedAt = time.Now()
 	_ = s.Store.Save(j)

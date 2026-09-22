@@ -1,4 +1,4 @@
-package main
+package logic
 
 import (
 	"bytes"
@@ -19,6 +19,14 @@ type chatResponse struct {
 	Usage struct {
 		TotalTokens int `json:"total_tokens"`
 	} `json:"usage"`
+}
+type ReviewFinding struct {
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Severity   string `json:"severity"`
+	Confidence string `json:"confidence"`
+	Body       string `json:"body"`
+	Suggestion string `json:"suggestion"`
 }
 
 func parseFindings(raw string) []ReviewFinding {

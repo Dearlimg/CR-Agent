@@ -20,7 +20,7 @@ func registerReviewTools(reg *ToolRegistry) {
 	reg.Register("secret_scan", secretScanTool)
 	reg.Register("dependency_diff", dependencyDiffTool)
 	reg.Register("get_file_context", contextTool)
-	reg.Register("normalize_finding", normalizeFindingTool)
+	reg.Register("normalize_finding", normalizeFinding)
 }
 
 func parseDiffTool(_ context.Context, in ToolInput) (ToolResult, error) {

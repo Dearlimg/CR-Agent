@@ -53,6 +53,7 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 	if a.Hooks != nil {
 		a.Hooks.Emit(ctx, HookLoopStart, HookContext{JobID: input.Job.ID})
 	}
+	roundsSinceTodo := 0
 	for i, step := range a.Plan {
 		if i >= a.MaxSteps {
 			return fmt.Errorf("agent loop 超过最大步数 %d", a.MaxSteps)
@@ -97,6 +98,15 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 		input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: result.Output, At: time.Now(), DurationMs: duration, Phase: "action"})
 		if a.Record != nil {
 			_ = a.Record(input.Job.ID, traceID, step.Tool, "succeeded", step.Reason, result.Output, "", duration)
+		}
+		if step.Tool == "todo_write" {
+			roundsSinceTodo = 0
+		} else {
+			roundsSinceTodo++
+		}
+		if roundsSinceTodo >= 3 {
+			input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: id("todo_reminder" + input.Job.ID), Tool: "todo_reminder", Input: "任务计划提醒", Output: "连续三个工具步骤未更新 Todo，请确认剩余计划和当前目标。", At: time.Now(), Phase: "planning"})
+			roundsSinceTodo = 0
 		}
 		if a.Hooks != nil {
 			a.Hooks.Emit(ctx, HookPostToolUse, HookContext{JobID: input.Job.ID, Tool: step.Tool, Permission: tool.Permission, Reason: step.Reason, Output: result.Output, DurationMs: duration})

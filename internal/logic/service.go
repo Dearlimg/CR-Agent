@@ -24,12 +24,17 @@ type Service struct {
 	Cron             *CronScheduler
 	CronError        error
 	Team             *ReviewTeam
+	MCP              *MCPManager
 }
 
 func NewService(store dao.Store, cfg Config) *Service {
 	skillLoader := NewSkillLoader(cfg.SkillsDir)
 	skillErr := skillLoader.Scan()
 	registry := NewToolRegistry()
+	mcp := NewMCPManager(DefaultMCPHostPolicy())
+	_ = mcp.RegisterServer("docs", newDocsMCPServer)
+	_ = mcp.RegisterServer("deploy", newDeployMCPServer)
+	mcp.RegisterConnectTool(registry)
 	registry.RegisterWithPermission("todo_write", PermissionReadDiff, func(_ context.Context, in ToolInput) (ToolResult, error) {
 		return ToolResult{Output: renderTodos(in.Job.Todos)}, nil
 	})
@@ -61,6 +66,7 @@ func NewService(store dao.Store, cfg Config) *Service {
 		MemoryStore:      NewMemoryStore(cfg),
 		TaskStore:        NewTaskStore(cfg.TasksDir),
 		Background:       NewBackgroundManager(cfg.BackgroundTasksDir),
+		MCP:              mcp,
 	}
 	service.Team = NewReviewTeam(service.TaskStore, NewMessageBus(cfg.TeamMailboxDir), cfg)
 	cron, cronErr := NewCronScheduler(

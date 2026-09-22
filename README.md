@@ -81,6 +81,19 @@ Lead 负责向调用方交付最终结论；专项队友只负责 correctness、
 
 专项任务同样写入共享 `.tasks/` 任务板，按 `pending → in_progress → completed` 原子认领；失败不会被标记为完成。这个迭代刻意不让队友执行代码、修改仓库或发布评论，仍沿用受限的只读审查工具边界。当前队友生命周期限定在单次审查 Job；跨 Job 的长期驻留、动态任务拆分和 worktree 隔离是后续扩展，而不是已实现能力。
 
+## MCP 工具
+
+Harness 提供了 transport-agnostic 的 MCP 层：`MCPClient` 保存 server 返回的工具定义和
+调用入口，`MCPManager.Connect` 负责连接与发现，`AssembleToolPool` 负责把工具以
+`mcp__<server>__<tool>` 前缀加入现有 `ToolRegistry`。工具名会做规范化、64 字符长度检查和
+冲突检查；MCP server 返回的 `readOnlyHint`/`destructiveHint` 只作为元数据，实际权限由宿主
+`MCPHostPolicy` 决定，未配置的工具默认需要审批。
+
+当前内置 `docs` 和 `deploy` 两个进程内 server，用于验证 `tools/list`、`tools/call` 和动态
+工具池边界。可通过 `connect_mcp` 工具连接 server；工具参数会沿现有 Agent Loop 的
+`ToolInput.Args` 传递，参数错误会作为 `MCP error` 工具结果返回，不会直接终止循环。真实
+stdio/HTTP transport 可在不修改 Agent Loop 的情况下实现 `MCPServerFactory` 接入。
+
 ## 后台任务
 
 后台任务将服务端注册的慢操作放到独立 Goroutine 中执行，创建后立刻返回 `bg_<id>`，

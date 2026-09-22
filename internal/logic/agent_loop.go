@@ -10,6 +10,7 @@ import (
 type ToolInput struct {
 	Job  *model.ReviewJob
 	Diff string
+	Args map[string]any
 }
 type ToolResult struct {
 	Output   string
@@ -36,6 +37,7 @@ func (r *ToolRegistry) Get(name string) (ToolDefinition, bool) { t, ok := r.tool
 type LoopStep struct {
 	Tool   string
 	Reason string
+	Args   map[string]any
 }
 type AgentLoop struct {
 	Registry *ToolRegistry
@@ -80,7 +82,11 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 			a.Hooks.Emit(ctx, HookPreToolUse, HookContext{JobID: input.Job.ID, Tool: step.Tool, Permission: tool.Permission, Reason: step.Reason})
 		}
 		started := time.Now()
-		result, err := tool.Run(ctx, input)
+		toolInput := input
+		if step.Args != nil {
+			toolInput.Args = step.Args
+		}
+		result, err := tool.Run(ctx, toolInput)
 		traceID := id(step.Tool + step.Reason + time.Now().String())
 		if err != nil {
 			duration := time.Since(started).Milliseconds()

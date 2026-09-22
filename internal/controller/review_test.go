@@ -68,6 +68,20 @@ func TestReviewHTTPCompletesWithLocalModelAndHarness(t *testing.T) {
 			if job.Status != "completed" {
 				t.Fatalf("status=%s error=%s", job.Status, job.Error)
 			}
+			if job.StartedAt.IsZero() || job.FinishedAt == nil {
+				t.Fatalf("job boundaries missing: started=%v finished=%v", job.StartedAt, job.FinishedAt)
+			}
+			if len(job.Trace) == 0 {
+				t.Fatal("trace is empty")
+			}
+			for _, event := range job.Trace {
+				if event.StartedAt.IsZero() || event.EndedAt == nil || event.Status == "" || event.Kind == "" {
+					t.Fatalf("incomplete trace event: %#v", event)
+				}
+				if event.DurationMs < 0 || event.EndedAt.Before(event.StartedAt) {
+					t.Fatalf("invalid trace duration: %#v", event)
+				}
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

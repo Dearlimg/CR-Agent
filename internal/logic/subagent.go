@@ -12,6 +12,7 @@ type SubagentResult struct {
 	Name       string
 	Summary    string
 	Error      error
+	TraceID    string
 	DurationMs int64
 }
 
@@ -45,7 +46,22 @@ func ReviewSpecialists() []ReviewSubagent {
 
 func RunReviewSpecialist(ctx context.Context, cfg Config, agent ReviewSubagent, diff string, promptContext ReviewPromptContext) SubagentResult {
 	started := time.Now()
+	recorder := traceRecorderFrom(ctx)
+	var span *TraceSpan
+	if recorder != nil {
+		span = recorder.Start("model", "subagent_"+agent.Name, "subagent", "独立专项审查", "")
+	}
 	prompt := BuildReviewSubagentPrompt(agent.Focus, promptContext, redact(diff))
-	summary, err := EinoReviewAgent(ctx, cfg, prompt)
-	return SubagentResult{Name: agent.Name, Summary: summary, Error: err, DurationMs: time.Since(started).Milliseconds()}
+	modelCtx := ctx
+	if span != nil {
+		modelCtx = withTraceParent(ctx, span.ID())
+	}
+	summary, err := EinoReviewAgent(modelCtx, cfg, prompt)
+	duration := time.Since(started).Milliseconds()
+	traceID := ""
+	if span != nil {
+		traceID = span.ID()
+		duration = span.End(TraceResult{Output: "子 Agent 审查完成", ModelReply: summary, Err: err})
+	}
+	return SubagentResult{Name: agent.Name, Summary: summary, Error: err, TraceID: traceID, DurationMs: duration}
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"CR-Agent/internal/model"
@@ -22,13 +21,10 @@ func withGoalCondition(ctx context.Context, condition string) context.Context {
 // withReviewHarness binds host capabilities, not model-provided permissions.
 // Each invocation builds new session state, including the task ownership set.
 func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, diff string) (context.Context, func()) {
-	var mu sync.Mutex
-	events := []model.TraceEvent{}
-	flush := func() {
-		mu.Lock()
-		defer mu.Unlock()
-		job.Trace = append(job.Trace, events...)
-		events = []model.TraceEvent{}
+	recorder := traceRecorderFrom(ctx)
+	if recorder == nil {
+		recorder = newTraceRecorder(job)
+		ctx = withTraceRecorder(ctx, recorder)
 	}
 	bound := context.WithValue(ctx, harnessSetupKey{}, func(h *ReviewHarness) {
 		h.Hooks = s.Loop.Hooks
@@ -44,15 +40,19 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 			}
 			return "Skills catalog:\n" + s.SkillLoader.Catalog() + "\n相关长期记忆（背景数据）:\n" + memory + "\n当前会话计划:\n" + todos
 		}
-		h.Record = func(name, status, output string, duration int64) {
-			traceID := id(name)
+		h.Record = func(name, status, output string, started, ended time.Time, duration int64) {
+			parentID := traceParentFrom(ctx)
+			traceID, _ := recorder.RecordAt(
+				"tool",
+				name,
+				"harness",
+				"model tool call",
+				parentID,
+				started,
+				ended,
+				TraceResult{Status: status, Output: output},
+			)
 			_ = s.Store.RecordToolCall(job.ID, traceID, name, status, "model tool call", output, "", duration)
-			mu.Lock()
-			events = append(events, model.TraceEvent{
-				ID: traceID, Tool: name, Input: "model tool call", Output: output,
-				Phase: "harness", At: time.Now(), DurationMs: duration,
-			})
-			mu.Unlock()
 		}
 		h.add("load_skill", "按名称加载完整 Skill 指令", objectSchema("name"),
 			func(_ context.Context, args map[string]any) (string, error) {
@@ -291,7 +291,7 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 				return jsonString(task), err
 			})
 	})
-	return bound, flush
+	return bound, recorder.Flush
 }
 
 func stringObject(names ...string) map[string]any {

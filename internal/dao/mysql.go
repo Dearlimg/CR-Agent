@@ -53,7 +53,9 @@ func (s *MySQLStore) FindJob(ctx context.Context, id string) (*model.DBReviewJob
 	err := s.db.WithContext(ctx).
 		Where("public_id = ?", id).
 		Preload("Comments").
-		Preload("Traces").
+		Preload("Traces", func(db *gorm.DB) *gorm.DB {
+			return db.Order("started_at asc, id asc")
+		}).
 		Preload("Todos").
 		First(&job).Error
 	if err != nil {
@@ -101,10 +103,16 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 	var row model.DBReviewJob
 	query := s.db.Where("public_id = ?", id).
 		Preload("Comments").
-		Preload("Traces").
+		Preload("Traces", func(db *gorm.DB) *gorm.DB {
+			return db.Order("started_at asc, id asc")
+		}).
 		Preload("Todos")
 	if query.First(&row).Error != nil {
 		return nil, false
+	}
+	startedAt := row.StartedAt
+	if startedAt == nil {
+		startedAt = &row.CreatedAt
 	}
 	job := &model.ReviewJob{
 		ID:               row.PublicID,
@@ -113,6 +121,8 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 		Status:           row.Status,
 		Source:           row.SourceURL,
 		SpentCents:       row.SpentCents,
+		StartedAt:        *startedAt,
+		FinishedAt:       row.FinishedAt,
 		UpdatedAt:        row.UpdatedAt,
 		Error:            row.ErrorMessage,
 		Comments:         []model.ReviewComment{},
@@ -131,14 +141,23 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 		})
 	}
 	for _, trace := range row.Traces {
+		traceStartedAt := trace.StartedAt
+		if traceStartedAt == nil {
+			traceStartedAt = &trace.CreatedAt
+		}
 		job.Trace = append(job.Trace, model.TraceEvent{
 			ID:         trace.TraceID,
+			ParentID:   trace.ParentID,
+			Kind:       trace.Kind,
+			Status:     trace.Status,
 			Tool:       trace.Tool,
 			Input:      trace.Input,
 			Output:     trace.Output,
 			Prompt:     trace.Prompt,
 			ModelReply: trace.ModelReply,
 			DurationMs: trace.DurationMs,
+			StartedAt:  *traceStartedAt,
+			EndedAt:    trace.EndedAt,
 			At:         trace.CreatedAt,
 			Phase:      trace.Phase,
 		})
@@ -219,6 +238,11 @@ func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.D
 	row.Status = job.Status
 	row.SpentCents = job.SpentCents
 	row.ErrorMessage = job.Error
+	if !job.StartedAt.IsZero() {
+		startedAt := job.StartedAt
+		row.StartedAt = &startedAt
+	}
+	row.FinishedAt = job.FinishedAt
 	row.UpdatedAt = now
 	row.Version++
 	if row.InputHash == "" {
@@ -226,6 +250,10 @@ func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.D
 	}
 	if row.CreatedAt.IsZero() {
 		row.CreatedAt = now
+	}
+	if row.StartedAt == nil {
+		startedAt := row.CreatedAt
+		row.StartedAt = &startedAt
 	}
 	if row.ID == 0 {
 		if err := tx.Create(&row).Error; err != nil {
@@ -240,6 +268,8 @@ func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.D
 		"status":             row.Status,
 		"spent_cents":        row.SpentCents,
 		"error_message":      row.ErrorMessage,
+		"started_at":         row.StartedAt,
+		"finished_at":        row.FinishedAt,
 		"updated_at":         row.UpdatedAt,
 		"version":            row.Version,
 	}).Error; err != nil {
@@ -294,6 +324,9 @@ func (s *MySQLStore) saveTraces(tx *gorm.DB, jobID uint, job *model.ReviewJob) e
 			row = model.DBTraceEvent{
 				JobID:      jobID,
 				TraceID:    trace.ID,
+				ParentID:   trace.ParentID,
+				Kind:       trace.Kind,
+				Status:     trace.Status,
 				Tool:       trace.Tool,
 				Phase:      trace.Phase,
 				Input:      trace.Input,
@@ -301,7 +334,15 @@ func (s *MySQLStore) saveTraces(tx *gorm.DB, jobID uint, job *model.ReviewJob) e
 				Prompt:     trace.Prompt,
 				ModelReply: trace.ModelReply,
 				DurationMs: trace.DurationMs,
+				StartedAt:  traceStartedAt(trace),
+				EndedAt:    trace.EndedAt,
 				CreatedAt:  trace.At,
+			}
+			if row.Status == "" {
+				row.Status = "succeeded"
+			}
+			if row.Kind == "" {
+				row.Kind = legacyTraceKind(trace.Phase)
 			}
 			if row.CreatedAt.IsZero() {
 				row.CreatedAt = time.Now().UTC()
@@ -314,7 +355,19 @@ func (s *MySQLStore) saveTraces(tx *gorm.DB, jobID uint, job *model.ReviewJob) e
 		if err != nil {
 			return err
 		}
+		kind := trace.Kind
+		if kind == "" {
+			kind = legacyTraceKind(trace.Phase)
+		}
+		status := trace.Status
+		if status == "" {
+			status = "succeeded"
+		}
+		startedAt := traceStartedAt(trace)
 		if err := tx.Model(&row).Updates(map[string]any{
+			"parent_id":   trace.ParentID,
+			"kind":        kind,
+			"status":      status,
 			"tool":        trace.Tool,
 			"phase":       trace.Phase,
 			"input":       trace.Input,
@@ -322,6 +375,8 @@ func (s *MySQLStore) saveTraces(tx *gorm.DB, jobID uint, job *model.ReviewJob) e
 			"prompt":      trace.Prompt,
 			"model_reply": trace.ModelReply,
 			"duration_ms": trace.DurationMs,
+			"started_at":  startedAt,
+			"ended_at":    trace.EndedAt,
 		}).Error; err != nil {
 			return fmt.Errorf("更新 trace event: %w", err)
 		}
@@ -398,4 +453,23 @@ func commentFingerprint(jobID string, comment model.ReviewComment) string {
 func hashText(value string) string {
 	hash := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(hash[:])
+}
+
+func legacyTraceKind(phase string) string {
+	switch phase {
+	case "task", "background", "planning", "memory", "context", "skill":
+		return "input"
+	case "subagent", "reasoning":
+		return "model"
+	default:
+		return "tool"
+	}
+}
+
+func traceStartedAt(trace model.TraceEvent) *time.Time {
+	startedAt := trace.StartedAt
+	if startedAt.IsZero() {
+		startedAt = trace.At
+	}
+	return &startedAt
 }

@@ -263,7 +263,7 @@ func (c *ReviewController) events(x *gin.Context) {
 		}
 		x.SSEvent("review", j)
 		flusher.Flush()
-		if j.Status == "completed" || j.Status == "failed" {
+		if j.Status == "completed" || j.Status == "completed_with_warnings" || j.Status == "failed" || j.Status == "cancelled" {
 			return
 		}
 		select {

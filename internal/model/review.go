@@ -23,15 +23,20 @@ type TodoItem struct {
 	Order   int    `json:"order"`
 }
 type TraceEvent struct {
-	ID         string    `json:"id"`
-	Tool       string    `json:"tool"`
-	Input      string    `json:"input"`
-	Output     string    `json:"output"`
-	Prompt     string    `json:"prompt,omitempty"`
-	ModelReply string    `json:"model_reply,omitempty"`
-	At         time.Time `json:"at"`
-	DurationMs int64     `json:"duration_ms"`
-	Phase      string    `json:"phase,omitempty"`
+	ID         string     `json:"id"`
+	ParentID   string     `json:"parent_id,omitempty"`
+	Kind       string     `json:"kind,omitempty"`
+	Status     string     `json:"status,omitempty"`
+	Tool       string     `json:"tool"`
+	Input      string     `json:"input"`
+	Output     string     `json:"output"`
+	Prompt     string     `json:"prompt,omitempty"`
+	ModelReply string     `json:"model_reply,omitempty"`
+	At         time.Time  `json:"at"`
+	StartedAt  time.Time  `json:"started_at,omitempty"`
+	EndedAt    *time.Time `json:"ended_at,omitempty"`
+	DurationMs int64      `json:"duration_ms"`
+	Phase      string     `json:"phase,omitempty"`
 }
 type TeamEvent struct {
 	ID      string    `json:"id,omitempty"`
@@ -53,6 +58,8 @@ type ReviewJob struct {
 	Trace            []TraceEvent    `json:"trace"`
 	TeamEvents       []TeamEvent     `json:"team_events"`
 	SpentCents       int             `json:"spent_cents"`
+	StartedAt        time.Time       `json:"started_at"`
+	FinishedAt       *time.Time      `json:"finished_at,omitempty"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 	Error            string          `json:"error,omitempty"`
 }

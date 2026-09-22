@@ -9,9 +9,10 @@ import (
 )
 
 type ToolInput struct {
-	Job  *model.ReviewJob
-	Diff string
-	Args map[string]any
+	Job    *model.ReviewJob
+	Diff   string
+	Args   map[string]any
+	Tracer *TraceRecorder
 }
 type ToolResult struct {
 	Output   string
@@ -81,11 +82,20 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 			return fmt.Errorf("工具未注册: %s", step.Tool)
 		}
 		setTodoStatus(input.Job, i, "in_progress")
+		var span *TraceSpan
+		if input.Tracer != nil {
+			span = input.Tracer.Start("tool", step.Tool, "action", step.Reason, "")
+		}
 		decision := a.Policy.Decide(tool.Permission)
 		if decision != PermissionAllow {
 			err := permissionError(step.Tool, tool.Permission, decision)
 			traceID := id(step.Tool + err.Error())
-			input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: err.Error(), At: time.Now(), Phase: "permission"})
+			if span != nil {
+				span.End(TraceResult{Status: "denied", Err: err})
+				traceID = span.ID()
+			} else {
+				input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: err.Error(), At: time.Now(), Phase: "permission"})
+			}
 			if a.Record != nil {
 				_ = a.Record(input.Job.ID, traceID, step.Tool, string(decision), step.Reason, "", err.Error(), 0)
 			}
@@ -109,7 +119,12 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 		traceID := id(step.Tool + step.Reason + time.Now().String())
 		if err != nil {
 			duration := time.Since(started).Milliseconds()
-			input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: err.Error(), At: time.Now(), DurationMs: duration, Phase: "action"})
+			if span != nil {
+				span.End(TraceResult{Err: err})
+				traceID = span.ID()
+			} else {
+				input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: err.Error(), At: time.Now(), DurationMs: duration, Phase: "action"})
+			}
 			if a.Record != nil {
 				_ = a.Record(input.Job.ID, traceID, step.Tool, "failed", step.Reason, "", err.Error(), duration)
 			}
@@ -120,7 +135,12 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 		}
 		setTodoStatus(input.Job, i, "completed")
 		duration := time.Since(started).Milliseconds()
-		input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: result.Output, At: time.Now(), DurationMs: duration, Phase: "action"})
+		if span != nil {
+			span.End(TraceResult{Output: result.Output})
+			traceID = span.ID()
+		} else {
+			input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: result.Output, At: time.Now(), DurationMs: duration, Phase: "action"})
+		}
 		if a.Record != nil {
 			_ = a.Record(input.Job.ID, traceID, step.Tool, "succeeded", step.Reason, result.Output, "", duration)
 		}
@@ -130,7 +150,11 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 			roundsSinceTodo++
 		}
 		if roundsSinceTodo >= 3 {
-			input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: id("todo_reminder" + input.Job.ID), Tool: "todo_reminder", Input: "任务计划提醒", Output: "连续三个工具步骤未更新 Todo，请确认剩余计划和当前目标。", At: time.Now(), Phase: "planning"})
+			if input.Tracer != nil {
+				input.Tracer.Record("input", "todo_reminder", "planning", "任务计划提醒", "", TraceResult{Output: "连续三个工具步骤未更新 Todo，请确认剩余计划和当前目标。"})
+			} else {
+				input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: id("todo_reminder" + input.Job.ID), Tool: "todo_reminder", Input: "任务计划提醒", Output: "连续三个工具步骤未更新 Todo，请确认剩余计划和当前目标。", At: time.Now(), Phase: "planning"})
+			}
 			roundsSinceTodo = 0
 		}
 		if a.Hooks != nil {

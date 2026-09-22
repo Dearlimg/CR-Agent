@@ -19,6 +19,8 @@ type DBReviewJob struct {
 	ErrorMessage     string            `gorm:"type:text"`
 	Version          int64             `gorm:"not null;default:0"`
 	CreatedAt        time.Time         `gorm:"not null;index"`
+	StartedAt        *time.Time        `gorm:"index"`
+	FinishedAt       *time.Time        `gorm:"index"`
 	UpdatedAt        time.Time         `gorm:"not null;index"`
 	DeletedAt        gorm.DeletedAt    `gorm:"index"`
 	Comments         []DBReviewComment `gorm:"foreignKey:JobID"`
@@ -45,17 +47,22 @@ type DBReviewComment struct {
 func (DBReviewComment) TableName() string { return "review_comments" }
 
 type DBTraceEvent struct {
-	ID         uint      `gorm:"primaryKey"`
-	JobID      uint      `gorm:"not null;index:idx_trace_job_created"`
-	TraceID    string    `gorm:"size:32;not null;uniqueIndex"`
-	Tool       string    `gorm:"size:64;not null;index"`
-	Phase      string    `gorm:"size:32;not null;index"`
-	Input      string    `gorm:"type:longtext"`
-	Output     string    `gorm:"type:longtext"`
-	Prompt     string    `gorm:"type:longtext"`
-	ModelReply string    `gorm:"type:longtext"`
-	DurationMs int64     `gorm:"not null;default:0"`
-	CreatedAt  time.Time `gorm:"not null;index:idx_trace_job_created"`
+	ID         uint       `gorm:"primaryKey"`
+	JobID      uint       `gorm:"not null;index:idx_trace_job_created"`
+	TraceID    string     `gorm:"size:32;not null;uniqueIndex"`
+	ParentID   string     `gorm:"size:32;index"`
+	Kind       string     `gorm:"size:16;not null;index"`
+	Status     string     `gorm:"size:16;not null;index"`
+	Tool       string     `gorm:"size:64;not null;index"`
+	Phase      string     `gorm:"size:32;not null;index"`
+	Input      string     `gorm:"type:longtext"`
+	Output     string     `gorm:"type:longtext"`
+	Prompt     string     `gorm:"type:longtext"`
+	ModelReply string     `gorm:"type:longtext"`
+	DurationMs int64      `gorm:"not null;default:0"`
+	StartedAt  *time.Time `gorm:"index:idx_trace_job_created"`
+	EndedAt    *time.Time `gorm:"index"`
+	CreatedAt  time.Time  `gorm:"not null;index:idx_trace_job_created"`
 }
 
 func (DBTraceEvent) TableName() string { return "trace_events" }

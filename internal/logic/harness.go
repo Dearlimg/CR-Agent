@@ -38,7 +38,7 @@ type ReviewHarness struct {
 	WorkflowRunner   WorkflowAgentRunner
 	WorkflowLaunched func(string)
 	Goal             *GoalController
-	Record           func(string, string, string, int64)
+	Record           func(string, string, string, time.Time, time.Time, int64)
 	MaxRounds        int
 	tools            map[string]harnessTool
 	archives         map[string]string
@@ -323,7 +323,8 @@ func (h *ReviewHarness) execute(ctx context.Context, call schema.ToolCall, tools
 		return tool.run(ctx, args)
 	}()
 	status := "succeeded"
-	payload.DurationMs = time.Since(started).Milliseconds()
+	ended := time.Now()
+	payload.DurationMs = ended.Sub(started).Milliseconds()
 	if err != nil {
 		status = "failed"
 		output = "Tool error: " + err.Error()
@@ -335,7 +336,7 @@ func (h *ReviewHarness) execute(ctx context.Context, call schema.ToolCall, tools
 	}
 	output = redact(output)
 	if h.Record != nil {
-		h.Record(call.Function.Name, status, output, payload.DurationMs)
+		h.Record(call.Function.Name, status, output, started, ended, payload.DurationMs)
 	}
 	return output
 }

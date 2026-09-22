@@ -147,30 +147,48 @@ func id(s string) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
-	task, err := s.TaskStore.Create(reviewTaskSubject(req), "由 Code Review Agent 自动创建的审查任务")
-	if err != nil {
-		return nil, err
-	}
-	if _, err := s.TaskStore.Claim(task.ID, "review-agent"); err != nil {
-		return nil, err
-	}
-	backgroundTask, err := s.Background.Create("后台代码审查")
-	if err != nil {
-		return nil, err
-	}
+	now := time.Now().UTC()
 	todos := []model.TodoItem{}
 	for order, step := range s.Loop.Plan {
 		todos = append(todos, model.TodoItem{Content: step.Reason, Status: "pending", Order: order})
 	}
-	j := &model.ReviewJob{ID: id(req.Source + req.Diff), TaskID: task.ID, BackgroundTaskID: backgroundTask.ID, Status: "queued", Source: req.Source, UpdatedAt: time.Now(), Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}, Todos: todos}
-	j.Trace = append(j.Trace, model.TraceEvent{ID: id("task_create" + task.ID), Tool: "task_create", Input: task.Subject, Output: task.ID, At: time.Now(), Phase: "task"})
-	j.Trace = append(j.Trace, model.TraceEvent{ID: id("task_claim" + task.ID), Tool: "task_claim", Input: task.ID, Output: "owner=review-agent", At: time.Now(), Phase: "task"})
-	j.Trace = append(j.Trace, model.TraceEvent{ID: id("background_start" + backgroundTask.ID), Tool: "background_start", Input: "代码审查", Output: backgroundTask.ID, At: time.Now(), Phase: "background"})
+	j := &model.ReviewJob{
+		ID:         id(req.Source + req.Diff),
+		Status:     "queued",
+		Source:     req.Source,
+		StartedAt:  now,
+		UpdatedAt:  now,
+		Comments:   []model.ReviewComment{},
+		Trace:      []model.TraceEvent{},
+		Todos:      todos,
+		TeamEvents: []model.TeamEvent{},
+	}
+	recorder := newTraceRecorder(j)
+	taskSpan := recorder.Start("input", "task_create", "task", reviewTaskSubject(req), "")
+	task, err := s.TaskStore.Create(reviewTaskSubject(req), "由 Code Review Agent 自动创建的审查任务")
+	if err != nil {
+		return nil, err
+	}
+	taskSpan.End(TraceResult{Output: task.ID})
+	j.TaskID = task.ID
+	claimSpan := recorder.Start("input", "task_claim", "task", task.ID, "")
+	if _, err := s.TaskStore.Claim(task.ID, "review-agent"); err != nil {
+		return nil, err
+	}
+	claimSpan.End(TraceResult{Output: "owner=review-agent"})
+	backgroundSpan := recorder.Start("input", "background_create", "background", "代码审查", "")
+	backgroundTask, err := s.Background.Create("后台代码审查")
+	if err != nil {
+		return nil, err
+	}
+	backgroundSpan.End(TraceResult{Output: backgroundTask.ID})
+	j.BackgroundTaskID = backgroundTask.ID
+	recorder.Flush()
 	if err := s.Store.Save(j); err != nil {
 		return nil, err
 	}
 	if err := s.Background.Launch(backgroundTask.ID, func(ctx context.Context) (string, error) {
-		s.run(ctx, j, req)
+		s.runWithTracer(ctx, j, req, recorder)
 		if j.Status != "completed" && j.Status != "completed_with_warnings" {
 			return "", fmt.Errorf("审查任务失败：%s", j.Error)
 		}
@@ -184,36 +202,67 @@ func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 	return j, nil
 }
 func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewRequest) {
+	s.runWithTracer(ctx, j, req, newTraceRecorder(j))
+}
+
+func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req model.ReviewRequest, recorder *TraceRecorder) {
+	if recorder == nil {
+		recorder = newTraceRecorder(j)
+	}
+	ctx = withTraceRecorder(ctx, recorder)
+	if j.StartedAt.IsZero() {
+		j.StartedAt = time.Now().UTC()
+	}
 	j.Status = "running"
+	j.UpdatedAt = time.Now().UTC()
 	_ = s.Store.Save(j)
+	defer func() {
+		recorder.Flush()
+		finished := time.Now().UTC()
+		if j.FinishedAt == nil {
+			j.FinishedAt = &finished
+		}
+		j.UpdatedAt = finished
+		_ = s.Store.Save(j)
+	}()
 	if strings.TrimSpace(req.Diff) == "" {
+		fetchSpan := recorder.Start("tool", "diff_fetcher", "action", req.Source, "")
 		if decision := s.Loop.Policy.Decide(PermissionNetworkFetch); decision != PermissionAllow {
+			err := permissionError("diff_fetcher", PermissionNetworkFetch, decision)
+			fetchSpan.End(TraceResult{Status: "denied", Err: err})
 			j.Status = "failed"
-			j.Error = permissionError("diff_fetcher", PermissionNetworkFetch, decision).Error()
+			j.Error = err.Error()
 			_ = s.Store.Save(j)
 			return
 		}
 		fetchStarted := time.Now()
 		resolved, diff, err := fetchDiff(ctx, req.Source)
-		fetchTraceID := id("diff_fetcher" + j.ID)
-		fetchDuration := time.Since(fetchStarted).Milliseconds()
+		fetchEnded := time.Now()
+		fetchDuration := fetchEnded.Sub(fetchStarted).Milliseconds()
+		fetchResult := TraceResult{Output: fmt.Sprintf("diff_bytes=%d", len(diff)), Err: err}
+		if err != nil {
+			fetchResult.Output = ""
+		}
+		fetchSpan.End(fetchResult)
+		fetchTraceID := fetchSpan.ID()
 		if err != nil {
 			_ = s.Store.RecordToolCall(j.ID, fetchTraceID, "diff_fetcher", "failed", req.Source, "", err.Error(), fetchDuration)
 			j.Status = "failed"
 			j.Error = err.Error()
-			j.Trace = append(j.Trace, model.TraceEvent{ID: id(req.Source), Tool: "diff_fetcher", Input: req.Source, Output: err.Error(), At: time.Now(), Phase: "action"})
 			_ = s.Store.Save(j)
 			return
 		}
 		_ = s.Store.RecordToolCall(j.ID, fetchTraceID, "diff_fetcher", "succeeded", req.Source, fmt.Sprintf("diff_bytes=%d", len(diff)), "", fetchDuration)
 		j.Source, req.Diff = resolved, diff
 	}
-	if err := s.Loop.Run(ctx, ToolInput{Job: j, Diff: req.Diff}); err != nil {
+	if err := s.Loop.Run(ctx, ToolInput{Job: j, Diff: req.Diff, Tracer: recorder}); err != nil {
 		j.Status = "failed"
 		j.Error = err.Error()
+		recorder.Flush()
 		_ = s.Store.Save(j)
 		return
 	}
+	recorder.Flush()
 	if decision := s.Loop.Policy.Decide(PermissionLLMInference); decision != PermissionAllow {
 		j.Status = "failed"
 		j.Error = permissionError("subagent_review", PermissionLLMInference, decision).Error()
@@ -227,33 +276,37 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 		_ = s.Store.Save(j)
 		return
 	}
+	skillSpan := recorder.Start("input", "load_skill", "skill", "code-review", "")
 	skill, err := s.SkillLoader.Load("code-review")
 	if err != nil {
+		skillSpan.End(TraceResult{Err: err})
 		j.Status = "failed"
 		j.Error = fmt.Sprintf("加载 code-review skill 失败：%v", err)
 		_ = s.Store.Save(j)
 		return
 	}
-	skillTraceID := id("load_skill" + j.ID)
-	j.Trace = append(j.Trace, model.TraceEvent{ID: skillTraceID, Tool: "load_skill", Input: skill.Name, Output: "已加载完整 SKILL.md", At: time.Now(), Phase: "skill"})
-	_ = s.Store.RecordToolCall(j.ID, skillTraceID, "load_skill", "succeeded", skill.Name, "已加载完整 SKILL.md", "", 0)
+	skillSpan.End(TraceResult{Output: "已加载完整 SKILL.md"})
+	skillTraceID := skillSpan.ID()
+	skillDuration := skillSpan.DurationMs()
+	_ = s.Store.RecordToolCall(j.ID, skillTraceID, "load_skill", "succeeded", skill.Name, "已加载完整 SKILL.md", "", skillDuration)
 	memoryQuery := strings.TrimSpace(req.MemoryQuery)
 	if memoryQuery == "" {
 		memoryQuery = j.Source + "\n" + redact(req.Diff)
 	}
+	memorySpan := recorder.Start("input", "memory_recall", "memory", "review request", "")
 	memories, memoryErr := s.MemoryStore.Recall(memoryQuery)
 	if memoryErr != nil {
-		j.Trace = append(j.Trace, model.TraceEvent{ID: id("memory_recall" + j.ID), Tool: "memory_recall", Input: "review request", Output: memoryErr.Error(), At: time.Now(), Phase: "memory"})
+		memorySpan.End(TraceResult{Err: memoryErr})
+		_ = s.Store.RecordToolCall(j.ID, memorySpan.ID(), "memory_recall", "failed", "review request", "", memoryErr.Error(), memorySpan.DurationMs())
+	} else {
+		memoryOutput := fmt.Sprintf("召回 %d 条相关持久记忆", len(memories))
+		memorySpan.End(TraceResult{Output: memoryOutput})
+		_ = s.Store.RecordToolCall(j.ID, memorySpan.ID(), "memory_recall", "succeeded", "review request", memoryOutput, "", memorySpan.DurationMs())
 	}
 	promptContext := ReviewPromptContext{
 		Catalog:      s.SkillLoader.Catalog(),
 		SkillContent: skill.Content,
 		Memories:     renderMemories(memories),
-	}
-	if len(memories) > 0 {
-		memoryTraceID := id("memory_recall" + j.ID)
-		j.Trace = append(j.Trace, model.TraceEvent{ID: memoryTraceID, Tool: "memory_recall", Input: "review request", Output: fmt.Sprintf("召回 %d 条相关持久记忆", len(memories)), At: time.Now(), Phase: "memory"})
-		_ = s.Store.RecordToolCall(j.ID, memoryTraceID, "memory_recall", "succeeded", "review request", fmt.Sprintf("召回 %d 条相关持久记忆", len(memories)), "", 0)
 	}
 
 	// Each sub-agent starts with a fresh model conversation. The parent consumes
@@ -287,16 +340,17 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 			teamWarnings = true
 		}
 		toolName := "subagent_" + result.Name
-		traceID := id(toolName + j.ID)
+		traceID := result.TraceID
+		if traceID == "" {
+			traceID = id(toolName + j.ID)
+		}
 		if result.Error != nil {
-			j.Trace = append(j.Trace, model.TraceEvent{ID: traceID, Tool: toolName, Input: "独立专项审查", Output: result.Error.Error(), At: time.Now(), DurationMs: result.DurationMs, Phase: "subagent"})
 			_ = s.Store.RecordToolCall(j.ID, traceID, toolName, "failed", "独立专项审查", "", result.Error.Error(), result.DurationMs)
 			if s.Loop.Hooks != nil {
 				s.Loop.Hooks.Emit(ctx, HookToolError, HookContext{JobID: j.ID, Tool: toolName, Permission: PermissionLLMInference, Reason: "委派专项审查", Error: result.Error, DurationMs: result.DurationMs})
 			}
 			continue
 		}
-		j.Trace = append(j.Trace, model.TraceEvent{ID: traceID, Tool: toolName, Input: "独立专项审查", Output: "子 Agent 审查完成", ModelReply: result.Summary, At: time.Now(), DurationMs: result.DurationMs, Phase: "subagent"})
 		_ = s.Store.RecordToolCall(j.ID, traceID, toolName, "succeeded", "独立专项审查", "子 Agent 审查完成", "", result.DurationMs)
 		if s.Loop.Hooks != nil {
 			s.Loop.Hooks.Emit(ctx, HookPostToolUse, HookContext{JobID: j.ID, Tool: toolName, Permission: PermissionLLMInference, Reason: "委派专项审查", Output: "子 Agent 审查完成", DurationMs: result.DurationMs})
@@ -311,26 +365,32 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	// Persist this checkpoint before the final synthesis, which also lets the SSE
 	// endpoint show completed child tasks when the final model call is slow.
 	_ = s.Store.Save(j)
+	compactSpan := recorder.Start("input", "context_compact", "context", "汇总审查上下文", "")
 	compacted, err := s.ContextCompactor.Prepare(ctx, CompactRequest{
 		Messages:      contextMessages,
 		ActiveRequest: fmt.Sprintf("汇总对 %s 的代码审查子 Agent 报告", j.Source),
 		Summarize:     s.summarizeReviewContext,
 	})
 	if err != nil {
+		compactSpan.End(TraceResult{Err: err})
 		j.Status = "failed"
 		j.Error = fmt.Sprintf("压缩审查上下文失败：%v", err)
 		_ = s.Store.Save(j)
 		return
 	}
-	s.recordCompactionEvents(j, compacted.Events)
-	readID := ""
-	if len(j.Trace) > 0 {
-		readID = j.Trace[len(j.Trace)-1].ID
-	}
+	compactSpan.End(TraceResult{Output: fmt.Sprintf("产生 %d 条压缩事件", len(compacted.Events))})
+	s.recordCompactionEvents(j, recorder, compacted.Events)
 	prompt := BuildReviewSynthesisPrompt(promptContext, renderContextMessages(compacted.Messages))
-	modelStarted := time.Now()
-	reply, err := EinoReviewAgent(withGoalCondition(reviewCtx, req.Goal), s.Config, prompt)
+	modelSpan := recorder.Start("model", "deepseek-review", "reasoning", "prompt diff summary", "")
+	modelCtx := withGoalCondition(reviewCtx, req.Goal)
+	modelCtx = withTraceParent(modelCtx, modelSpan.ID())
+	reply, err := EinoReviewAgent(modelCtx, s.Config, prompt)
 	flushHarness()
+	modelResult := TraceResult{Output: "DeepSeek 审查完成", ModelReply: reply, Err: err}
+	if err != nil {
+		modelResult.Output = ""
+	}
+	modelDuration := modelSpan.End(modelResult)
 	var goalStop *GoalStopError
 	if errors.As(err, &goalStop) {
 		j.Status = "failed"
@@ -340,19 +400,16 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 		return
 	}
 	synthesisWarning := err != nil
-	modelTraceID := id("deepseek-review" + j.ID)
-	modelDuration := time.Since(modelStarted).Milliseconds()
+	modelTraceID := modelSpan.ID()
 	if err != nil {
 		_ = s.Store.RecordToolCall(j.ID, modelTraceID, "deepseek_review", "failed", "prompt diff summary", "", err.Error(), modelDuration)
 	} else {
 		_ = s.Store.RecordToolCall(j.ID, modelTraceID, "deepseek_review", "succeeded", "prompt diff summary", "DeepSeek 审查完成", "", modelDuration)
 	}
 	if err != nil {
-		j.Trace = append(j.Trace, model.TraceEvent{ID: id(err.Error()), Tool: "review-fallback", Input: "diff summary", Output: err.Error(), At: time.Now(), Phase: "reasoning"})
-		j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "low", Body: "DeepSeek 调用失败：" + err.Error(), TraceID: readID}}
+		j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "low", Body: "DeepSeek 调用失败：" + err.Error(), TraceID: modelTraceID}}
 	} else {
 		traceID := modelTraceID
-		j.Trace = append(j.Trace, model.TraceEvent{ID: traceID, Tool: "deepseek-review", Input: "prompt diff summary", Output: "DeepSeek 审查完成", ModelReply: reply, At: time.Now(), Phase: "reasoning"})
 		j.SpentCents = 1
 		findings := parseFindings(reply)
 		j.Comments = []model.ReviewComment{}
@@ -379,9 +436,8 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	} else {
 		j.Status = "completed"
 	}
-	j.UpdatedAt = time.Now()
 	s.extractReviewMemories(ctx, j, req)
-	s.completeReviewTask(j)
+	s.completeReviewTask(j, recorder)
 	_ = s.Store.Save(j)
 }
 
@@ -392,15 +448,22 @@ func reviewTaskSubject(req model.ReviewRequest) string {
 	return "代码审查: 已提交 diff"
 }
 
-func (s *Service) completeReviewTask(job *model.ReviewJob) {
+func (s *Service) completeReviewTask(job *model.ReviewJob, recorder *TraceRecorder) {
 	if job.TaskID == "" {
 		return
+	}
+	var span *TraceSpan
+	if recorder != nil {
+		span = recorder.Start("input", "task_complete", "task", job.TaskID, "")
 	}
 	_, unblocked, err := s.TaskStore.Complete(job.TaskID, "review-agent")
 	traceID := id("task_complete" + job.TaskID)
 	if err != nil {
-		job.Trace = append(job.Trace, model.TraceEvent{ID: traceID, Tool: "task_complete", Input: job.TaskID, Output: err.Error(), At: time.Now(), Phase: "task"})
-		_ = s.Store.RecordToolCall(job.ID, traceID, "task_complete", "failed", job.TaskID, "", err.Error(), 0)
+		if span != nil {
+			span.End(TraceResult{Err: err})
+			traceID = span.ID()
+		}
+		_ = s.Store.RecordToolCall(job.ID, traceID, "task_complete", "failed", job.TaskID, "", err.Error(), span.DurationMs())
 		return
 	}
 	output := "任务已完成"
@@ -411,8 +474,11 @@ func (s *Service) completeReviewTask(job *model.ReviewJob) {
 		}
 		output += "；解锁: " + strings.Join(subjects, ", ")
 	}
-	job.Trace = append(job.Trace, model.TraceEvent{ID: traceID, Tool: "task_complete", Input: job.TaskID, Output: output, At: time.Now(), Phase: "task"})
-	_ = s.Store.RecordToolCall(job.ID, traceID, "task_complete", "succeeded", job.TaskID, output, "", 0)
+	if span != nil {
+		span.End(TraceResult{Output: output})
+		traceID = span.ID()
+	}
+	_ = s.Store.RecordToolCall(job.ID, traceID, "task_complete", "succeeded", job.TaskID, output, "", span.DurationMs())
 }
 
 func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJob, req model.ReviewRequest) {
@@ -435,11 +501,23 @@ func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJo
 
 审查来源：%s
 审查结论：%s`, req.Source, comments)
-	reply, err := EinoReviewAgent(ctx, s.Config, prompt)
+	recorder := traceRecorderFrom(ctx)
+	var span *TraceSpan
+	if recorder != nil {
+		span = recorder.Start("model", "memory_extract", "memory", "review findings", "")
+	}
+	modelCtx := ctx
+	if span != nil {
+		modelCtx = withTraceParent(ctx, span.ID())
+	}
+	reply, err := EinoReviewAgent(modelCtx, s.Config, prompt)
 	traceID := id("memory_extract" + job.ID)
 	if err != nil {
-		job.Trace = append(job.Trace, model.TraceEvent{ID: traceID, Tool: "memory_extract", Input: "review findings", Output: err.Error(), At: time.Now(), Phase: "memory"})
-		_ = s.Store.RecordToolCall(job.ID, traceID, "memory_extract", "failed", "review findings", "", err.Error(), 0)
+		if span != nil {
+			span.End(TraceResult{Err: err})
+			traceID = span.ID()
+		}
+		_ = s.Store.RecordToolCall(job.ID, traceID, "memory_extract", "failed", "review findings", "", err.Error(), span.DurationMs())
 		return
 	}
 	candidates := parseMemoryCandidates(reply)
@@ -451,8 +529,11 @@ func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJo
 		}
 	}
 	output := fmt.Sprintf("提取 %d 条候选，保存 %d 条持久记忆", len(candidates), stored)
-	job.Trace = append(job.Trace, model.TraceEvent{ID: traceID, Tool: "memory_extract", Input: "review findings", Output: output, At: time.Now(), Phase: "memory"})
-	_ = s.Store.RecordToolCall(job.ID, traceID, "memory_extract", "succeeded", "review findings", output, "", 0)
+	if span != nil {
+		span.End(TraceResult{Output: output, ModelReply: reply})
+		traceID = span.ID()
+	}
+	_ = s.Store.RecordToolCall(job.ID, traceID, "memory_extract", "succeeded", "review findings", output, "", span.DurationMs())
 }
 
 func (s *Service) summarizeReviewContext(ctx context.Context, activeRequest, history string) (string, error) {
@@ -465,25 +546,34 @@ func (s *Service) summarizeReviewContext(ctx context.Context, activeRequest, his
 
 待压缩历史：
 %s`, activeRequest, history)
-	return EinoReviewAgent(ctx, s.Config, prompt)
+	recorder := traceRecorderFrom(ctx)
+	var span *TraceSpan
+	if recorder != nil {
+		span = recorder.Start("model", "context_summary", "context", activeRequest, "")
+	}
+	modelCtx := ctx
+	if span != nil {
+		modelCtx = withTraceParent(ctx, span.ID())
+	}
+	reply, err := EinoReviewAgent(modelCtx, s.Config, prompt)
+	if span != nil {
+		span.End(TraceResult{Output: "上下文摘要完成", ModelReply: reply, Err: err})
+	}
+	return reply, err
 }
 
-func (s *Service) recordCompactionEvents(job *model.ReviewJob, events []CompactionEvent) {
+func (s *Service) recordCompactionEvents(job *model.ReviewJob, recorder *TraceRecorder, events []CompactionEvent) {
 	for _, event := range events {
-		traceID := id("context_" + event.Stage + job.ID)
 		output := event.Message
 		if event.ArchivePath != "" {
 			output += " path=" + event.ArchivePath
 		}
-		job.Trace = append(job.Trace, model.TraceEvent{
-			ID:     traceID,
-			Tool:   "context_compact",
-			Input:  event.Stage,
-			Output: output,
-			At:     time.Now(),
-			Phase:  "context",
-		})
-		_ = s.Store.RecordToolCall(job.ID, traceID, "context_compact", "succeeded", event.Stage, output, "", 0)
+		traceID := id("context_" + event.Stage + job.ID)
+		duration := int64(0)
+		if recorder != nil {
+			traceID, duration = recorder.Record("input", "context_compact", "context", event.Stage, "", TraceResult{Output: output})
+		}
+		_ = s.Store.RecordToolCall(job.ID, traceID, "context_compact", "succeeded", event.Stage, output, "", duration)
 	}
 }
 

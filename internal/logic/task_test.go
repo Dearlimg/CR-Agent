@@ -87,7 +87,7 @@ func TestReviewTaskCompletesWithReviewJob(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: code-review\ndescription: Review\n---\n# Review"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(dao.NewJobStore(t.TempDir()), Config{SkillsDir: root, TasksDir: filepath.Join(root, "tasks"), MemoryDir: filepath.Join(root, "memory")})
+	service := NewService(dao.NewJobStore(t.TempDir()), Config{SkillsDir: root, TasksDir: filepath.Join(root, "tasks"), MemoryDir: filepath.Join(root, "memory"), BackgroundTasksDir: filepath.Join(root, "background")})
 	job, err := service.Create(model.ReviewRequest{Diff: "diff --git a/a.go b/a.go\n+package a"})
 	if err != nil {
 		t.Fatal(err)

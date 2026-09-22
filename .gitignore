@@ -12,4 +12,5 @@ coverage.out
 .transcripts/
 .memory/
 .tasks/
+.background-tasks/
 *.exe

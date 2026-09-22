@@ -14,6 +14,7 @@ type Config struct {
 	SkillsDir            string
 	MemoryDir            string
 	TasksDir             string
+	BackgroundTasksDir   string
 	MemoryMaxRecall      int
 	MemoryMaxChars       int
 	MemoryConsolidateAt  int
@@ -45,6 +46,7 @@ func LoadConfig() Config {
 		SkillsDir:            b("AGENT_SKILLS_DIR", "skills"),
 		MemoryDir:            b("AGENT_MEMORY_DIR", ".memory"),
 		TasksDir:             b("AGENT_TASKS_DIR", ".tasks"),
+		BackgroundTasksDir:   b("AGENT_BACKGROUND_TASKS_DIR", ".background-tasks"),
 		MemoryMaxRecall:      intEnv(b, "MEMORY_MAX_RECALL", 5),
 		MemoryMaxChars:       intEnv(b, "MEMORY_MAX_CHARS", 6000),
 		MemoryConsolidateAt:  intEnv(b, "MEMORY_CONSOLIDATE_AT", 10),

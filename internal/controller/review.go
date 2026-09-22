@@ -25,6 +25,46 @@ func (c *ReviewController) Register(r *gin.Engine) {
 	r.PATCH("/api/tasks/:id/dependencies", c.addTaskDependencies)
 	r.POST("/api/tasks/:id/claim", c.claimTask)
 	r.POST("/api/tasks/:id/complete", c.completeTask)
+	r.GET("/api/background-tasks", c.listBackgroundTasks)
+	r.GET("/api/background-tasks/notifications", c.collectBackgroundNotifications)
+	r.GET("/api/background-tasks/:id", c.getBackgroundTask)
+	r.POST("/api/background-tasks/:id/cancel", c.cancelBackgroundTask)
+}
+
+func (c *ReviewController) listBackgroundTasks(x *gin.Context) {
+	tasks, err := c.Service.Background.List()
+	if err != nil {
+		x.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, gin.H{"tasks": tasks})
+}
+
+func (c *ReviewController) collectBackgroundNotifications(x *gin.Context) {
+	tasks, err := c.Service.Background.Collect()
+	if err != nil {
+		x.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, gin.H{"notifications": tasks})
+}
+
+func (c *ReviewController) getBackgroundTask(x *gin.Context) {
+	task, err := c.Service.Background.Get(x.Param("id"))
+	if err != nil {
+		x.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, task)
+}
+
+func (c *ReviewController) cancelBackgroundTask(x *gin.Context) {
+	task, err := c.Service.Background.Cancel(x.Param("id"))
+	if err != nil {
+		x.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, task)
 }
 
 type createTaskRequest struct {

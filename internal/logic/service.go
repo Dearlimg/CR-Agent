@@ -20,6 +20,7 @@ type Service struct {
 	ContextCompactor *ContextCompactor
 	MemoryStore      *MemoryStore
 	TaskStore        *TaskStore
+	Background       *BackgroundManager
 }
 
 func NewService(store dao.Store, cfg Config) *Service {
@@ -56,6 +57,7 @@ func NewService(store dao.Store, cfg Config) *Service {
 		ContextCompactor: NewContextCompactor(cfg),
 		MemoryStore:      NewMemoryStore(cfg),
 		TaskStore:        NewTaskStore(cfg.TasksDir),
+		Background:       NewBackgroundManager(cfg.BackgroundTasksDir),
 	}
 }
 func renderTodos(todos []model.TodoItem) string {
@@ -84,17 +86,33 @@ func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 	if _, err := s.TaskStore.Claim(task.ID, "review-agent"); err != nil {
 		return nil, err
 	}
+	backgroundTask, err := s.Background.Create("后台代码审查")
+	if err != nil {
+		return nil, err
+	}
 	todos := []model.TodoItem{}
 	for order, step := range s.Loop.Plan {
 		todos = append(todos, model.TodoItem{Content: step.Reason, Status: "pending", Order: order})
 	}
-	j := &model.ReviewJob{ID: id(req.Source + req.Diff), TaskID: task.ID, Status: "queued", Source: req.Source, UpdatedAt: time.Now(), Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}, Todos: todos}
+	j := &model.ReviewJob{ID: id(req.Source + req.Diff), TaskID: task.ID, BackgroundTaskID: backgroundTask.ID, Status: "queued", Source: req.Source, UpdatedAt: time.Now(), Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}, Todos: todos}
 	j.Trace = append(j.Trace, model.TraceEvent{ID: id("task_create" + task.ID), Tool: "task_create", Input: task.Subject, Output: task.ID, At: time.Now(), Phase: "task"})
 	j.Trace = append(j.Trace, model.TraceEvent{ID: id("task_claim" + task.ID), Tool: "task_claim", Input: task.ID, Output: "owner=review-agent", At: time.Now(), Phase: "task"})
+	j.Trace = append(j.Trace, model.TraceEvent{ID: id("background_start" + backgroundTask.ID), Tool: "background_start", Input: "代码审查", Output: backgroundTask.ID, At: time.Now(), Phase: "background"})
 	if err := s.Store.Save(j); err != nil {
 		return nil, err
 	}
-	go s.run(context.Background(), j, req)
+	if err := s.Background.Launch(backgroundTask.ID, func(ctx context.Context) (string, error) {
+		s.run(ctx, j, req)
+		if j.Status != "completed" {
+			return "", fmt.Errorf("审查任务失败：%s", j.Error)
+		}
+		return fmt.Sprintf("审查任务 %s 已完成", j.ID), nil
+	}); err != nil {
+		j.Status = "failed"
+		j.Error = fmt.Sprintf("启动后台审查失败：%v", err)
+		_ = s.Store.Save(j)
+		return nil, err
+	}
 	return j, nil
 }
 func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewRequest) {
@@ -249,6 +267,13 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 		if len(j.Comments) == 0 {
 			j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "high", Body: "未发现需要评论的问题。", TraceID: traceID}}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		j.Status = "failed"
+		j.Error = "后台审查已取消"
+		j.UpdatedAt = time.Now()
+		_ = s.Store.Save(j)
+		return
 	}
 	j.Status = "completed"
 	j.UpdatedAt = time.Now()

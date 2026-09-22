@@ -71,6 +71,16 @@ Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。每�
 包含 `task_id`，审查完成后任务自动完成。失败的审查任务会保留 `in_progress`，以便
 恢复或人工检查，而不会被错误标记为已完成。
 
+## 后台任务
+
+后台任务将服务端注册的慢操作放到独立 Goroutine 中执行，创建后立刻返回 `bg_<id>`，
+主请求无需等待。任务元数据保存在 `.background-tasks/`，状态包括 `pending`、
+`running`、`completed`、`failed` 和 `cancelled`。服务重启后无法安全恢复原内存 Runner，
+因此会将未结束任务标记为 failed，并提供可消费一次的完成通知。
+
+审查请求自动使用后台 Runner，返回的 Job 中包含 `background_task_id`。为避免将服务变成
+任意命令执行入口，HTTP API 不接受 shell command；后台执行只能由后端注册 Runner。
+
 ## API
 
 - `POST /api/reviews`：`{"source":"...","diff":"...","memory_query":"...","budget_cents":1000}`
@@ -82,6 +92,9 @@ Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。每�
 - `GET /api/tasks` / `GET /api/tasks/:id`：列出或读取任务
 - `PATCH /api/tasks/:id/dependencies`：添加 `{"blocked_by":["task_..."]}`
 - `POST /api/tasks/:id/claim` / `complete`：以 `{"owner":"agent"}` 认领或完成任务
+- `GET /api/background-tasks` / `:id`：列出或读取后台任务
+- `GET /api/background-tasks/notifications`：一次性收集已完成通知
+- `POST /api/background-tasks/:id/cancel`：请求取消运行中的后台任务
 
 ## 目录结构
 
@@ -92,6 +105,7 @@ internal/logic/          # 审查流程编排与业务规则
 internal/dao/            # checkpoint / 任务存储，后续替换 MySQL、Redis
 internal/model/          # 请求、任务、评论、trace 模型
 .tasks/                  # 运行时持久化任务图（自动忽略）
+.background-tasks/       # 运行时后台任务元数据（自动忽略）
 web/                     # 独立前端页面
 ```
 

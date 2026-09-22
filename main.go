@@ -87,6 +87,18 @@ func newID(s string) string {
 func runReview(ctx context.Context, j *ReviewJob, req ReviewRequest, cfg Config) {
 	j.Status = "running"
 	saveJob(j)
+	if strings.TrimSpace(req.Diff) == "" {
+		resolved, diff, err := fetchDiff(ctx, req.Source)
+		if err != nil {
+			j.Status = "failed"
+			j.Error = err.Error()
+			j.Trace = append(j.Trace, TraceEvent{ID: newID(req.Source), Tool: "diff_fetcher", Input: redact(req.Source), Output: err.Error(), At: time.Now()})
+			saveJob(j)
+			return
+		}
+		j.Source = resolved
+		req.Diff = diff
+	}
 	input := redact(req.Diff)
 	tid := newID(input)
 	ev := TraceEvent{ID: tid, Tool: "diff_reader", Input: input, At: time.Now()}

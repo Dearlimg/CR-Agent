@@ -110,11 +110,15 @@ func TestMCPToolNameCollisionAfterNormalization(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := manager.Connect(context.Background(), server); err != nil {
+		_, err := manager.Connect(context.Background(), server)
+		if server == "docs.one" && err != nil {
 			t.Fatal(err)
 		}
+		if server == "docs_one" && (err == nil || !strings.Contains(err.Error(), "collision")) {
+			t.Fatalf("collision err=%v", err)
+		}
 	}
-	if _, err := manager.AssembleToolPool(); err == nil || !strings.Contains(err.Error(), "collision") {
-		t.Fatalf("collision err=%v", err)
+	if pool, err := manager.AssembleToolPool(); err != nil || len(pool) != 1 {
+		t.Fatalf("failed connect poisoned pool: %#v %v", pool, err)
 	}
 }

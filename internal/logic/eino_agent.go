@@ -7,16 +7,56 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
-	"github.com/cloudwego/eino/flow/agent/react"
+	modeloptions "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
 
-// EinoReviewAgent exposes the review model through Eino's ReAct agent.
-// Tool execution remains owned by our harness so every call is persisted in trace.
+// EinoReviewAgent binds Eino inference to the host-owned model/tool loop.
+// Service-provided setup supplies job-scoped tools and trace recording.
 func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, error) {
 	if strings.TrimSpace(cfg.DeepSeekAPIKey) == "" {
 		return "", fmt.Errorf("DEEPSEEK_API_KEY 未配置")
 	}
+	chat, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+		APIKey: cfg.DeepSeekAPIKey, Model: "deepseek-chat",
+		BaseURL: strings.TrimRight(cfg.DeepSeekBaseURL, "/") + "/v1",
+	})
+	if err != nil {
+		return "", err
+	}
+	harness := newReviewHarness()
+	harness.Compactor = NewContextCompactor(cfg)
+	if setup, ok := ctx.Value(harnessSetupKey{}).(func(*ReviewHarness)); ok {
+		setup(harness)
+	} else {
+		// Summaries and memory extraction do not need side-effecting tools.
+		harness.tools = map[string]harnessTool{}
+	}
+	harness.Model = func(ctx context.Context, messages []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
+		bound, err := chat.WithTools(tools)
+		if err != nil {
+			return nil, err
+		}
+		for _, budget := range []int{4096, 8192} {
+			reply, err := retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
+				return bound.Generate(ctx, messages, modeloptions.WithMaxTokens(budget))
+			})
+			if err != nil {
+				return nil, err
+			}
+			if reply == nil {
+				return nil, fmt.Errorf("模型返回空响应")
+			}
+			if reply.ResponseMeta == nil || reply.ResponseMeta.FinishReason != "length" {
+				return reply, nil
+			}
+		}
+		return nil, fmt.Errorf("模型输出达到 token 上限，拒绝执行不完整工具调用")
+	}
+	return harness.Run(ctx, prompt)
+}
+
+func retryHarnessInference(ctx context.Context, cfg Config, generate func() (*schema.Message, error)) (*schema.Message, error) {
 	maxRetries := cfg.ModelMaxRetries
 	if maxRetries < 0 {
 		maxRetries = 0
@@ -31,7 +71,7 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 	var lastErr error
 	retries := 0
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		result, err := runEinoReviewAgent(ctx, cfg, prompt)
+		result, err := generate()
 		if err == nil {
 			return result, nil
 		}
@@ -48,27 +88,11 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return "", ctx.Err()
+			return nil, ctx.Err()
 		case <-timer.C:
 		}
 	}
-	return "", fmt.Errorf("模型调用失败（已重试 %d 次）: %w", retries, lastErr)
-}
-
-func runEinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, error) {
-	model, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{APIKey: cfg.DeepSeekAPIKey, Model: "deepseek-chat", BaseURL: strings.TrimRight(cfg.DeepSeekBaseURL, "/") + "/v1"})
-	if err != nil {
-		return "", err
-	}
-	agent, err := react.NewAgent(ctx, &react.AgentConfig{ToolCallingModel: model, MaxStep: 4})
-	if err != nil {
-		return "", err
-	}
-	msg, err := agent.Generate(ctx, []*schema.Message{{Role: schema.User, Content: prompt}})
-	if err != nil {
-		return "", err
-	}
-	return msg.Content, nil
+	return nil, fmt.Errorf("模型调用失败（已重试 %d 次）: %w", retries, lastErr)
 }
 
 func isRetryableModelError(err error) bool {
@@ -87,6 +111,7 @@ func isRetryableModelError(err error) bool {
 		"http 502",
 		"http 503",
 		"http 504",
+		"http 529",
 	} {
 		if strings.Contains(message, marker) {
 			return true

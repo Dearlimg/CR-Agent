@@ -8,6 +8,7 @@ import (
 type HookEvent string
 
 const (
+	HookUserPromptSubmit HookEvent = "user_prompt_submit"
 	HookLoopStart        HookEvent = "loop_start"
 	HookPreToolUse       HookEvent = "pre_tool_use"
 	HookPostToolUse      HookEvent = "post_tool_use"

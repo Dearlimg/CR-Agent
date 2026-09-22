@@ -239,6 +239,29 @@ func (m *MCPManager) Connect(ctx context.Context, name string) (string, error) {
 		m.mu.Unlock()
 		return fmt.Sprintf("MCP server %q already connected", name), nil
 	}
+	origins := map[string]bool{}
+	for server, connected := range m.clients {
+		for _, tool := range connected.Tools() {
+			prefixed, err := PrefixedMCPToolName(server, tool.Name)
+			if err != nil {
+				m.mu.Unlock()
+				return "", err
+			}
+			origins[prefixed] = true
+		}
+	}
+	for _, tool := range tools {
+		prefixed, err := PrefixedMCPToolName(name, tool.Name)
+		if err != nil {
+			m.mu.Unlock()
+			return "", err
+		}
+		if origins[prefixed] {
+			m.mu.Unlock()
+			return "", fmt.Errorf("MCP tool name collision after normalization: %q", prefixed)
+		}
+		origins[prefixed] = true
+	}
 	m.clients[name] = client
 	m.mu.Unlock()
 	return fmt.Sprintf("MCP server %q connected (%d tools)", name, len(tools)), nil
@@ -321,6 +344,10 @@ func (m *MCPManager) RegisterClientTools(registry *ToolRegistry, server string) 
 		rawName := spec.RawName
 		mcpClient := client
 		registry.RegisterWithPermission(spec.Name, spec.Permission, func(ctx context.Context, in ToolInput) (ToolResult, error) {
+			decision := m.policy.Decide(server, rawName)
+			if decision != PermissionAllow {
+				return ToolResult{Output: fmt.Sprintf("MCP permission: %s", decision)}, nil
+			}
 			output, callErr := mcpClient.CallTool(ctx, rawName, in.Args)
 			if callErr != nil {
 				return ToolResult{Output: callErr.Error()}, nil
@@ -352,10 +379,6 @@ var mcpNamePattern = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 func NormalizeMCPName(name string) string {
 	return mcpNamePattern.ReplaceAllString(strings.TrimSpace(name), "_")
-}
-
-func normalizeMCPName(name string) string {
-	return NormalizeMCPName(name)
 }
 
 func PrefixedMCPToolName(server, tool string) (string, error) {

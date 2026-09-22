@@ -81,7 +81,16 @@ Lead 负责向调用方交付最终结论；专项队友只负责 correctness、
 
 专项任务同样写入共享 `.tasks/` 任务板，按 `pending → in_progress → completed` 原子认领；失败不会被标记为完成。这个迭代刻意不让队友执行代码、修改仓库或发布评论，仍沿用受限的只读审查工具边界。当前队友生命周期限定在单次审查 Job；跨 Job 的长期驻留、动态任务拆分和 worktree 隔离是后续扩展，而不是已实现能力。
 
-## MCP 工具
+## S15 集成 Harness
+
+Lead 和专项审查员现已使用同一个模型工具循环：每轮组装工具与 MCP 状态，执行模型
+返回的工具调用，经过宿主权限及 Hooks 后，把结果用正确的 tool call ID 返回下一轮。
+Skills、记忆、会话 Todo、任务图和后台静态检查都接入这条路径；工具调用写入审查 trace。
+模型请求的重试只发生在推理边界，已完成的工具不会因模型重试而重新执行。
+
+详细课程对照、验收和尚未实现的持久队友/worktree 等差异见 [S15 对照说明](docs/s15-harness.md)。
+
+### MCP 接入
 
 Harness 提供了 transport-agnostic 的 MCP 层：`MCPClient` 保存 server 返回的工具定义和
 调用入口，`MCPManager.Connect` 负责连接与发现，`AssembleToolPool` 负责把工具以

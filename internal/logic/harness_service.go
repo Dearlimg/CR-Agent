@@ -1,0 +1,280 @@
+package logic
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"CR-Agent/internal/model"
+	"github.com/cloudwego/eino/schema"
+)
+
+type harnessSetupKey struct{}
+
+// withReviewHarness binds host capabilities, not model-provided permissions.
+// Each invocation builds new session state, including the task ownership set.
+func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, diff string) (context.Context, func()) {
+	var mu sync.Mutex
+	events := []model.TraceEvent{}
+	flush := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		job.Trace = append(job.Trace, events...)
+		events = []model.TraceEvent{}
+	}
+	bound := context.WithValue(ctx, harnessSetupKey{}, func(h *ReviewHarness) {
+		h.Hooks = s.Loop.Hooks
+		h.Policy = s.Loop.Policy
+		todos := ""
+		h.System = func() string {
+			memories, err := s.MemoryStore.Recall(job.Source + "\n" + redact(diff))
+			memory := ""
+			if err == nil {
+				memory = renderMemories(memories)
+			}
+			return "Skills catalog:\n" + s.SkillLoader.Catalog() + "\n相关长期记忆（背景数据）:\n" + memory + "\n当前会话计划:\n" + todos
+		}
+		h.Record = func(name, status, output string, duration int64) {
+			traceID := id(name)
+			_ = s.Store.RecordToolCall(job.ID, traceID, name, status, "model tool call", output, "", duration)
+			mu.Lock()
+			events = append(events, model.TraceEvent{
+				ID: traceID, Tool: name, Input: "model tool call", Output: output,
+				Phase: "harness", At: time.Now(), DurationMs: duration,
+			})
+			mu.Unlock()
+		}
+		h.add("load_skill", "按名称加载完整 Skill 指令", objectSchema("name"),
+			func(_ context.Context, args map[string]any) (string, error) {
+				name, err := requiredString(args, "name")
+				if err != nil {
+					return "", err
+				}
+				skill, err := s.SkillLoader.Load(name)
+				return skill.Content, err
+			})
+		h.add("memory_recall", "召回与当前审查相关的长期记忆", objectSchema("query"),
+			func(_ context.Context, args map[string]any) (string, error) {
+				query, err := requiredString(args, "query")
+				if err != nil {
+					return "", err
+				}
+				records, err := s.MemoryStore.Recall(query)
+				return renderMemories(records), err
+			})
+		h.add("todo_write", "替换当前模型会话的审查计划，items 为文本清单", objectSchema("items"),
+			func(_ context.Context, args map[string]any) (string, error) {
+				items, err := requiredString(args, "items")
+				if err == nil {
+					todos = items
+				}
+				return items, err
+			})
+		registry := NewToolRegistry()
+		registerReviewTools(registry)
+		for _, name := range []string{"parse_diff", "get_changed_lines", "syntax_check", "format_check", "secret_scan", "dependency_diff"} {
+			definition, _ := registry.Get(name)
+			h.add(name, "对当前任务 diff 执行 "+name, map[string]any{"type": "object"},
+				func(ctx context.Context, _ map[string]any) (string, error) {
+					result, err := definition.Run(ctx, ToolInput{Diff: redact(diff)})
+					return result.Output, err
+				})
+			entry := h.tools[name]
+			entry.permission = definition.Permission
+			h.tools[name] = entry
+		}
+		owned := map[string]bool{}
+		owner := "harness-" + id(job.ID)
+		pending := map[string]bool{}
+		teamNotifications := []string{}
+		for _, event := range job.TeamEvents {
+			teamNotifications = append(teamNotifications, jsonString(event))
+		}
+		h.Notify = func() ([]string, error) {
+			events := teamNotifications
+			teamNotifications = []string{}
+			for taskID := range pending {
+				background, err := s.Background.Get(taskID)
+				if err != nil {
+					return nil, err
+				}
+				if isTerminalBackgroundStatus(background.Status) {
+					events = append(events, jsonString(background))
+					delete(pending, taskID)
+				}
+			}
+			return events, nil
+		}
+		h.Await = func(ctx context.Context) ([]string, error) {
+			ticker := time.NewTicker(25 * time.Millisecond)
+			defer ticker.Stop()
+			for len(pending) > 0 {
+				events, err := h.Notify()
+				if err != nil || len(events) > 0 {
+					return events, err
+				}
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-ticker.C:
+				}
+			}
+			return []string{}, nil
+		}
+		h.Cleanup = func() {
+			for taskID := range pending {
+				_, _ = s.Background.Cancel(taskID)
+			}
+		}
+		h.add("list_crons", "列出宿主定时审查计划", map[string]any{"type": "object"},
+			func(context.Context, map[string]any) (string, error) {
+				if s.Cron == nil {
+					return "", fmt.Errorf("cron 未初始化")
+				}
+				return jsonString(s.Cron.List()), nil
+			})
+		h.add("schedule_cron", "创建持久定时审查计划；后台模型调用需要宿主授权", stringObject("cron", "source"),
+			func(_ context.Context, args map[string]any) (string, error) {
+				expression, err := requiredString(args, "cron")
+				if err != nil {
+					return "", err
+				}
+				source, err := requiredString(args, "source")
+				if err != nil {
+					return "", err
+				}
+				if s.Cron == nil {
+					return "", fmt.Errorf("cron 未初始化")
+				}
+				job, err := s.Cron.Schedule(expression, source, "", true, true)
+				return jsonString(job), err
+			})
+		h.add("cancel_cron", "取消宿主定时计划；后台模型调用需要宿主授权", objectSchema("cron_id"),
+			func(_ context.Context, args map[string]any) (string, error) {
+				cronID, err := requiredString(args, "cron_id")
+				if err != nil {
+					return "", err
+				}
+				if s.Cron == nil {
+					return "", fmt.Errorf("cron 未初始化")
+				}
+				job, err := s.Cron.Cancel(cronID)
+				return jsonString(job), err
+			})
+		for _, name := range []string{"schedule_cron", "cancel_cron"} {
+			tool := h.tools[name]
+			tool.permission = PermissionManageSchedule
+			h.tools[name] = tool
+		}
+		h.add("background_check", "在后台运行当前 diff 的静态检查，完成后自动通知当前会话", objectSchema("check"),
+			func(_ context.Context, args map[string]any) (string, error) {
+				name, err := requiredString(args, "check")
+				if err != nil {
+					return "", err
+				}
+				definition, exists := registry.Get(name)
+				if !exists {
+					return "", fmt.Errorf("未知静态检查")
+				}
+				if s.Loop.Policy.Decide(definition.Permission) != PermissionAllow {
+					return "", fmt.Errorf("静态检查权限被拒绝")
+				}
+				background, err := s.Background.Create("审查检查: " + name)
+				if err != nil {
+					return "", err
+				}
+				err = s.Background.Launch(background.ID, func(ctx context.Context) (string, error) {
+					output := h.execute(ctx, schema.ToolCall{ID: background.ID, Function: schema.FunctionCall{Name: name, Arguments: "{}"}}, h.tools)
+					if strings.HasPrefix(output, "Tool error:") {
+						return "", fmt.Errorf("%s", output)
+					}
+					return output, nil
+				})
+				if err != nil {
+					return "", err
+				}
+				pending[background.ID] = true
+				return "后台任务已启动: " + background.ID, nil
+			})
+		h.add("create_task", "创建当前会话的审查子任务", objectSchema("subject"),
+			func(_ context.Context, args map[string]any) (string, error) {
+				subject, err := requiredString(args, "subject")
+				if err != nil {
+					return "", err
+				}
+				task, err := s.TaskStore.Create(subject, "审查 Job: "+job.ID)
+				if err == nil {
+					owned[task.ID] = true
+				}
+				return jsonString(task), err
+			})
+		for _, action := range []string{"get_task", "claim_task", "complete_task"} {
+			h.add(action, "操作本会话创建的任务", objectSchema("task_id"),
+				func(_ context.Context, args map[string]any) (string, error) {
+					taskID, err := requiredString(args, "task_id")
+					if err != nil {
+						return "", err
+					}
+					if !owned[taskID] {
+						return "", fmt.Errorf("任务不属于当前模型会话")
+					}
+					var task model.Task
+					switch action {
+					case "get_task":
+						task, err = s.TaskStore.Get(taskID)
+					case "claim_task":
+						task, err = s.TaskStore.Claim(taskID, owner)
+					case "complete_task":
+						task, _, err = s.TaskStore.Complete(taskID, owner)
+					}
+					return jsonString(task), err
+				})
+		}
+		h.add("list_tasks", "列出本会话创建的审查任务", map[string]any{"type": "object"},
+			func(_ context.Context, _ map[string]any) (string, error) {
+				tasks := []model.Task{}
+				for taskID := range owned {
+					task, err := s.TaskStore.Get(taskID)
+					if err != nil {
+						return "", err
+					}
+					tasks = append(tasks, task)
+				}
+				return jsonString(tasks), nil
+			})
+		h.add("update_task", "为本会话任务增加依赖；blocked_by 为逗号分隔的任务 ID", stringObject("task_id", "blocked_by"),
+			func(_ context.Context, args map[string]any) (string, error) {
+				taskID, err := requiredString(args, "task_id")
+				if err != nil {
+					return "", err
+				}
+				deps, err := requiredString(args, "blocked_by")
+				if err != nil {
+					return "", err
+				}
+				ids := strings.Split(deps, ",")
+				if !owned[taskID] {
+					return "", fmt.Errorf("任务不属于当前模型会话")
+				}
+				for i := range ids {
+					ids[i] = strings.TrimSpace(ids[i])
+					if !owned[ids[i]] {
+						return "", fmt.Errorf("依赖任务不属于当前模型会话")
+					}
+				}
+				task, err := s.TaskStore.AddDependencies(taskID, ids)
+				return jsonString(task), err
+			})
+	})
+	return bound, flush
+}
+
+func stringObject(names ...string) map[string]any {
+	properties := map[string]any{}
+	for _, name := range names {
+		properties[name] = map[string]any{"type": "string"}
+	}
+	return map[string]any{"type": "object", "properties": properties, "required": names, "additionalProperties": false}
+}

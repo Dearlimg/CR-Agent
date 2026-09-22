@@ -4,6 +4,7 @@ import (
 	"CR-Agent/internal/model"
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -23,16 +24,26 @@ type ToolDefinition struct {
 	Permission Permission
 	Run        Tool
 }
-type ToolRegistry struct{ tools map[string]ToolDefinition }
+type ToolRegistry struct {
+	mu    sync.RWMutex
+	tools map[string]ToolDefinition
+}
 
 func NewToolRegistry() *ToolRegistry { return &ToolRegistry{tools: map[string]ToolDefinition{}} }
 func (r *ToolRegistry) Register(name string, tool Tool) {
 	r.RegisterWithPermission(name, PermissionReadDiff, tool)
 }
 func (r *ToolRegistry) RegisterWithPermission(name string, permission Permission, tool Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.tools[name] = ToolDefinition{Permission: permission, Run: tool}
 }
-func (r *ToolRegistry) Get(name string) (ToolDefinition, bool) { t, ok := r.tools[name]; return t, ok }
+func (r *ToolRegistry) Get(name string) (ToolDefinition, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, ok := r.tools[name]
+	return t, ok
+}
 
 type LoopStep struct {
 	Tool   string
@@ -49,16 +60,21 @@ type AgentLoop struct {
 }
 
 func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
-	if a.MaxSteps <= 0 {
-		a.MaxSteps = len(a.Plan)
+	maxSteps := a.MaxSteps
+	if maxSteps <= 0 {
+		maxSteps = len(a.Plan)
 	}
 	if a.Hooks != nil {
 		a.Hooks.Emit(ctx, HookLoopStart, HookContext{JobID: input.Job.ID})
+		defer a.Hooks.Emit(ctx, HookLoopStop, HookContext{JobID: input.Job.ID})
 	}
 	roundsSinceTodo := 0
 	for i, step := range a.Plan {
-		if i >= a.MaxSteps {
-			return fmt.Errorf("agent loop 超过最大步数 %d", a.MaxSteps)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if i >= maxSteps {
+			return fmt.Errorf("agent loop 超过最大步数 %d", maxSteps)
 		}
 		tool, ok := a.Registry.Get(step.Tool)
 		if !ok {
@@ -79,7 +95,10 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 			return err
 		}
 		if a.Hooks != nil {
-			a.Hooks.Emit(ctx, HookPreToolUse, HookContext{JobID: input.Job.ID, Tool: step.Tool, Permission: tool.Permission, Reason: step.Reason})
+			pre := a.Hooks.Emit(ctx, HookPreToolUse, HookContext{JobID: input.Job.ID, Tool: step.Tool, Permission: tool.Permission, Reason: step.Reason})
+			if pre.Error != nil {
+				return pre.Error
+			}
 		}
 		started := time.Now()
 		toolInput := input
@@ -124,14 +143,8 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 			input.Job.Comments = result.Comments
 		}
 		if result.Done {
-			if a.Hooks != nil {
-				a.Hooks.Emit(ctx, HookLoopStop, HookContext{JobID: input.Job.ID})
-			}
 			return nil
 		}
-	}
-	if a.Hooks != nil {
-		a.Hooks.Emit(ctx, HookLoopStop, HookContext{JobID: input.Job.ID})
 	}
 	return nil
 }

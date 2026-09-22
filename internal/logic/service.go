@@ -245,7 +245,9 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 			s.Loop.Hooks.Emit(ctx, HookPreToolUse, HookContext{JobID: j.ID, Tool: "subagent_" + name, Permission: PermissionLLMInference, Reason: "委派专项审查"})
 		}
 	}
-	subResults, teamEvents, teamErr := s.Team.Run(ctx, j.ID, j.TaskID, req.Diff, promptContext)
+	reviewCtx, flushHarness := s.withReviewHarness(ctx, j, req.Diff)
+	subResults, teamEvents, teamErr := s.Team.Run(reviewCtx, j.ID, j.TaskID, req.Diff, promptContext)
+	flushHarness()
 	if teamErr != nil {
 		j.Status = "failed"
 		j.Error = fmt.Sprintf("团队专项审查失败：%v", teamErr)
@@ -309,7 +311,8 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	}
 	prompt := BuildReviewSynthesisPrompt(promptContext, renderContextMessages(compacted.Messages))
 	modelStarted := time.Now()
-	reply, err := EinoReviewAgent(ctx, s.Config, prompt)
+	reply, err := EinoReviewAgent(reviewCtx, s.Config, prompt)
+	flushHarness()
 	synthesisWarning := err != nil
 	modelTraceID := id("deepseek-review" + j.ID)
 	modelDuration := time.Since(modelStarted).Milliseconds()

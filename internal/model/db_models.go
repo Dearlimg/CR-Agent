@@ -30,9 +30,9 @@ func (DBReviewJob) TableName() string { return "review_jobs" }
 
 type DBReviewComment struct {
 	ID          uint      `gorm:"primaryKey"`
-	JobID       uint      `gorm:"not null;index:idx_review_comment_job_created;uniqueIndex:idx_review_comment_fingerprint"`
+	JobID       uint      `gorm:"not null;index:idx_review_comment_job_created;index:idx_review_comment_fingerprint"`
 	TraceID     string    `gorm:"size:32;not null;index"`
-	Fingerprint string    `gorm:"size:64;not null;uniqueIndex:idx_review_comment_fingerprint"`
+	Fingerprint string    `gorm:"size:64;not null;index:idx_review_comment_fingerprint"`
 	File        string    `gorm:"size:512;not null"`
 	Line        int       `gorm:"not null;default:1"`
 	Severity    string    `gorm:"size:16;not null;index"`
@@ -64,7 +64,7 @@ type DBToolCall struct {
 	ID             uint      `gorm:"primaryKey"`
 	JobID          uint      `gorm:"not null;index"`
 	TraceID        string    `gorm:"size:32;not null;index"`
-	IdempotencyKey string    `gorm:"size:128;not null;uniqueIndex"`
+	IdempotencyKey string    `gorm:"size:128;not null;index"`
 	Tool           string    `gorm:"size:64;not null;index"`
 	Status         string    `gorm:"size:16;not null;index"`
 	InputHash      string    `gorm:"size:64;not null"`
@@ -78,10 +78,10 @@ func (DBToolCall) TableName() string { return "tool_calls" }
 
 type DBTodoItem struct {
 	ID        uint      `gorm:"primaryKey"`
-	JobID     uint      `gorm:"not null;index;uniqueIndex:idx_todo_job_order"`
+	JobID     uint      `gorm:"not null;index:idx_todo_job_order"`
 	Content   string    `gorm:"type:text;not null"`
 	Status    string    `gorm:"size:16;not null;index"`
-	SortOrder int       `gorm:"not null;uniqueIndex:idx_todo_job_order"`
+	SortOrder int       `gorm:"not null;index:idx_todo_job_order"`
 	CreatedAt time.Time `gorm:"not null"`
 	UpdatedAt time.Time `gorm:"not null"`
 }

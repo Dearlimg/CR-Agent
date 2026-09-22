@@ -60,6 +60,17 @@ Memory 用于跨审查任务保留可复用知识，不保存完整 transcript�
 `persistent` scope、通过临时性与敏感信息检查、并且不与已有记录重复。达到
 `MEMORY_CONSOLIDATE_AT` 后只会清理高度相似的重复记录，不会把完整对话写入记忆。
 
+## 任务系统
+
+Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。每个 Task 以
+`.tasks/task_<id>.json` 保存，包含 `subject`、`description`、`status`、`owner` 和
+`blocked_by`。状态只能按 `pending → in_progress → completed` 转换：认领时检查所有
+依赖已完成，完成时返回刚被解锁的下游任务；添加依赖会拒绝自依赖、缺失任务和环。
+
+每个 `POST /api/reviews` 会自动创建并认领一个 `review-agent` 任务，返回的审查 Job
+包含 `task_id`，审查完成后任务自动完成。失败的审查任务会保留 `in_progress`，以便
+恢复或人工检查，而不会被错误标记为已完成。
+
 ## API
 
 - `POST /api/reviews`：`{"source":"...","diff":"...","memory_query":"...","budget_cents":1000}`
@@ -67,6 +78,10 @@ Memory 用于跨审查任务保留可复用知识，不保存完整 transcript�
 - `GET /api/health`
 - `GET /api/memories`：列出持久记忆
 - `POST /api/memories`：保存一条 `persistent` 长期记忆
+- `POST /api/tasks`：创建任务，字段为 `subject`、`description`
+- `GET /api/tasks` / `GET /api/tasks/:id`：列出或读取任务
+- `PATCH /api/tasks/:id/dependencies`：添加 `{"blocked_by":["task_..."]}`
+- `POST /api/tasks/:id/claim` / `complete`：以 `{"owner":"agent"}` 认领或完成任务
 
 ## 目录结构
 
@@ -76,6 +91,7 @@ internal/controller/     # Gin 路由、参数校验、HTTP 响应
 internal/logic/          # 审查流程编排与业务规则
 internal/dao/            # checkpoint / 任务存储，后续替换 MySQL、Redis
 internal/model/          # 请求、任务、评论、trace 模型
+.tasks/                  # 运行时持久化任务图（自动忽略）
 web/                     # 独立前端页面
 ```
 

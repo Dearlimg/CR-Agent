@@ -70,13 +70,37 @@ type ContextCompactor struct {
 }
 
 func NewContextCompactor(cfg Config) *ContextCompactor {
+	toolResultBudget := cfg.ToolResultBudget
+	if toolResultBudget <= 0 {
+		toolResultBudget = 200000
+	}
+	largeResultCharLimit := cfg.LargeResultCharLimit
+	if largeResultCharLimit <= 0 {
+		largeResultCharLimit = 30000
+	}
+	contextCharLimit := cfg.ContextCharLimit
+	if contextCharLimit <= 0 {
+		contextCharLimit = 50000
+	}
+	maxMessages := cfg.ContextMaxMessages
+	if maxMessages <= 0 {
+		maxMessages = 50
+	}
+	outputDir := cfg.ContextOutputDir
+	if outputDir == "" {
+		outputDir = ".task_outputs/tool-results"
+	}
+	transcriptDir := cfg.ContextTranscriptDir
+	if transcriptDir == "" {
+		transcriptDir = ".transcripts"
+	}
 	return &ContextCompactor{
-		ToolResultBudget:     cfg.ToolResultBudget,
-		LargeResultCharLimit: cfg.LargeResultCharLimit,
-		ContextCharLimit:     cfg.ContextCharLimit,
-		MaxMessages:          cfg.ContextMaxMessages,
-		OutputDir:            cfg.ContextOutputDir,
-		TranscriptDir:        cfg.ContextTranscriptDir,
+		ToolResultBudget:     toolResultBudget,
+		LargeResultCharLimit: largeResultCharLimit,
+		ContextCharLimit:     contextCharLimit,
+		MaxMessages:          maxMessages,
+		OutputDir:            outputDir,
+		TranscriptDir:        transcriptDir,
 	}
 }
 

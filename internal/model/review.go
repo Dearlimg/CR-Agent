@@ -34,6 +34,7 @@ type TraceEvent struct {
 }
 type ReviewJob struct {
 	ID         string          `json:"id"`
+	TaskID     string          `json:"task_id"`
 	Status     string          `json:"status"`
 	Source     string          `json:"source"`
 	Comments   []ReviewComment `json:"comments"`

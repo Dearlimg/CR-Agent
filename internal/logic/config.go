@@ -13,6 +13,7 @@ type Config struct {
 	Port                 string
 	SkillsDir            string
 	MemoryDir            string
+	TasksDir             string
 	MemoryMaxRecall      int
 	MemoryMaxChars       int
 	MemoryConsolidateAt  int
@@ -43,6 +44,7 @@ func LoadConfig() Config {
 		Port:                 b("PORT", "8080"),
 		SkillsDir:            b("AGENT_SKILLS_DIR", "skills"),
 		MemoryDir:            b("AGENT_MEMORY_DIR", ".memory"),
+		TasksDir:             b("AGENT_TASKS_DIR", ".tasks"),
 		MemoryMaxRecall:      intEnv(b, "MEMORY_MAX_RECALL", 5),
 		MemoryMaxChars:       intEnv(b, "MEMORY_MAX_CHARS", 6000),
 		MemoryConsolidateAt:  intEnv(b, "MEMORY_CONSOLIDATE_AT", 10),

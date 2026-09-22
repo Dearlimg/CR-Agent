@@ -19,6 +19,7 @@ type Service struct {
 	SkillError       error
 	ContextCompactor *ContextCompactor
 	MemoryStore      *MemoryStore
+	TaskStore        *TaskStore
 }
 
 func NewService(store dao.Store, cfg Config) *Service {
@@ -54,6 +55,7 @@ func NewService(store dao.Store, cfg Config) *Service {
 		SkillError:       skillErr,
 		ContextCompactor: NewContextCompactor(cfg),
 		MemoryStore:      NewMemoryStore(cfg),
+		TaskStore:        NewTaskStore(cfg.TasksDir),
 	}
 }
 func renderTodos(todos []model.TodoItem) string {
@@ -75,11 +77,20 @@ func id(s string) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
+	task, err := s.TaskStore.Create(reviewTaskSubject(req), "由 Code Review Agent 自动创建的审查任务")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.TaskStore.Claim(task.ID, "review-agent"); err != nil {
+		return nil, err
+	}
 	todos := []model.TodoItem{}
 	for order, step := range s.Loop.Plan {
 		todos = append(todos, model.TodoItem{Content: step.Reason, Status: "pending", Order: order})
 	}
-	j := &model.ReviewJob{ID: id(req.Source + req.Diff), Status: "queued", Source: req.Source, UpdatedAt: time.Now(), Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}, Todos: todos}
+	j := &model.ReviewJob{ID: id(req.Source + req.Diff), TaskID: task.ID, Status: "queued", Source: req.Source, UpdatedAt: time.Now(), Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}, Todos: todos}
+	j.Trace = append(j.Trace, model.TraceEvent{ID: id("task_create" + task.ID), Tool: "task_create", Input: task.Subject, Output: task.ID, At: time.Now(), Phase: "task"})
+	j.Trace = append(j.Trace, model.TraceEvent{ID: id("task_claim" + task.ID), Tool: "task_claim", Input: task.ID, Output: "owner=review-agent", At: time.Now(), Phase: "task"})
 	if err := s.Store.Save(j); err != nil {
 		return nil, err
 	}
@@ -242,7 +253,38 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	j.Status = "completed"
 	j.UpdatedAt = time.Now()
 	s.extractReviewMemories(ctx, j, req)
+	s.completeReviewTask(j)
 	_ = s.Store.Save(j)
+}
+
+func reviewTaskSubject(req model.ReviewRequest) string {
+	if source := strings.TrimSpace(req.Source); source != "" {
+		return "代码审查: " + source
+	}
+	return "代码审查: 已提交 diff"
+}
+
+func (s *Service) completeReviewTask(job *model.ReviewJob) {
+	if job.TaskID == "" {
+		return
+	}
+	_, unblocked, err := s.TaskStore.Complete(job.TaskID, "review-agent")
+	traceID := id("task_complete" + job.TaskID)
+	if err != nil {
+		job.Trace = append(job.Trace, model.TraceEvent{ID: traceID, Tool: "task_complete", Input: job.TaskID, Output: err.Error(), At: time.Now(), Phase: "task"})
+		_ = s.Store.RecordToolCall(job.ID, traceID, "task_complete", "failed", job.TaskID, "", err.Error(), 0)
+		return
+	}
+	output := "任务已完成"
+	if len(unblocked) > 0 {
+		subjects := make([]string, 0, len(unblocked))
+		for _, task := range unblocked {
+			subjects = append(subjects, task.Subject)
+		}
+		output += "；解锁: " + strings.Join(subjects, ", ")
+	}
+	job.Trace = append(job.Trace, model.TraceEvent{ID: traceID, Tool: "task_complete", Input: job.TaskID, Output: output, At: time.Now(), Phase: "task"})
+	_ = s.Store.RecordToolCall(job.ID, traceID, "task_complete", "succeeded", job.TaskID, output, "", 0)
 }
 
 func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJob, req model.ReviewRequest) {

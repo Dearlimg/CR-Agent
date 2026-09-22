@@ -19,6 +19,99 @@ func (c *ReviewController) Register(r *gin.Engine) {
 	r.GET("/api/reviews/:id/events", c.events)
 	r.GET("/api/memories", c.listMemories)
 	r.POST("/api/memories", c.saveMemory)
+	r.POST("/api/tasks", c.createTask)
+	r.GET("/api/tasks", c.listTasks)
+	r.GET("/api/tasks/:id", c.getTask)
+	r.PATCH("/api/tasks/:id/dependencies", c.addTaskDependencies)
+	r.POST("/api/tasks/:id/claim", c.claimTask)
+	r.POST("/api/tasks/:id/complete", c.completeTask)
+}
+
+type createTaskRequest struct {
+	Subject     string `json:"subject"`
+	Description string `json:"description"`
+}
+
+type taskDependenciesRequest struct {
+	BlockedBy []string `json:"blocked_by"`
+}
+
+type taskOwnerRequest struct {
+	Owner string `json:"owner"`
+}
+
+func (c *ReviewController) createTask(x *gin.Context) {
+	var req createTaskRequest
+	if err := x.ShouldBindJSON(&req); err != nil {
+		x.JSON(http.StatusBadRequest, gin.H{"error": "任务格式无效"})
+		return
+	}
+	task, err := c.Service.TaskStore.Create(req.Subject, req.Description)
+	if err != nil {
+		x.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusCreated, task)
+}
+
+func (c *ReviewController) listTasks(x *gin.Context) {
+	tasks, err := c.Service.TaskStore.List()
+	if err != nil {
+		x.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, gin.H{"tasks": tasks})
+}
+
+func (c *ReviewController) getTask(x *gin.Context) {
+	task, err := c.Service.TaskStore.Get(x.Param("id"))
+	if err != nil {
+		x.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, task)
+}
+
+func (c *ReviewController) addTaskDependencies(x *gin.Context) {
+	var req taskDependenciesRequest
+	if err := x.ShouldBindJSON(&req); err != nil {
+		x.JSON(http.StatusBadRequest, gin.H{"error": "依赖格式无效"})
+		return
+	}
+	task, err := c.Service.TaskStore.AddDependencies(x.Param("id"), req.BlockedBy)
+	if err != nil {
+		x.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, task)
+}
+
+func (c *ReviewController) claimTask(x *gin.Context) {
+	var req taskOwnerRequest
+	_ = x.ShouldBindJSON(&req)
+	if req.Owner == "" {
+		req.Owner = "agent"
+	}
+	task, err := c.Service.TaskStore.Claim(x.Param("id"), req.Owner)
+	if err != nil {
+		x.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, task)
+}
+
+func (c *ReviewController) completeTask(x *gin.Context) {
+	var req taskOwnerRequest
+	_ = x.ShouldBindJSON(&req)
+	if req.Owner == "" {
+		req.Owner = "agent"
+	}
+	task, unblocked, err := c.Service.TaskStore.Complete(x.Param("id"), req.Owner)
+	if err != nil {
+		x.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, gin.H{"task": task, "unblocked": unblocked})
 }
 
 func (c *ReviewController) listMemories(x *gin.Context) {

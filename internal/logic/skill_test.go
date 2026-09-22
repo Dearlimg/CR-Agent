@@ -77,7 +77,7 @@ func TestServiceRecordsLoadedCodeReviewSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service := NewService(dao.NewJobStore(t.TempDir()), Config{SkillsDir: root})
+	service := NewService(dao.NewJobStore(t.TempDir()), Config{SkillsDir: root, TasksDir: filepath.Join(root, "tasks"), MemoryDir: filepath.Join(root, "memory")})
 	job := &model.ReviewJob{ID: "skill-job", Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}}
 	service.run(context.Background(), job, model.ReviewRequest{Diff: "diff --git a/a.go b/a.go\n+package a"})
 

@@ -236,7 +236,7 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 			return
 		}
 		fetchStarted := time.Now()
-		resolved, diff, err := fetchDiff(ctx, req.Source)
+		resolved, diff, err := fetchDiff(ctx, req.Source, s.Config)
 		fetchEnded := time.Now()
 		fetchDuration := fetchEnded.Sub(fetchStarted).Milliseconds()
 		fetchResult := TraceResult{Output: fmt.Sprintf("diff_bytes=%d", len(diff)), Err: err}

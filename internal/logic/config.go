@@ -35,6 +35,8 @@ type Config struct {
 	GoalMaxBlocks        int
 	DeepSeekAPIKey       string
 	DeepSeekBaseURL      string
+	GitHubToken          string
+	GitHubAPIBase        string
 	MySQLDSN             string
 	RedisAddr            string
 	RedisPassword        string
@@ -76,6 +78,8 @@ func LoadConfig() Config {
 		GoalMaxBlocks:        intEnv(b, "GOAL_MAX_BLOCKS", 6),
 		DeepSeekAPIKey:       b("DEEPSEEK_API_KEY", ""),
 		DeepSeekBaseURL:      b("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+		GitHubToken:          b("GITHUB_TOKEN", ""),
+		GitHubAPIBase:        b("GITHUB_API_BASE", "https://api.github.com"),
 		MySQLDSN:             b("MYSQL_DSN", ""),
 		RedisAddr:            b("REDIS_ADDR", "127.0.0.1:6379"),
 		RedisPassword:        b("REDIS_PASSWORD", ""),

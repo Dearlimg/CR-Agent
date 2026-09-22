@@ -12,12 +12,16 @@ import (
 )
 
 type Service struct {
-	Store  dao.Store
-	Config Config
-	Loop   *AgentLoop
+	Store       dao.Store
+	Config      Config
+	Loop        *AgentLoop
+	SkillLoader *SkillLoader
+	SkillError  error
 }
 
 func NewService(store dao.Store, cfg Config) *Service {
+	skillLoader := NewSkillLoader(cfg.SkillsDir)
+	skillErr := skillLoader.Scan()
 	registry := NewToolRegistry()
 	registry.RegisterWithPermission("todo_write", PermissionReadDiff, func(_ context.Context, in ToolInput) (ToolResult, error) {
 		return ToolResult{Output: renderTodos(in.Job.Todos)}, nil
@@ -40,7 +44,7 @@ func NewService(store dao.Store, cfg Config) *Service {
 		return store.RecordToolCall(jobID, traceID, tool, status, input, output, callErr, durationMs)
 	}
 	plan := []LoopStep{{Tool: "todo_write", Reason: "创建并确认审查计划"}, {Tool: "diff_reader", Reason: "读取并脱敏 diff"}, {Tool: "parse_diff", Reason: "解析文件和变更范围"}, {Tool: "get_changed_lines", Reason: "提取新增行"}, {Tool: "static_check", Reason: "执行确定性规则检查"}, {Tool: "syntax_check", Reason: "前置语法和冲突检查"}, {Tool: "format_check", Reason: "前置格式检查"}, {Tool: "secret_scan", Reason: "扫描疑似敏感信息"}, {Tool: "dependency_diff", Reason: "检查依赖文件变更"}, {Tool: "get_file_context", Reason: "补充安全上下文"}, {Tool: "normalize_finding", Reason: "规范化审查输出"}}
-	return &Service{Store: store, Config: cfg, Loop: &AgentLoop{Registry: registry, Plan: plan, MaxSteps: len(plan), Record: record, Policy: DefaultPermissionPolicy(), Hooks: NewHookBus()}}
+	return &Service{Store: store, Config: cfg, Loop: &AgentLoop{Registry: registry, Plan: plan, MaxSteps: len(plan), Record: record, Policy: DefaultPermissionPolicy(), Hooks: NewHookBus()}, SkillLoader: skillLoader, SkillError: skillErr}
 }
 func renderTodos(todos []model.TodoItem) string {
 	lines := []string{}
@@ -109,6 +113,22 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 		_ = s.Store.Save(j)
 		return
 	}
+	if s.SkillError != nil {
+		j.Status = "failed"
+		j.Error = fmt.Sprintf("加载 Agent skills 失败：%v", s.SkillError)
+		_ = s.Store.Save(j)
+		return
+	}
+	skill, err := s.SkillLoader.Load("code-review")
+	if err != nil {
+		j.Status = "failed"
+		j.Error = fmt.Sprintf("加载 code-review skill 失败：%v", err)
+		_ = s.Store.Save(j)
+		return
+	}
+	skillTraceID := id("load_skill" + j.ID)
+	j.Trace = append(j.Trace, model.TraceEvent{ID: skillTraceID, Tool: "load_skill", Input: skill.Name, Output: "已加载完整 SKILL.md", At: time.Now(), Phase: "skill"})
+	_ = s.Store.RecordToolCall(j.ID, skillTraceID, "load_skill", "succeeded", skill.Name, "已加载完整 SKILL.md", "", 0)
 
 	// Each sub-agent starts with a fresh model conversation. The parent consumes
 	// only their final JSON reports, so the review focus does not inflate its context.
@@ -117,7 +137,7 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 			s.Loop.Hooks.Emit(ctx, HookPreToolUse, HookContext{JobID: j.ID, Tool: "subagent_" + name, Permission: PermissionLLMInference, Reason: "委派专项审查"})
 		}
 	}
-	subResults := RunReviewSubagents(ctx, s.Config, req.Diff)
+	subResults := RunReviewSubagents(ctx, s.Config, req.Diff, s.SkillLoader.Catalog(), skill)
 	subagentReports := make([]string, 0, len(subResults))
 	for _, result := range subResults {
 		toolName := "subagent_" + result.Name
@@ -144,7 +164,7 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	if len(j.Trace) > 0 {
 		readID = j.Trace[len(j.Trace)-1].ID
 	}
-	prompt := "你是 Code Review 父 Agent。以下是拥有独立 diff 上下文的子 Agent 最终报告。只基于这些报告去重、校正严重级别，并输出 JSON 数组，字段为 file,line,severity,confidence,body,suggestion；没有问题输出 []。不要补充报告中不存在的事实。\n\n" + strings.Join(subagentReports, "\n\n")
+	prompt := BuildReviewSynthesisPrompt(s.SkillLoader.Catalog(), skill.Content, strings.Join(subagentReports, "\n\n"))
 	modelStarted := time.Now()
 	reply, err := EinoReviewAgent(ctx, s.Config, prompt)
 	modelTraceID := id("deepseek-review" + j.ID)

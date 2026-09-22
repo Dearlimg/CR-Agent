@@ -11,6 +11,7 @@ import (
 
 type Config struct {
 	Port            string
+	SkillsDir       string
 	DeepSeekAPIKey  string
 	DeepSeekBaseURL string
 	MySQLDSN        string
@@ -28,7 +29,7 @@ func LoadConfig() Config {
 		return d
 	}
 	n, _ := strconv.Atoi(b("REVIEW_BUDGET_CENTS", "1000"))
-	return Config{Port: b("PORT", "8080"), DeepSeekAPIKey: b("DEEPSEEK_API_KEY", ""), DeepSeekBaseURL: b("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), MySQLDSN: b("MYSQL_DSN", "root:sta_go@tcp(121.40.235.227:3307)/cr_agent?charset=utf8mb4&parseTime=True"), RedisAddr: b("REDIS_ADDR", "121.40.235.227:6379"), RedisPassword: b("REDIS_PASSWORD", "sta_go"), BudgetCents: n}
+	return Config{Port: b("PORT", "8080"), SkillsDir: b("AGENT_SKILLS_DIR", "skills"), DeepSeekAPIKey: b("DEEPSEEK_API_KEY", ""), DeepSeekBaseURL: b("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), MySQLDSN: b("MYSQL_DSN", ""), RedisAddr: b("REDIS_ADDR", "127.0.0.1:6379"), RedisPassword: b("REDIS_PASSWORD", ""), BudgetCents: n}
 }
 func redact(s string) string {
 	lines := strings.Split(s, "\n")

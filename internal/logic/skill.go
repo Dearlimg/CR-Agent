@@ -1,0 +1,190 @@
+package logic
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// Skill is an immutable, startup-indexed SKILL.md manifest.
+type Skill struct {
+	Name        string
+	Description string
+	Content     string
+}
+
+// SkillLoader exposes only a small skill catalog until a named skill is loaded.
+// A skill name is an index key, never a caller-controlled filesystem path.
+type SkillLoader struct {
+	root   string
+	skills map[string]Skill
+}
+
+func NewSkillLoader(root string) *SkillLoader {
+	return &SkillLoader{root: root, skills: map[string]Skill{}}
+}
+
+// Scan discovers direct skills/*/SKILL.md manifests and retains validated content.
+func (l *SkillLoader) Scan() error {
+	root, err := filepath.Abs(l.root)
+	if err != nil {
+		return fmt.Errorf("resolve skills directory: %w", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return fmt.Errorf("read skills directory %q: %w", root, err)
+	}
+
+	l.root = root
+	l.skills = map[string]Skill{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		manifest := filepath.Join(root, entry.Name(), "SKILL.md")
+		resolved, err := filepath.EvalSymlinks(manifest)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("resolve skill manifest %q: %w", manifest, err)
+		}
+		if !isPathWithin(root, resolved) {
+			return fmt.Errorf("skill manifest escapes skills directory: %q", manifest)
+		}
+		content, err := os.ReadFile(resolved)
+		if err != nil {
+			return fmt.Errorf("read skill manifest %q: %w", manifest, err)
+		}
+		name, description := parseSkillFrontmatter(string(content), entry.Name())
+		if !isValidSkillName(name) {
+			return fmt.Errorf("invalid skill name %q in %q", name, manifest)
+		}
+		if _, exists := l.skills[name]; exists {
+			return fmt.Errorf("duplicate skill name %q", name)
+		}
+		l.skills[name] = Skill{Name: name, Description: description, Content: string(content)}
+	}
+	return nil
+}
+
+func (l *SkillLoader) Catalog() string {
+	names := make([]string, 0, len(l.skills))
+	for name := range l.skills {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "(none)"
+	}
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		lines = append(lines, fmt.Sprintf("- %s: %s", name, l.skills[name].Description))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (l *SkillLoader) Load(name string) (Skill, error) {
+	skill, ok := l.skills[name]
+	if ok {
+		return skill, nil
+	}
+	return Skill{}, fmt.Errorf("unknown skill %q; available: %s", name, strings.Join(l.skillNames(), ", "))
+}
+
+func (l *SkillLoader) skillNames() []string {
+	names := make([]string, 0, len(l.skills))
+	for name := range l.skills {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func parseSkillFrontmatter(content, fallback string) (string, string) {
+	name := fallback
+	description := ""
+	body := content
+	if strings.HasPrefix(content, "---\n") {
+		if end := strings.Index(content[4:], "\n---"); end >= 0 {
+			frontmatter := content[4 : end+4]
+			body = content[end+8:]
+			for _, line := range strings.Split(frontmatter, "\n") {
+				key, value, found := strings.Cut(line, ":")
+				if !found {
+					continue
+				}
+				value = strings.Trim(strings.TrimSpace(value), "\"")
+				switch strings.TrimSpace(key) {
+				case "name":
+					if value != "" {
+						name = value
+					}
+				case "description":
+					description = value
+				}
+			}
+		}
+	}
+	if description == "" {
+		for _, line := range strings.Split(body, "\n") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "#"))
+			if line != "" {
+				description = line
+				break
+			}
+		}
+	}
+	return strings.TrimSpace(name), strings.Join(strings.Fields(description), " ")
+}
+
+func isPathWithin(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func isValidSkillName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		valid := r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_'
+		if !valid || (i == 0 && r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// BuildReviewSubagentPrompt models a load_skill tool result: the catalog is
+// lightweight, while only the selected skill's complete instructions are sent.
+func BuildReviewSubagentPrompt(focus, catalog, skillContent, diff string) string {
+	return fmt.Sprintf(`你是 Code Review 子 Agent。%s。
+
+可用 skills（启动时目录，仅名称和描述）：
+%s
+
+tool_result: load_skill("code-review")
+%s
+
+只基于以下 diff 输出 JSON 数组，字段为 file,line,severity,confidence,body,suggestion；没有问题输出 []。
+不要编造 diff 外的上下文，不要调用其他 Agent，也不要输出解释性文字。
+
+%s`, focus, catalog, skillContent, diff)
+}
+
+func BuildReviewSynthesisPrompt(catalog, skillContent, reports string) string {
+	return fmt.Sprintf(`你是 Code Review 父 Agent。以下是拥有独立 diff 上下文的子 Agent 最终报告。
+
+可用 skills（启动时目录，仅名称和描述）：
+%s
+
+tool_result: load_skill("code-review")
+%s
+
+只基于这些报告去重、校正严重级别，并输出 JSON 数组，字段为 file,line,severity,confidence,body,suggestion；没有问题输出 []。不要补充报告中不存在的事实。
+
+%s`, catalog, skillContent, reports)
+}

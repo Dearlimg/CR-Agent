@@ -2,7 +2,6 @@ package logic
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -21,7 +20,7 @@ type ReviewSubagent struct {
 	Focus string
 }
 
-func RunReviewSubagents(ctx context.Context, cfg Config, diff string) []SubagentResult {
+func RunReviewSubagents(ctx context.Context, cfg Config, diff string, catalog string, skill Skill) []SubagentResult {
 	agents := []ReviewSubagent{
 		{Name: "correctness", Focus: "只审查逻辑正确性、边界条件、错误处理和回归风险"},
 		{Name: "security", Focus: "只审查密钥、认证、注入、SSRF、权限和敏感数据风险"},
@@ -34,11 +33,7 @@ func RunReviewSubagents(ctx context.Context, cfg Config, diff string) []Subagent
 		go func(index int, a ReviewSubagent) {
 			defer wg.Done()
 			started := time.Now()
-			prompt := fmt.Sprintf(`你是 Code Review 子 Agent。%s。
-只基于以下 diff 输出 JSON 数组，字段为 file,line,severity,confidence,body,suggestion；没有问题输出 []。
-不要编造 diff 外的上下文，不要调用其他 Agent，也不要输出解释性文字。
-
-%s`, a.Focus, redact(diff))
+			prompt := BuildReviewSubagentPrompt(a.Focus, catalog, skill.Content, redact(diff))
 			summary, err := EinoReviewAgent(ctx, cfg, prompt)
 			results[index] = SubagentResult{
 				Name:       a.Name,

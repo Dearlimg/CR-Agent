@@ -214,3 +214,13 @@ type DBWorkflowCallResult struct {
 }
 
 func (DBWorkflowCallResult) TableName() string { return "workflow_call_results" }
+
+type DBWorkflowLease struct {
+	RunID      string    `gorm:"primaryKey;size:64"`
+	Owner      string    `gorm:"size:128;not null;index"`
+	LeaseUntil time.Time `gorm:"not null;index"`
+	CreatedAt  time.Time `gorm:"not null"`
+	UpdatedAt  time.Time `gorm:"not null;index"`
+}
+
+func (DBWorkflowLease) TableName() string { return "workflow_leases" }

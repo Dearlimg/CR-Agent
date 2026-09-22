@@ -38,6 +38,7 @@ func main() {
 		Tasks:      dao.NewMySQLTaskRepository(mysqlStore.DB()),
 		Background: background,
 		Mailbox:    mailbox,
+		Workflow:   logic.NewMySQLWorkflowPersistence(mysqlStore.DB()),
 	})
 	if err := svc.Start(); err != nil {
 		panic(err)

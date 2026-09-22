@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -137,7 +135,7 @@ type WorkflowEvent struct {
 	Timestamp time.Time      `json:"timestamp"`
 }
 
-type workflowSnapshot struct {
+type WorkflowSnapshot struct {
 	RunID    string          `json:"run_id"`
 	Workflow string          `json:"workflow"`
 	Args     map[string]any  `json:"args"`
@@ -153,23 +151,33 @@ type WorkflowLaunch struct {
 }
 
 type WorkflowRuntime struct {
-	root     string
-	registry *WorkflowRegistry
-	mu       sync.Mutex
-	fileMu   sync.Mutex
-	cancels  map[string]context.CancelFunc
+	registry    *WorkflowRegistry
+	persistence WorkflowPersistence
+	mu          sync.Mutex
+	cancels     map[string]context.CancelFunc
 }
 
 var workflowRunIDPattern = regexp.MustCompile(`^wf_[0-9a-f]{16}$`)
 
 func NewWorkflowRuntime(root string, registry *WorkflowRegistry) *WorkflowRuntime {
-	if strings.TrimSpace(root) == "" {
-		root = ".workflows"
-	}
 	if registry == nil {
 		registry = NewWorkflowRegistry()
 	}
-	return &WorkflowRuntime{root: root, registry: registry, cancels: map[string]context.CancelFunc{}}
+	return NewWorkflowRuntimeWithPersistence(registry, NewFileWorkflowPersistence(root))
+}
+
+func NewWorkflowRuntimeWithPersistence(registry *WorkflowRegistry, persistence WorkflowPersistence) *WorkflowRuntime {
+	if registry == nil {
+		registry = NewWorkflowRegistry()
+	}
+	if persistence == nil {
+		persistence = NewFileWorkflowPersistence("")
+	}
+	return &WorkflowRuntime{
+		registry:    registry,
+		persistence: persistence,
+		cancels:     map[string]context.CancelFunc{},
+	}
 }
 
 func (r *WorkflowRuntime) Registry() *WorkflowRegistry { return r.registry }
@@ -205,24 +213,22 @@ func (r *WorkflowRuntime) Launch(
 	if !workflowRunIDPattern.MatchString(runID) {
 		return WorkflowLaunch{}, fmt.Errorf("invalid workflow run ID %q", runID)
 	}
-	lock, err := r.acquireLock(runID)
+	lock, err := r.persistence.AcquireLock(runID)
 	if err != nil {
 		return WorkflowLaunch{}, err
 	}
 	snapshot, err := r.loadSnapshot(runID)
 	if err != nil && resume != "" {
-		_ = lock.Close()
-		_ = os.Remove(lock.Name())
+		_ = lock.Release()
 		return WorkflowLaunch{}, fmt.Errorf("resume workflow: %w", err)
 	}
 	if resume != "" && snapshot.Workflow != meta.Name {
-		_ = lock.Close()
-		_ = os.Remove(lock.Name())
+		_ = lock.Release()
 		return WorkflowLaunch{}, fmt.Errorf("resume workflow name mismatch: %q", snapshot.Workflow)
 	}
 	if snapshot.RunID == "" {
 		now := time.Now().UTC()
-		snapshot = workflowSnapshot{
+		snapshot = WorkflowSnapshot{
 			RunID: runID, Workflow: meta.Name, Args: cloneWorkflowArgs(args),
 			Task: WorkflowTask{ID: runID, Workflow: meta.Name, Status: WorkflowPending, CreatedAt: now},
 		}
@@ -236,8 +242,7 @@ func (r *WorkflowRuntime) Launch(
 	snapshot.Task.NotifiedAt = nil
 	snapshot.Task.Error = ""
 	if err := r.writeSnapshot(snapshot); err != nil {
-		_ = lock.Close()
-		_ = os.Remove(lock.Name())
+		_ = lock.Release()
 		return WorkflowLaunch{}, err
 	}
 	runCtx, cancel := context.WithCancel(ctx)
@@ -249,8 +254,7 @@ func (r *WorkflowRuntime) Launch(
 			r.mu.Lock()
 			delete(r.cancels, runID)
 			r.mu.Unlock()
-			_ = lock.Close()
-			_ = os.Remove(lock.Name())
+			_ = lock.Release()
 		}()
 		_ = r.execute(runCtx, snapshot, meta, script, runner)
 	}()
@@ -259,7 +263,7 @@ func (r *WorkflowRuntime) Launch(
 
 func (r *WorkflowRuntime) execute(
 	ctx context.Context,
-	snapshot workflowSnapshot,
+	snapshot WorkflowSnapshot,
 	meta WorkflowMeta,
 	script WorkflowScript,
 	runner WorkflowAgentRunner,
@@ -354,7 +358,7 @@ func (r *WorkflowRuntime) Cancel(runID string) error {
 type WorkflowExecutionState struct {
 	ctx        context.Context
 	runtime    *WorkflowRuntime
-	snapshot   *workflowSnapshot
+	snapshot   *WorkflowSnapshot
 	runner     WorkflowAgentRunner
 	phase      string
 	depth      int
@@ -533,108 +537,26 @@ func (s *WorkflowExecutionState) currentPhase() string {
 	return s.phase
 }
 
-func (r *WorkflowRuntime) acquireLock(runID string) (*os.File, error) {
-	if err := os.MkdirAll(r.root, 0755); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(r.root, runID+".lock")
-	lock, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("workflow run %q 已被其他进程占用或锁文件残留", runID)
-	}
-	return lock, nil
-}
-
-func (r *WorkflowRuntime) loadSnapshot(runID string) (workflowSnapshot, error) {
+func (r *WorkflowRuntime) loadSnapshot(runID string) (WorkflowSnapshot, error) {
 	if !workflowRunIDPattern.MatchString(runID) {
-		return workflowSnapshot{}, fmt.Errorf("invalid workflow run ID %q", runID)
+		return WorkflowSnapshot{}, fmt.Errorf("invalid workflow run ID %q", runID)
 	}
-	r.fileMu.Lock()
-	defer r.fileMu.Unlock()
-	content, err := os.ReadFile(filepath.Join(r.root, runID+".json"))
-	if err != nil {
-		return workflowSnapshot{}, err
-	}
-	var snapshot workflowSnapshot
-	if err := json.Unmarshal(content, &snapshot); err != nil {
-		return workflowSnapshot{}, err
-	}
-	if snapshot.RunID != runID {
-		return workflowSnapshot{}, fmt.Errorf("workflow snapshot run ID 不匹配")
-	}
-	journalPath := filepath.Join(r.root, runID+".journal.jsonl")
-	if journal, journalErr := os.ReadFile(journalPath); journalErr == nil {
-		known := map[string]bool{}
-		for _, event := range snapshot.Events {
-			known[event.Type+"|"+event.Label+"|"+event.Message] = true
-		}
-		for _, line := range strings.Split(strings.TrimSpace(string(journal)), "\n") {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			var event WorkflowEvent
-			if json.Unmarshal([]byte(line), &event) != nil {
-				continue
-			}
-			key := event.Type + "|" + event.Label + "|" + event.Message
-			if !known[key] {
-				snapshot.Events = append(snapshot.Events, event)
-				known[key] = true
-			}
-		}
-	}
-	return snapshot, nil
+	return r.persistence.LoadSnapshot(runID)
 }
 
-func (r *WorkflowRuntime) writeSnapshot(snapshot workflowSnapshot) error {
-	r.fileMu.Lock()
-	defer r.fileMu.Unlock()
-	if err := os.MkdirAll(r.root, 0755); err != nil {
-		return err
-	}
-	content, err := json.MarshalIndent(snapshot, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := filepath.Join(r.root, snapshot.RunID+".json.tmp")
-	path := filepath.Join(r.root, snapshot.RunID+".json")
-	if err := os.WriteFile(tmp, content, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+func (r *WorkflowRuntime) writeSnapshot(snapshot WorkflowSnapshot) error {
+	return r.persistence.SaveSnapshot(snapshot)
 }
 
 func (r *WorkflowRuntime) writeOutput(runID string, value any) error {
-	if value == nil {
-		value = map[string]any{}
-	}
-	content, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(r.root, runID+".output.json"), content, 0600)
+	return r.persistence.WriteOutput(runID, value)
 }
 
-func (r *WorkflowRuntime) appendJournal(runID string, value any) error {
+func (r *WorkflowRuntime) appendJournal(runID string, event WorkflowEvent) error {
 	if !workflowRunIDPattern.MatchString(runID) {
 		return fmt.Errorf("invalid workflow run ID %q", runID)
 	}
-	r.fileMu.Lock()
-	defer r.fileMu.Unlock()
-	if err := os.MkdirAll(r.root, 0755); err != nil {
-		return err
-	}
-	content, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	file, err := os.OpenFile(filepath.Join(r.root, runID+".journal.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	_, err = file.Write(append(content, '\n'))
-	return err
+	return r.persistence.AppendEvent(runID, event)
 }
 
 func workflowCallKey(kind, label, prompt string, schema map[string]any) string {

@@ -21,5 +21,6 @@ func AutoMigrate(db *gorm.DB) error {
 		&model.DBAgentRun{},
 		&model.DBWorkflowEvent{},
 		&model.DBWorkflowCallResult{},
+		&model.DBWorkflowLease{},
 	)
 }

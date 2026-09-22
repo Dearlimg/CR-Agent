@@ -41,7 +41,6 @@ func NewServiceWithRuntime(store dao.Store, cfg Config, repositories RuntimeRepo
 	if err := registerReviewWorkflow(workflowRegistry); err != nil {
 		panic(err)
 	}
-	workflows := NewWorkflowRuntime(cfg.WorkflowDir, workflowRegistry)
 	mcp := NewMCPManager(DefaultMCPHostPolicy())
 	_ = mcp.RegisterServer("docs", newDocsMCPServer)
 	_ = mcp.RegisterServer("deploy", newDeployMCPServer)
@@ -67,6 +66,11 @@ func NewServiceWithRuntime(store dao.Store, cfg Config, repositories RuntimeRepo
 		return store.RecordToolCall(jobID, traceID, tool, status, input, output, callErr, durationMs)
 	}
 	plan := []LoopStep{{Tool: "todo_write", Reason: "创建并确认审查计划"}, {Tool: "diff_reader", Reason: "读取并脱敏 diff"}, {Tool: "parse_diff", Reason: "解析文件和变更范围"}, {Tool: "get_changed_lines", Reason: "提取新增行"}, {Tool: "static_check", Reason: "执行确定性规则检查"}, {Tool: "syntax_check", Reason: "前置语法和冲突检查"}, {Tool: "format_check", Reason: "前置格式检查"}, {Tool: "secret_scan", Reason: "扫描疑似敏感信息"}, {Tool: "dependency_diff", Reason: "检查依赖文件变更"}, {Tool: "get_file_context", Reason: "补充安全上下文"}, {Tool: "normalize_finding", Reason: "规范化审查输出"}}
+	repositories = ensureRuntimeRepositories(cfg, repositories)
+	workflows := NewWorkflowRuntime(cfg.WorkflowDir, workflowRegistry)
+	if repositories.Workflow != nil {
+		workflows = NewWorkflowRuntimeWithPersistence(workflowRegistry, repositories.Workflow)
+	}
 	service := &Service{
 		Store:            store,
 		Config:           cfg,
@@ -80,7 +84,6 @@ func NewServiceWithRuntime(store dao.Store, cfg Config, repositories RuntimeRepo
 		MCP:              mcp,
 		Workflows:        workflows,
 	}
-	repositories = ensureRuntimeRepositories(cfg, repositories)
 	service.TaskStore = repositories.Tasks
 	service.Background = repositories.Background
 	service.Team = NewReviewTeam(service.TaskStore, repositories.Mailbox, cfg)

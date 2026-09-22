@@ -31,6 +31,7 @@ type RuntimeRepositories struct {
 	Tasks      TaskRepository
 	Background BackgroundRepository
 	Mailbox    TeamMailbox
+	Workflow   WorkflowPersistence
 }
 
 func fileRuntimeRepositories(cfg Config) RuntimeRepositories {

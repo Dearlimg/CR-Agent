@@ -22,7 +22,17 @@ func NewService(store dao.Store, cfg Config) *Service {
 	registry.Register("diff_reader", func(_ context.Context, in ToolInput) (ToolResult, error) {
 		return ToolResult{Output: fmt.Sprintf("读取并脱敏完成，diff_bytes=%d", len(in.Diff))}, nil
 	})
-	return &Service{Store: store, Config: cfg, Loop: &AgentLoop{Registry: registry, Plan: []LoopStep{{Tool: "diff_reader", Reason: "读取并脱敏 diff"}}, MaxSteps: 3}}
+	registry.Register("static_check", func(_ context.Context, in ToolInput) (ToolResult, error) {
+		hits := []string{}
+		if strings.Contains(in.Diff, "TODO") {
+			hits = append(hits, "TODO")
+		}
+		if strings.Contains(in.Diff, "panic(") {
+			hits = append(hits, "panic")
+		}
+		return ToolResult{Output: fmt.Sprintf("静态检查完成，命中=%v", hits)}, nil
+	})
+	return &Service{Store: store, Config: cfg, Loop: &AgentLoop{Registry: registry, Plan: []LoopStep{{Tool: "diff_reader", Reason: "读取并脱敏 diff"}, {Tool: "static_check", Reason: "执行前置静态检查"}}, MaxSteps: 3}}
 }
 func id(s string) string {
 	h := sha256.Sum256([]byte(s + time.Now().String()))
@@ -60,17 +70,15 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	if len(j.Trace) > 0 {
 		readID = j.Trace[len(j.Trace)-1].ID
 	}
-	reply, tokens, err := reviewWithDeepSeek(ctx, s.Config, req.Diff)
+	prompt := "只基于下面 git diff 输出 JSON 数组，字段为 file,line,severity,confidence,body,suggestion；没有问题输出 []。不要编造。\n\n" + redact(req.Diff)
+	reply, err := EinoReviewAgent(ctx, s.Config, prompt)
 	if err != nil {
 		j.Trace = append(j.Trace, model.TraceEvent{ID: id(err.Error()), Tool: "review-fallback", Input: "diff summary", Output: err.Error(), At: time.Now(), Phase: "reasoning"})
 		j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "low", Body: "DeepSeek 调用失败：" + err.Error(), TraceID: readID}}
 	} else {
 		traceID := id(reply)
 		j.Trace = append(j.Trace, model.TraceEvent{ID: traceID, Tool: "deepseek-review", Input: "prompt diff summary", Output: "DeepSeek 审查完成", ModelReply: reply, At: time.Now(), Phase: "reasoning"})
-		j.SpentCents = tokens / 1000
-		if j.SpentCents < 1 {
-			j.SpentCents = 1
-		}
+		j.SpentCents = 1
 		findings := parseFindings(reply)
 		j.Comments = []model.ReviewComment{}
 		for _, f := range findings {

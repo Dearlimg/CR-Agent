@@ -22,6 +22,8 @@ type DBReviewJob struct {
 	Traces       []DBTraceEvent    `gorm:"foreignKey:JobID"`
 }
 
+func (DBReviewJob) TableName() string { return "review_jobs" }
+
 type DBReviewComment struct {
 	ID         uint      `gorm:"primaryKey"`
 	JobID      uint      `gorm:"not null;index"`
@@ -34,6 +36,8 @@ type DBReviewComment struct {
 	Status     string    `gorm:"size:16;not null;default:'open';index"`
 	CreatedAt  time.Time `gorm:"not null"`
 }
+
+func (DBReviewComment) TableName() string { return "review_comments" }
 
 type DBTraceEvent struct {
 	ID         uint      `gorm:"primaryKey"`
@@ -49,6 +53,8 @@ type DBTraceEvent struct {
 	CreatedAt  time.Time `gorm:"not null;index"`
 }
 
+func (DBTraceEvent) TableName() string { return "trace_events" }
+
 type DBToolCall struct {
 	ID         uint      `gorm:"primaryKey"`
 	JobID      uint      `gorm:"not null;index"`
@@ -61,3 +67,5 @@ type DBToolCall struct {
 	DurationMs int64     `gorm:"not null;default:0"`
 	CreatedAt  time.Time `gorm:"not null;index"`
 }
+
+func (DBToolCall) TableName() string { return "tool_calls" }

@@ -16,7 +16,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		if os.Getenv("AUTO_MIGRATE") == "true" {
+		if os.Getenv("AUTO_MIGRATE") != "false" {
 			if err := mysqlStore.Migrate(); err != nil {
 				panic(err)
 			}

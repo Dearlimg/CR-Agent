@@ -32,6 +32,14 @@ type TraceEvent struct {
 	DurationMs int64     `json:"duration_ms"`
 	Phase      string    `json:"phase,omitempty"`
 }
+type TeamEvent struct {
+	From    string    `json:"from"`
+	To      string    `json:"to"`
+	Type    string    `json:"type"`
+	TaskID  string    `json:"task_id,omitempty"`
+	Content string    `json:"content"`
+	At      time.Time `json:"at"`
+}
 type ReviewJob struct {
 	ID               string          `json:"id"`
 	TaskID           string          `json:"task_id"`
@@ -41,6 +49,7 @@ type ReviewJob struct {
 	Comments         []ReviewComment `json:"comments"`
 	Todos            []TodoItem      `json:"todos"`
 	Trace            []TraceEvent    `json:"trace"`
+	TeamEvents       []TeamEvent     `json:"team_events"`
 	SpentCents       int             `json:"spent_cents"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 	Error            string          `json:"error,omitempty"`

@@ -67,9 +67,15 @@ Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。每�
 `blocked_by`。状态只能按 `pending → in_progress → completed` 转换：认领时检查所有
 依赖已完成，完成时返回刚被解锁的下游任务；添加依赖会拒绝自依赖、缺失任务和环。
 
-每个 `POST /api/reviews` 会自动创建并认领一个 `review-agent` 任务，返回的审查 Job
+每个 `POST /api/reviews` 会自动创建并认领一个 Lead（`review-agent`）任务，返回的审查 Job
 包含 `task_id`，审查完成后任务自动完成。失败的审查任务会保留 `in_progress`，以便
 恢复或人工检查，而不会被错误标记为已完成。
+
+## Agent Team
+
+Lead 负责向调用方交付最终结论；专项队友只负责 correctness、security、dependency 三个彼此独立的审查维度。每位队友拥有独立模型上下文，完成后会在 `.team-mailboxes/lead.jsonl` 发送两个持久化事件：`result`（审查产出）和 `idle_notification`（可继续接收工作）。Lead 在最终汇总前消费当前 Job 的事件，并将其返回在 `team_events` 中。
+
+专项任务同样写入共享 `.tasks/` 任务板，按 `pending → in_progress → completed` 原子认领；失败不会被标记为完成。这个迭代刻意不让队友执行代码、修改仓库或发布评论，仍沿用受限的只读审查工具边界。当前队友生命周期限定在单次审查 Job；跨 Job 的长期驻留、动态任务拆分和 worktree 隔离是后续扩展，而不是已实现能力。
 
 ## 后台任务
 

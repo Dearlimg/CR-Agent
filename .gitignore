@@ -14,4 +14,5 @@ coverage.out
 .tasks/
 .background-tasks/
 .cron-jobs.json
+.team-mailboxes/
 *.exe

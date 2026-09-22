@@ -23,6 +23,7 @@ type Service struct {
 	Background       *BackgroundManager
 	Cron             *CronScheduler
 	CronError        error
+	Team             *ReviewTeam
 }
 
 func NewService(store dao.Store, cfg Config) *Service {
@@ -61,6 +62,7 @@ func NewService(store dao.Store, cfg Config) *Service {
 		TaskStore:        NewTaskStore(cfg.TasksDir),
 		Background:       NewBackgroundManager(cfg.BackgroundTasksDir),
 	}
+	service.Team = NewReviewTeam(service.TaskStore, NewMessageBus(cfg.TeamMailboxDir), cfg)
 	cron, cronErr := NewCronScheduler(
 		cfg.CronFile,
 		time.Duration(cfg.CronPollIntervalMs)*time.Millisecond,
@@ -236,7 +238,22 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 			s.Loop.Hooks.Emit(ctx, HookPreToolUse, HookContext{JobID: j.ID, Tool: "subagent_" + name, Permission: PermissionLLMInference, Reason: "委派专项审查"})
 		}
 	}
-	subResults := RunReviewSubagents(ctx, s.Config, req.Diff, promptContext)
+	subResults, teamEvents, teamErr := s.Team.Run(ctx, j.ID, j.TaskID, req.Diff, promptContext)
+	if teamErr != nil {
+		j.Status = "failed"
+		j.Error = fmt.Sprintf("团队专项审查失败：%v", teamErr)
+		_ = s.Store.Save(j)
+		return
+	}
+	j.TeamEvents = append(j.TeamEvents, teamEvents...)
+	for index := range subResults {
+		for _, event := range teamEvents {
+			if event.Type == "result" && event.From == subResults[index].Name && subResults[index].Error == nil {
+				subResults[index].Summary = event.Content
+				break
+			}
+		}
+	}
 	contextMessages := make([]ContextMessage, 0, len(subResults))
 	for _, result := range subResults {
 		toolName := "subagent_" + result.Name

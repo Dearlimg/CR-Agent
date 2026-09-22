@@ -32,7 +32,7 @@ type AgentLoop struct {
 	Registry *ToolRegistry
 	Plan     []LoopStep
 	MaxSteps int
-	Record   func(string, string, string, string, string, string, int64) error
+	Record   func(string, string, string, string, string, string, string, int64) error
 }
 
 func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {

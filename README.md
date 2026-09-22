@@ -31,6 +31,18 @@ go run ./cmd/server
 当前审查流程固定装载 `code-review`；每个任务的 `trace` 会产生一条
 `load_skill` 事件，以便确认实际生效的 skill。
 
+## 上下文压缩
+
+最终汇总模型接收子 Agent 报告前，服务会依次执行：大结果落盘并保留预览、
+旧上下文归档、超限时缩短已消费的 tool result，最后才调用模型生成事实型摘要。
+落盘文件位于 `.task_outputs/tool-results/`，完整上下文位于 `.transcripts/`，
+二者均不纳入 Git，且写入前会脱敏。每次压缩会在任务 `trace` 中增加
+`context_compact` 事件。
+
+阈值可通过 `CONTEXT_CHAR_LIMIT`、`TOOL_RESULT_BUDGET`、
+`LARGE_RESULT_CHAR_LIMIT` 与 `CONTEXT_MAX_MESSAGES` 配置；默认值遵循
+“先可恢复地整理、后有损摘要”的顺序。
+
 ## API
 
 - `POST /api/reviews`：`{"source":"...","diff":"...","budget_cents":1000}`

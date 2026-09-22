@@ -8,4 +8,6 @@
 bin/
 coverage.out
 .checkpoints/
+.task_outputs/
+.transcripts/
 *.exe

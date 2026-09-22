@@ -115,11 +115,24 @@ func runReview(ctx context.Context, j *ReviewJob, req ReviewRequest, cfg Config)
 	out, _ := registry.Run(ctx, "static-check", input)
 	trace := TraceEvent{ID: newID(out), Tool: "static-check", Input: input, Output: out, At: time.Now()}
 	j.Trace = append(j.Trace, trace)
-	j.SpentCents = 1
-	if strings.Contains(input, "TODO") || strings.Contains(input, "panic(") {
-		j.Comments = []ReviewComment{{File: "diff", Line: 1, Severity: "warning", Confidence: "high", Body: "检测到可能需要处理的 TODO 或 panic，请在合并前确认异常路径。", TraceID: trace.ID}}
+	modelReply, tokens, llmErr := reviewWithDeepSeek(ctx, cfg, input)
+	if llmErr == nil {
+		llmTrace := TraceEvent{ID: newID(modelReply), Tool: "deepseek-review", Input: input, Output: "DeepSeek 审查完成", ModelReply: modelReply, At: time.Now()}
+		j.Trace = append(j.Trace, llmTrace)
+		j.SpentCents = tokens / 1000
+		if j.SpentCents < 1 {
+			j.SpentCents = 1
+		}
+		j.Comments = []ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "reference", Body: modelReply, TraceID: llmTrace.ID}}
 	} else {
-		j.Comments = []ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "reference", Body: "未发现内置静态检查规则命中，建议结合业务语义复核。", TraceID: trace.ID}}
+		fallback := "未配置或未成功调用 DeepSeek，以下仅为规则降级结果：" + out
+		j.Trace = append(j.Trace, TraceEvent{ID: newID(fallback), Tool: "review-fallback", Input: input, Output: llmErr.Error(), At: time.Now()})
+		j.SpentCents = 0
+		if strings.Contains(input, "TODO") || strings.Contains(input, "panic(") {
+			j.Comments = []ReviewComment{{File: "diff", Line: 1, Severity: "warning", Confidence: "low", Body: fallback, TraceID: trace.ID}}
+		} else {
+			j.Comments = []ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "low", Body: fallback, TraceID: trace.ID}}
+		}
 	}
 	j.Status = "completed"
 	j.UpdatedAt = time.Now()

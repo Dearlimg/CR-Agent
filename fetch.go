@@ -21,9 +21,13 @@ func fetchDiff(ctx context.Context, source string) (string, string, error) {
 	}
 	target := strings.TrimSuffix(u.String(), "/")
 	if host == "github.com" && strings.Contains(target, "/pull/") {
-		target += ".diff"
+		if !strings.HasSuffix(target, ".diff") && !strings.HasSuffix(target, ".patch") {
+			target += ".diff"
+		}
 	} else if host == "gitlab.com" && strings.Contains(target, "/-/merge_requests/") {
-		target += ".diff"
+		if !strings.HasSuffix(target, ".diff") && !strings.HasSuffix(target, ".patch") {
+			target += ".diff"
+		}
 	} else {
 		return "", "", fmt.Errorf("无法识别链接，请提供 GitHub PR 或 GitLab MR 地址")
 	}

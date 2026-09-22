@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,14 @@ type ReviewComment struct {
 	Body       string `json:"body"`
 	TraceID    string `json:"trace_id"`
 }
+type ReviewFinding struct {
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Severity   string `json:"severity"`
+	Confidence string `json:"confidence"`
+	Body       string `json:"body"`
+	Suggestion string `json:"suggestion"`
+}
 type ReviewJob struct {
 	ID         string          `json:"id"`
 	Status     string          `json:"status"`
@@ -44,6 +53,8 @@ type TraceEvent struct {
 	Prompt     string    `json:"prompt,omitempty"`
 	ModelReply string    `json:"model_reply,omitempty"`
 	At         time.Time `json:"at"`
+	DurationMs int64     `json:"duration_ms"`
+	Phase      string    `json:"phase,omitempty"`
 }
 
 type Tool func(context.Context, string) (string, error)
@@ -100,9 +111,12 @@ func runReview(ctx context.Context, j *ReviewJob, req ReviewRequest, cfg Config)
 		req.Diff = diff
 	}
 	input := redact(req.Diff)
+	readStarted := time.Now()
 	tid := newID(input)
 	ev := TraceEvent{ID: tid, Tool: "diff_reader", Input: input, At: time.Now()}
 	ev.Output = "已读取并完成敏感字段脱敏"
+	ev.DurationMs = time.Since(readStarted).Milliseconds()
+	ev.Phase = "observation"
 	j.Trace = append(j.Trace, ev)
 	saveJob(j)
 	if strings.TrimSpace(input) == "" {
@@ -112,18 +126,30 @@ func runReview(ctx context.Context, j *ReviewJob, req ReviewRequest, cfg Config)
 		return
 	}
 	// 安全默认：仅分析 diff，不执行仓库代码；工具通过 registry 显式注册。
+	toolStarted := time.Now()
 	out, _ := registry.Run(ctx, "static-check", input)
-	trace := TraceEvent{ID: newID(out), Tool: "static-check", Input: input, Output: out, At: time.Now()}
+	trace := TraceEvent{ID: newID(out), Tool: "static-check", Input: fmt.Sprintf("diff_bytes=%d", len(input)), Output: out, At: time.Now(), DurationMs: time.Since(toolStarted).Milliseconds(), Phase: "action"}
 	j.Trace = append(j.Trace, trace)
+	modelStarted := time.Now()
 	modelReply, tokens, llmErr := reviewWithDeepSeek(ctx, cfg, input)
 	if llmErr == nil {
-		llmTrace := TraceEvent{ID: newID(modelReply), Tool: "deepseek-review", Input: input, Output: "DeepSeek 审查完成", ModelReply: modelReply, At: time.Now()}
+		llmTrace := TraceEvent{ID: newID(modelReply), Tool: "deepseek-review", Input: fmt.Sprintf("prompt_diff_bytes=%d", len(input)), Output: "DeepSeek 审查完成", ModelReply: modelReply, At: time.Now(), DurationMs: time.Since(modelStarted).Milliseconds(), Phase: "reasoning"}
 		j.Trace = append(j.Trace, llmTrace)
 		j.SpentCents = tokens / 1000
 		if j.SpentCents < 1 {
 			j.SpentCents = 1
 		}
-		j.Comments = []ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "reference", Body: modelReply, TraceID: llmTrace.ID}}
+		findings := parseFindings(modelReply)
+		for _, f := range findings {
+			body := f.Body
+			if f.Suggestion != "" {
+				body += "\n建议：" + f.Suggestion
+			}
+			j.Comments = append(j.Comments, ReviewComment{File: f.File, Line: f.Line, Severity: f.Severity, Confidence: f.Confidence, Body: body, TraceID: llmTrace.ID})
+		}
+		if len(findings) == 0 {
+			j.Comments = []ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "high", Body: "未发现需要评论的问题。", TraceID: llmTrace.ID}}
+		}
 	} else {
 		fallback := "未配置或未成功调用 DeepSeek，以下仅为规则降级结果：" + out
 		j.Trace = append(j.Trace, TraceEvent{ID: newID(fallback), Tool: "review-fallback", Input: input, Output: llmErr.Error(), At: time.Now()})

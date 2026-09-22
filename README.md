@@ -24,3 +24,16 @@ go run .
 - `POST /api/reviews`：`{"source":"...","diff":"...","budget_cents":1000}`
 - `GET /api/reviews/:id`：查询任务、评论和 trace
 - `GET /api/health`
+
+## 目录结构
+
+```text
+cmd/server/              # 服务启动入口
+internal/controller/     # Gin 路由、参数校验、HTTP 响应
+internal/logic/          # 审查流程编排与业务规则
+internal/dao/            # checkpoint / 任务存储，后续替换 MySQL、Redis
+internal/model/          # 请求、任务、评论、trace 模型
+web/                     # 独立前端页面
+```
+
+开发时推荐运行 `go run ./cmd/server`；根目录入口暂时保留用于兼容已有运行方式，后续接入完整 DeepSeek 流程后移除。

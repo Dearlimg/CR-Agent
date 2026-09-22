@@ -103,17 +103,48 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 		_ = s.Store.Save(j)
 		return
 	}
+	if decision := s.Loop.Policy.Decide(PermissionLLMInference); decision != PermissionAllow {
+		j.Status = "failed"
+		j.Error = permissionError("subagent_review", PermissionLLMInference, decision).Error()
+		_ = s.Store.Save(j)
+		return
+	}
+
+	// Each sub-agent starts with a fresh model conversation. The parent consumes
+	// only their final JSON reports, so the review focus does not inflate its context.
+	if s.Loop.Hooks != nil {
+		for _, name := range []string{"correctness", "security", "dependency"} {
+			s.Loop.Hooks.Emit(ctx, HookPreToolUse, HookContext{JobID: j.ID, Tool: "subagent_" + name, Permission: PermissionLLMInference, Reason: "委派专项审查"})
+		}
+	}
+	subResults := RunReviewSubagents(ctx, s.Config, req.Diff)
+	subagentReports := make([]string, 0, len(subResults))
+	for _, result := range subResults {
+		toolName := "subagent_" + result.Name
+		traceID := id(toolName + j.ID)
+		if result.Error != nil {
+			j.Trace = append(j.Trace, model.TraceEvent{ID: traceID, Tool: toolName, Input: "独立专项审查", Output: result.Error.Error(), At: time.Now(), DurationMs: result.DurationMs, Phase: "subagent"})
+			_ = s.Store.RecordToolCall(j.ID, traceID, toolName, "failed", "独立专项审查", "", result.Error.Error(), result.DurationMs)
+			if s.Loop.Hooks != nil {
+				s.Loop.Hooks.Emit(ctx, HookToolError, HookContext{JobID: j.ID, Tool: toolName, Permission: PermissionLLMInference, Reason: "委派专项审查", Error: result.Error, DurationMs: result.DurationMs})
+			}
+			continue
+		}
+		j.Trace = append(j.Trace, model.TraceEvent{ID: traceID, Tool: toolName, Input: "独立专项审查", Output: "子 Agent 审查完成", ModelReply: result.Summary, At: time.Now(), DurationMs: result.DurationMs, Phase: "subagent"})
+		_ = s.Store.RecordToolCall(j.ID, traceID, toolName, "succeeded", "独立专项审查", "子 Agent 审查完成", "", result.DurationMs)
+		if s.Loop.Hooks != nil {
+			s.Loop.Hooks.Emit(ctx, HookPostToolUse, HookContext{JobID: j.ID, Tool: toolName, Permission: PermissionLLMInference, Reason: "委派专项审查", Output: "子 Agent 审查完成", DurationMs: result.DurationMs})
+		}
+		subagentReports = append(subagentReports, result.Name+"\n"+truncateSubagentReport(result.Summary, 8000))
+	}
+	// Persist this checkpoint before the final synthesis, which also lets the SSE
+	// endpoint show completed child tasks when the final model call is slow.
+	_ = s.Store.Save(j)
 	readID := ""
 	if len(j.Trace) > 0 {
 		readID = j.Trace[len(j.Trace)-1].ID
 	}
-	prompt := "只基于下面 git diff 输出 JSON 数组，字段为 file,line,severity,confidence,body,suggestion；没有问题输出 []。不要编造。\n\n" + redact(req.Diff)
-	if decision := s.Loop.Policy.Decide(PermissionLLMInference); decision != PermissionAllow {
-		j.Status = "failed"
-		j.Error = permissionError("deepseek_review", PermissionLLMInference, decision).Error()
-		_ = s.Store.Save(j)
-		return
-	}
+	prompt := "你是 Code Review 父 Agent。以下是拥有独立 diff 上下文的子 Agent 最终报告。只基于这些报告去重、校正严重级别，并输出 JSON 数组，字段为 file,line,severity,confidence,body,suggestion；没有问题输出 []。不要补充报告中不存在的事实。\n\n" + strings.Join(subagentReports, "\n\n")
 	modelStarted := time.Now()
 	reply, err := EinoReviewAgent(ctx, s.Config, prompt)
 	modelTraceID := id("deepseek-review" + j.ID)
@@ -146,4 +177,11 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	j.Status = "completed"
 	j.UpdatedAt = time.Now()
 	_ = s.Store.Save(j)
+}
+
+func truncateSubagentReport(report string, limit int) string {
+	if len(report) <= limit {
+		return report
+	}
+	return report[:limit] + "\n[子 Agent 报告已截断]"
 }

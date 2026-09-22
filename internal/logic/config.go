@@ -19,7 +19,7 @@ type Config struct {
 	BudgetCents     int
 }
 
-func loadConfig() Config {
+func LoadConfig() Config {
 	_ = godotenv.Load()
 	b := func(k, d string) string {
 		if v := os.Getenv(k); v != "" {

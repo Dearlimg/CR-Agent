@@ -36,4 +36,4 @@ internal/model/          # 请求、任务、评论、trace 模型
 web/                     # 独立前端页面
 ```
 
-开发时推荐运行 `go run ./cmd/server`；根目录入口暂时保留用于兼容已有运行方式，后续接入完整 DeepSeek 流程后移除。
+开发时运行 `go run ./cmd/server`。根目录不再放置服务实现，配置、抓取和 LLM client 均归属于 `internal/logic`。

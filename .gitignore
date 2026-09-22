@@ -10,4 +10,5 @@ coverage.out
 .checkpoints/
 .task_outputs/
 .transcripts/
+.memory/
 *.exe

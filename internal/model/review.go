@@ -5,6 +5,7 @@ import "time"
 type ReviewRequest struct {
 	Source      string `json:"source"`
 	Diff        string `json:"diff"`
+	MemoryQuery string `json:"memory_query"`
 	BudgetCents int    `json:"budget_cents"`
 }
 type ReviewComment struct {

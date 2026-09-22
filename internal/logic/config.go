@@ -12,6 +12,10 @@ import (
 type Config struct {
 	Port                 string
 	SkillsDir            string
+	MemoryDir            string
+	MemoryMaxRecall      int
+	MemoryMaxChars       int
+	MemoryConsolidateAt  int
 	ContextCharLimit     int
 	ToolResultBudget     int
 	LargeResultCharLimit int
@@ -38,6 +42,10 @@ func LoadConfig() Config {
 	return Config{
 		Port:                 b("PORT", "8080"),
 		SkillsDir:            b("AGENT_SKILLS_DIR", "skills"),
+		MemoryDir:            b("AGENT_MEMORY_DIR", ".memory"),
+		MemoryMaxRecall:      intEnv(b, "MEMORY_MAX_RECALL", 5),
+		MemoryMaxChars:       intEnv(b, "MEMORY_MAX_CHARS", 6000),
+		MemoryConsolidateAt:  intEnv(b, "MEMORY_CONSOLIDATE_AT", 10),
 		ContextCharLimit:     intEnv(b, "CONTEXT_CHAR_LIMIT", 50000),
 		ToolResultBudget:     intEnv(b, "TOOL_RESULT_BUDGET", 200000),
 		LargeResultCharLimit: intEnv(b, "LARGE_RESULT_CHAR_LIMIT", 30000),

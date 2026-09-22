@@ -53,8 +53,12 @@ func TestSkillLoaderRejectsUnknownSkill(t *testing.T) {
 }
 
 func TestReviewPromptLoadsOnlySelectedSkill(t *testing.T) {
-	prompt := BuildReviewSubagentPrompt("审查正确性", "- code-review: review", "full skill", "diff --git")
-	if !strings.Contains(prompt, "tool_result: load_skill(\"code-review\")") || !strings.Contains(prompt, "full skill") {
+	prompt := BuildReviewSubagentPrompt("审查正确性", ReviewPromptContext{
+		Catalog:      "- code-review: review",
+		SkillContent: "full skill",
+		Memories:     "- [project] error-style: wrap errors",
+	}, "diff --git")
+	if !strings.Contains(prompt, "tool_result: load_skill(\"code-review\")") || !strings.Contains(prompt, "full skill") || !strings.Contains(prompt, "wrap errors") {
 		t.Fatalf("prompt did not include loaded skill: %q", prompt)
 	}
 }

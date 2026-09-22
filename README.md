@@ -43,11 +43,30 @@ go run ./cmd/server
 `LARGE_RESULT_CHAR_LIMIT` 与 `CONTEXT_MAX_MESSAGES` 配置；默认值遵循
 “先可恢复地整理、后有损摘要”的顺序。
 
+## 持久记忆
+
+Memory 用于跨审查任务保留可复用知识，不保存完整 transcript。每条记录单独保存在
+`.memory/<name>.md`，`.memory/MEMORY.md` 只保留索引。新审查任务会按照 `memory_query`
+（未提供时使用来源和 diff）的关键词召回至多 `MEMORY_MAX_RECALL` 条、总计不超过 `MEMORY_MAX_CHARS` 的相关记忆；
+提示词明确将它们视为背景，当前 diff 与当前请求优先。
+
+可通过 `POST /api/memories` 显式保存经过确认的长期偏好或项目约束：
+
+```json
+{"name":"go-error-style","description":"项目要求包装错误","type":"project","body":"Go 错误应保留上下文并使用 %w 包装。","scope":"persistent"}
+```
+
+`GET /api/memories` 查看索引内容。自动提取只在模型可用时运行，且候选必须包含
+`persistent` scope、通过临时性与敏感信息检查、并且不与已有记录重复。达到
+`MEMORY_CONSOLIDATE_AT` 后只会清理高度相似的重复记录，不会把完整对话写入记忆。
+
 ## API
 
-- `POST /api/reviews`：`{"source":"...","diff":"...","budget_cents":1000}`
+- `POST /api/reviews`：`{"source":"...","diff":"...","memory_query":"...","budget_cents":1000}`
 - `GET /api/reviews/:id`：查询任务、评论和 trace
 - `GET /api/health`
+- `GET /api/memories`：列出持久记忆
+- `POST /api/memories`：保存一条 `persistent` 长期记忆
 
 ## 目录结构
 

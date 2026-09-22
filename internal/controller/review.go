@@ -17,6 +17,35 @@ func (c *ReviewController) Register(r *gin.Engine) {
 	r.POST("/api/reviews", c.create)
 	r.GET("/api/reviews/:id", c.get)
 	r.GET("/api/reviews/:id/events", c.events)
+	r.GET("/api/memories", c.listMemories)
+	r.POST("/api/memories", c.saveMemory)
+}
+
+func (c *ReviewController) listMemories(x *gin.Context) {
+	records, err := c.Service.MemoryStore.List()
+	if err != nil {
+		x.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, gin.H{"memories": records})
+}
+
+func (c *ReviewController) saveMemory(x *gin.Context) {
+	var candidate logic.MemoryCandidate
+	if err := x.ShouldBindJSON(&candidate); err != nil {
+		x.JSON(http.StatusBadRequest, gin.H{"error": "记忆格式无效"})
+		return
+	}
+	record, saved, err := c.Service.MemoryStore.Save(candidate)
+	if err != nil {
+		x.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if !saved {
+		x.JSON(http.StatusBadRequest, gin.H{"error": "仅保存非重复的 persistent 长期记忆"})
+		return
+	}
+	x.JSON(http.StatusCreated, record)
 }
 
 func (c *ReviewController) events(x *gin.Context) {

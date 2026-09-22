@@ -18,6 +18,7 @@ type Service struct {
 	SkillLoader      *SkillLoader
 	SkillError       error
 	ContextCompactor *ContextCompactor
+	MemoryStore      *MemoryStore
 }
 
 func NewService(store dao.Store, cfg Config) *Service {
@@ -52,6 +53,7 @@ func NewService(store dao.Store, cfg Config) *Service {
 		SkillLoader:      skillLoader,
 		SkillError:       skillErr,
 		ContextCompactor: NewContextCompactor(cfg),
+		MemoryStore:      NewMemoryStore(cfg),
 	}
 }
 func renderTodos(todos []model.TodoItem) string {
@@ -137,6 +139,24 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	skillTraceID := id("load_skill" + j.ID)
 	j.Trace = append(j.Trace, model.TraceEvent{ID: skillTraceID, Tool: "load_skill", Input: skill.Name, Output: "已加载完整 SKILL.md", At: time.Now(), Phase: "skill"})
 	_ = s.Store.RecordToolCall(j.ID, skillTraceID, "load_skill", "succeeded", skill.Name, "已加载完整 SKILL.md", "", 0)
+	memoryQuery := strings.TrimSpace(req.MemoryQuery)
+	if memoryQuery == "" {
+		memoryQuery = j.Source + "\n" + redact(req.Diff)
+	}
+	memories, memoryErr := s.MemoryStore.Recall(memoryQuery)
+	if memoryErr != nil {
+		j.Trace = append(j.Trace, model.TraceEvent{ID: id("memory_recall" + j.ID), Tool: "memory_recall", Input: "review request", Output: memoryErr.Error(), At: time.Now(), Phase: "memory"})
+	}
+	promptContext := ReviewPromptContext{
+		Catalog:      s.SkillLoader.Catalog(),
+		SkillContent: skill.Content,
+		Memories:     renderMemories(memories),
+	}
+	if len(memories) > 0 {
+		memoryTraceID := id("memory_recall" + j.ID)
+		j.Trace = append(j.Trace, model.TraceEvent{ID: memoryTraceID, Tool: "memory_recall", Input: "review request", Output: fmt.Sprintf("召回 %d 条相关持久记忆", len(memories)), At: time.Now(), Phase: "memory"})
+		_ = s.Store.RecordToolCall(j.ID, memoryTraceID, "memory_recall", "succeeded", "review request", fmt.Sprintf("召回 %d 条相关持久记忆", len(memories)), "", 0)
+	}
 
 	// Each sub-agent starts with a fresh model conversation. The parent consumes
 	// only their final JSON reports, so the review focus does not inflate its context.
@@ -145,7 +165,7 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 			s.Loop.Hooks.Emit(ctx, HookPreToolUse, HookContext{JobID: j.ID, Tool: "subagent_" + name, Permission: PermissionLLMInference, Reason: "委派专项审查"})
 		}
 	}
-	subResults := RunReviewSubagents(ctx, s.Config, req.Diff, s.SkillLoader.Catalog(), skill)
+	subResults := RunReviewSubagents(ctx, s.Config, req.Diff, promptContext)
 	contextMessages := make([]ContextMessage, 0, len(subResults))
 	for _, result := range subResults {
 		toolName := "subagent_" + result.Name
@@ -189,7 +209,7 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	if len(j.Trace) > 0 {
 		readID = j.Trace[len(j.Trace)-1].ID
 	}
-	prompt := BuildReviewSynthesisPrompt(s.SkillLoader.Catalog(), skill.Content, renderContextMessages(compacted.Messages))
+	prompt := BuildReviewSynthesisPrompt(promptContext, renderContextMessages(compacted.Messages))
 	modelStarted := time.Now()
 	reply, err := EinoReviewAgent(ctx, s.Config, prompt)
 	modelTraceID := id("deepseek-review" + j.ID)
@@ -221,7 +241,48 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	}
 	j.Status = "completed"
 	j.UpdatedAt = time.Now()
+	s.extractReviewMemories(ctx, j, req)
 	_ = s.Store.Save(j)
+}
+
+func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJob, req model.ReviewRequest) {
+	if strings.TrimSpace(s.Config.DeepSeekAPIKey) == "" {
+		return
+	}
+	confirmed := make([]model.ReviewComment, 0, len(job.Comments))
+	for _, comment := range job.Comments {
+		if comment.Confidence == "high" {
+			confirmed = append(confirmed, comment)
+		}
+	}
+	if len(confirmed) == 0 {
+		return
+	}
+	comments := redact(jsonString(confirmed))
+	prompt := fmt.Sprintf(`你是 Code Review 记忆提取器。只从已确认的审查结论中提取未来审查仍会复用的信息。
+输出 JSON 数组；字段为 name,description,type,body,scope。scope 仅可为 persistent 或 current_task。
+仅输出稳定的用户偏好、长期反馈、项目约束或外部参考。不要保存临时任务、具体 diff、敏感数据、凭据或不确定推测。没有可保存内容时输出 []。
+
+审查来源：%s
+审查结论：%s`, req.Source, comments)
+	reply, err := EinoReviewAgent(ctx, s.Config, prompt)
+	traceID := id("memory_extract" + job.ID)
+	if err != nil {
+		job.Trace = append(job.Trace, model.TraceEvent{ID: traceID, Tool: "memory_extract", Input: "review findings", Output: err.Error(), At: time.Now(), Phase: "memory"})
+		_ = s.Store.RecordToolCall(job.ID, traceID, "memory_extract", "failed", "review findings", "", err.Error(), 0)
+		return
+	}
+	candidates := parseMemoryCandidates(reply)
+	stored := 0
+	for _, candidate := range candidates {
+		_, saved, saveErr := s.MemoryStore.Save(candidate)
+		if saveErr == nil && saved {
+			stored++
+		}
+	}
+	output := fmt.Sprintf("提取 %d 条候选，保存 %d 条持久记忆", len(candidates), stored)
+	job.Trace = append(job.Trace, model.TraceEvent{ID: traceID, Tool: "memory_extract", Input: "review findings", Output: output, At: time.Now(), Phase: "memory"})
+	_ = s.Store.RecordToolCall(job.ID, traceID, "memory_extract", "succeeded", "review findings", output, "", 0)
 }
 
 func (s *Service) summarizeReviewContext(ctx context.Context, activeRequest, history string) (string, error) {

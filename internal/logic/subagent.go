@@ -20,7 +20,7 @@ type ReviewSubagent struct {
 	Focus string
 }
 
-func RunReviewSubagents(ctx context.Context, cfg Config, diff string, catalog string, skill Skill) []SubagentResult {
+func RunReviewSubagents(ctx context.Context, cfg Config, diff string, promptContext ReviewPromptContext) []SubagentResult {
 	agents := []ReviewSubagent{
 		{Name: "correctness", Focus: "只审查逻辑正确性、边界条件、错误处理和回归风险"},
 		{Name: "security", Focus: "只审查密钥、认证、注入、SSRF、权限和敏感数据风险"},
@@ -33,7 +33,7 @@ func RunReviewSubagents(ctx context.Context, cfg Config, diff string, catalog st
 		go func(index int, a ReviewSubagent) {
 			defer wg.Done()
 			started := time.Now()
-			prompt := BuildReviewSubagentPrompt(a.Focus, catalog, skill.Content, redact(diff))
+			prompt := BuildReviewSubagentPrompt(a.Focus, promptContext, redact(diff))
 			summary, err := EinoReviewAgent(ctx, cfg, prompt)
 			results[index] = SubagentResult{
 				Name:       a.Name,

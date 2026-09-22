@@ -1,6 +1,11 @@
 package model
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+type BackgroundRunner func(context.Context) (string, error)
 
 type BackgroundTaskStatus string
 

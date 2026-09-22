@@ -20,8 +20,8 @@ type Service struct {
 	SkillError       error
 	ContextCompactor *ContextCompactor
 	MemoryStore      *MemoryStore
-	TaskStore        *TaskStore
-	Background       *BackgroundManager
+	TaskStore        TaskRepository
+	Background       BackgroundRepository
 	Cron             *CronScheduler
 	CronError        error
 	Team             *ReviewTeam
@@ -30,6 +30,10 @@ type Service struct {
 }
 
 func NewService(store dao.Store, cfg Config) *Service {
+	return NewServiceWithRuntime(store, cfg, RuntimeRepositories{})
+}
+
+func NewServiceWithRuntime(store dao.Store, cfg Config, repositories RuntimeRepositories) *Service {
 	skillLoader := NewSkillLoader(cfg.SkillsDir)
 	skillErr := skillLoader.Scan()
 	registry := NewToolRegistry()
@@ -71,12 +75,15 @@ func NewService(store dao.Store, cfg Config) *Service {
 		SkillError:       skillErr,
 		ContextCompactor: NewContextCompactor(cfg),
 		MemoryStore:      NewMemoryStore(cfg),
-		TaskStore:        NewTaskStore(cfg.TasksDir),
-		Background:       NewBackgroundManager(cfg.BackgroundTasksDir),
+		TaskStore:        nil,
+		Background:       nil,
 		MCP:              mcp,
 		Workflows:        workflows,
 	}
-	service.Team = NewReviewTeam(service.TaskStore, NewMessageBus(cfg.TeamMailboxDir), cfg)
+	repositories = ensureRuntimeRepositories(cfg, repositories)
+	service.TaskStore = repositories.Tasks
+	service.Background = repositories.Background
+	service.Team = NewReviewTeam(service.TaskStore, repositories.Mailbox, cfg)
 	cron, cronErr := NewCronScheduler(
 		cfg.CronFile,
 		time.Duration(cfg.CronPollIntervalMs)*time.Millisecond,

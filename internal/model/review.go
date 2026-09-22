@@ -34,6 +34,7 @@ type TraceEvent struct {
 	Phase      string    `json:"phase,omitempty"`
 }
 type TeamEvent struct {
+	ID      string    `json:"id,omitempty"`
 	From    string    `json:"from"`
 	To      string    `json:"to"`
 	Type    string    `json:"type"`

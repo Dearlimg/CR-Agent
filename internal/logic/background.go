@@ -18,7 +18,7 @@ import (
 
 var backgroundTaskIDPattern = regexp.MustCompile(`^bg_[0-9a-f]{8}$`)
 
-type BackgroundRunner func(context.Context) (string, error)
+type BackgroundRunner = model.BackgroundRunner
 
 // BackgroundManager registers short metadata synchronously and runs only
 // server-registered functions asynchronously. It deliberately does not accept

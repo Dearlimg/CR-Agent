@@ -92,6 +92,8 @@ func (b *MessageBus) Consume(agent, jobID string) ([]model.TeamEvent, error) {
 	return events, nil
 }
 
+func (b *MessageBus) Ack([]model.TeamEvent) error { return nil }
+
 func safeMailboxName(name string) string {
 	name = strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
@@ -106,15 +108,15 @@ func safeMailboxName(name string) string {
 }
 
 type ReviewTeam struct {
-	Tasks          *TaskStore
-	Bus            *MessageBus
+	Tasks          TaskRepository
+	Bus            TeamMailbox
 	Cfg            Config
 	MaxConcurrency int
 	slots          chan struct{}
 	RunWorker      func(context.Context, Config, ReviewSubagent, string, ReviewPromptContext) SubagentResult
 }
 
-func NewReviewTeam(tasks *TaskStore, bus *MessageBus, cfg Config) *ReviewTeam {
+func NewReviewTeam(tasks TaskRepository, bus TeamMailbox, cfg Config) *ReviewTeam {
 	maxConcurrency := cfg.TeamMaxConcurrency
 	if maxConcurrency <= 0 {
 		maxConcurrency = 2
@@ -202,6 +204,9 @@ func (t *ReviewTeam) Run(ctx context.Context, jobID, parentTaskID, diff string, 
 	}
 	events, err := t.Bus.Consume("lead", jobID)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := t.Bus.Ack(events); err != nil {
 		return nil, nil, err
 	}
 	return results, events, nil

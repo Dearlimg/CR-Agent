@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type ReviewController struct{ Service *logic.Service }
@@ -15,6 +16,36 @@ func (c *ReviewController) Register(r *gin.Engine) {
 	r.GET("/api/health", func(x *gin.Context) { x.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	r.POST("/api/reviews", c.create)
 	r.GET("/api/reviews/:id", c.get)
+	r.GET("/api/reviews/:id/events", c.events)
+}
+
+func (c *ReviewController) events(x *gin.Context) {
+	x.Header("Content-Type", "text/event-stream")
+	x.Header("Cache-Control", "no-cache")
+	x.Header("Connection", "keep-alive")
+	flusher, ok := x.Writer.(http.Flusher)
+	if !ok {
+		x.Status(http.StatusInternalServerError)
+		return
+	}
+	for {
+		j, found := c.Service.Store.Get(x.Param("id"))
+		if !found {
+			x.SSEvent("error", gin.H{"error": "review 不存在"})
+			flusher.Flush()
+			return
+		}
+		x.SSEvent("review", j)
+		flusher.Flush()
+		if j.Status == "completed" || j.Status == "failed" {
+			return
+		}
+		select {
+		case <-x.Request.Context().Done():
+			return
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 func (c *ReviewController) create(x *gin.Context) {
 	var req model.ReviewRequest

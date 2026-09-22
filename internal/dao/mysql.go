@@ -3,6 +3,7 @@ package dao
 import (
 	"CR-Agent/internal/model"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -100,4 +101,12 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 		j.Trace = append(j.Trace, model.TraceEvent{ID: t.TraceID, Tool: t.Tool, Phase: t.Phase, Input: t.Input, Output: t.Output, Prompt: t.Prompt, ModelReply: t.ModelReply, DurationMs: t.DurationMs, At: t.CreatedAt})
 	}
 	return j, true
+}
+
+func (s *MySQLStore) RecordToolCall(jobPublicID, traceID, tool, status, input, output, callErr string, durationMs int64) error {
+	var job model.DBReviewJob
+	if err := s.db.Where("public_id = ?", jobPublicID).First(&job).Error; err != nil {
+		return err
+	}
+	return s.db.Create(&model.DBToolCall{JobID: job.ID, TraceID: traceID, Tool: tool, Status: status, InputHash: fmt.Sprintf("%x", sha256.Sum256([]byte(input))), Output: output, Error: callErr, DurationMs: durationMs, CreatedAt: time.Now()}).Error
 }

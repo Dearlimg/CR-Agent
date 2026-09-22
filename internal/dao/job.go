@@ -18,6 +18,7 @@ type JobStore struct {
 type Store interface {
 	Save(*model.ReviewJob) error
 	Get(string) (*model.ReviewJob, bool)
+	RecordToolCall(string, string, string, string, string, string, string, int64) error
 }
 
 func NewJobStore(dir string) *JobStore {
@@ -41,4 +42,7 @@ func (s *JobStore) Get(id string) (*model.ReviewJob, bool) {
 	defer s.mu.RUnlock()
 	j, ok := s.jobs[id]
 	return j, ok
+}
+func (s *JobStore) RecordToolCall(string, string, string, string, string, string, string, int64) error {
+	return nil
 }

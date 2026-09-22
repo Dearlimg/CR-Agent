@@ -32,6 +32,7 @@ type AgentLoop struct {
 	Registry *ToolRegistry
 	Plan     []LoopStep
 	MaxSteps int
+	Record   func(string, string, string, string, string, string, int64) error
 }
 
 func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
@@ -48,11 +49,20 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 		}
 		started := time.Now()
 		result, err := tool(ctx, input)
+		traceID := id(step.Tool + step.Reason + time.Now().String())
 		if err != nil {
-			input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: id(step.Tool + err.Error()), Tool: step.Tool, Input: step.Reason, Output: err.Error(), At: time.Now(), DurationMs: time.Since(started).Milliseconds(), Phase: "action"})
+			duration := time.Since(started).Milliseconds()
+			input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: err.Error(), At: time.Now(), DurationMs: duration, Phase: "action"})
+			if a.Record != nil {
+				_ = a.Record(input.Job.ID, traceID, step.Tool, "failed", step.Reason, "", err.Error(), duration)
+			}
 			return err
 		}
-		input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: id(step.Tool + result.Output), Tool: step.Tool, Input: step.Reason, Output: result.Output, At: time.Now(), DurationMs: time.Since(started).Milliseconds(), Phase: "action"})
+		duration := time.Since(started).Milliseconds()
+		input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: result.Output, At: time.Now(), DurationMs: duration, Phase: "action"})
+		if a.Record != nil {
+			_ = a.Record(input.Job.ID, traceID, step.Tool, "succeeded", step.Reason, result.Output, "", duration)
+		}
 		if result.Diff != "" {
 			input.Diff = result.Diff
 		}

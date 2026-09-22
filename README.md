@@ -13,7 +13,7 @@ go run ./cmd/server
 
 ## 设计
 
-- **可恢复**：每个任务写入 `.checkpoints/<id>.json`，状态含 queued/running/completed/failed。
+- **可恢复**：生产运行时将任务状态、评论、Todo、trace 和工具调用写入 MySQL，状态含 queued/running/completed/failed。
 - **可观测**：每条评论带 `trace_id`，任务返回工具、脱敏输入、输出和时间戳。
 - **可扩展**：`ToolRegistry.Register("name", tool)` 声明式注册工具，不修改主流程。
 - **预算**：请求支持 `budget_cents`，默认读取 `REVIEW_BUDGET_CENTS`。
@@ -62,9 +62,9 @@ Memory 用于跨审查任务保留可复用知识，不保存完整 transcript�
 
 ## 任务系统
 
-Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。每个 Task 以
-`.tasks/task_<id>.json` 保存，包含 `subject`、`description`、`status`、`owner` 和
-`blocked_by`。状态只能按 `pending → in_progress → completed` 转换：认领时检查所有
+Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。生产环境使用 `agent_tasks` 和
+`agent_task_dependencies` 保存，包含 `subject`、`description`、`status`、`owner` 和依赖关系。
+状态只能按 `pending → in_progress → completed` 转换：认领时检查所有
 依赖已完成，完成时返回刚被解锁的下游任务；添加依赖会拒绝自依赖、缺失任务和环。
 
 每个 `POST /api/reviews` 会自动创建并认领一个 Lead（`review-agent`）任务，返回的审查 Job
@@ -77,7 +77,7 @@ Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。每�
 
 ## Agent Team
 
-Lead 负责向调用方交付最终结论；专项队友只负责 correctness、security、dependency 三个彼此独立的审查维度。每位队友拥有独立模型上下文，完成后会在 `.team-mailboxes/lead.jsonl` 发送两个持久化事件：`result`（审查产出）和 `idle_notification`（可继续接收工作）。Lead 在最终汇总前消费当前 Job 的事件，并将其返回在 `team_events` 中。
+Lead 负责向调用方交付最终结论；专项队友只负责 correctness、security、dependency 三个彼此独立的审查维度。每位队友拥有独立模型上下文，完成后会向 MySQL `team_messages` 写入两个持久化事件：`result`（审查产出）和 `idle_notification`（可继续接收工作）。Lead 在最终汇总前消费当前 Job 的事件，并将其返回在 `team_events` 中。
 
 专项任务同样写入共享 `.tasks/` 任务板，按 `pending → in_progress → completed` 原子认领；失败不会被标记为完成。这个迭代刻意不让队友执行代码、修改仓库或发布评论，仍沿用受限的只读审查工具边界。当前队友生命周期限定在单次审查 Job；跨 Job 的长期驻留、动态任务拆分和 worktree 隔离是后续扩展，而不是已实现能力。
 
@@ -107,7 +107,7 @@ stdio/HTTP transport 可在不修改 Agent Loop 的情况下实现 `MCPServerFac
 
 模型可以通过一次 `Workflow` 工具调用启动宿主注册的可恢复编排。当前内置
 `review-changes`，按 correctness、security、dependency 维度执行 audit → verify → summary；
-workflow 的中间结果写入 `.workflows/<run_id>.journal.jsonl`，续跑时按稳定调用键复用已有结果，
+生产环境的 Workflow 状态写入 MySQL `agent_runs`，事件写入 `workflow_events`，续跑时按稳定调用键复用已有结果，
 不会把中间结果全部塞回主对话。
 
 Workflow 支持 `agent`、`parallel`、`pipeline`、`phase`、`log` 和一层嵌套调用；结构化输出
@@ -133,7 +133,7 @@ Workflow 支持 `agent`、`parallel`、`pipeline`、`phase`、`log` 和一层嵌
 ## 后台任务
 
 后台任务将服务端注册的慢操作放到独立 Goroutine 中执行，创建后立刻返回 `bg_<id>`，
-主请求无需等待。任务元数据保存在 `.background-tasks/`，状态包括 `pending`、
+主请求无需等待。生产任务元数据保存在 MySQL `background_tasks`，状态包括 `pending`、
 `running`、`completed`、`failed` 和 `cancelled`。服务重启后无法安全恢复原内存 Runner，
 因此会将未结束任务标记为 failed，并提供可消费一次的完成通知。
 
@@ -179,12 +179,12 @@ Cron 使用五字段格式：`分钟 小时 日期 月份 星期`，字段支持
 cmd/server/              # 服务启动入口
 internal/controller/     # Gin 路由、参数校验、HTTP 响应
 internal/logic/          # 审查流程编排与业务规则
-internal/dao/            # checkpoint / 任务存储，后续替换 MySQL、Redis
+internal/dao/            # MySQL 持久化模型和 Repository
 internal/model/          # 请求、任务、评论、trace 模型
-.tasks/                  # 运行时持久化任务图（自动忽略）
-.background-tasks/       # 运行时后台任务元数据（自动忽略）
 .cron-jobs.json          # 可恢复的定时审查计划（自动忽略）
 web/                     # 独立前端页面
 ```
 
-开发时运行 `go run ./cmd/server`。根目录不再放置服务实现，配置、抓取和 LLM client 均归属于 `internal/logic`。
+生产服务要求 `PERSISTENCE_MODE=mysql` 和 `MYSQL_DSN`，不会回退到 `.checkpoints`、`.tasks`、
+`.background-tasks` 或 `.team-mailboxes`。单元测试仍可使用文件适配器。开发时运行
+`go run ./cmd/server`；根目录不再放置服务实现，配置、抓取和 LLM client 均归属于 `internal/logic`。

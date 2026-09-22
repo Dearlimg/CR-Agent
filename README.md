@@ -81,6 +81,21 @@ Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。每�
 审查请求自动使用后台 Runner，返回的 Job 中包含 `background_task_id`。为避免将服务变成
 任意命令执行入口，HTTP API 不接受 shell command；后台执行只能由后端注册 Runner。
 
+## 定时任务
+
+定时任务只会调度已注册的代码审查 Runner，不能保存或执行任意 shell command。创建计划时必须
+提供 `source`，服务在实际触发时抓取 diff；因此计划文件不保存粘贴的完整 diff 或审查上下文。
+
+Cron 使用五字段格式：`分钟 小时 日期 月份 星期`，字段支持 `*`、`*/N`、数值、`N-M`、
+以及逗号列表。调度器每秒轮询一次（可通过 `CRON_POLL_INTERVAL_MS` 调整），触发时先把
+`pending_delivery` 与 `last_fired` 写入 `AGENT_CRON_FILE`，随后创建普通后台审查任务。
+这提供至少一次投递：服务在标记后中断时会在启动后继续投递；不会补跑服务停机时错过的时刻。
+若已有后台 Runner 正在执行，计划会保持待投递并在 Agent 空闲后再启动，避免并发审查争用上下文。
+
+`durable: true` 的计划会保存在 `.cron-jobs.json` 并在重启后恢复，`durable: false` 的计划仅
+保留在当前进程。一次性计划（`recurring: false`）在成功投递后删除；循环计划会保留最近的
+`last_background_task_id`，可继续通过后台任务 API 查询执行结果。
+
 ## API
 
 - `POST /api/reviews`：`{"source":"...","diff":"...","memory_query":"...","budget_cents":1000}`
@@ -95,6 +110,9 @@ Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。每�
 - `GET /api/background-tasks` / `:id`：列出或读取后台任务
 - `GET /api/background-tasks/notifications`：一次性收集已完成通知
 - `POST /api/background-tasks/:id/cancel`：请求取消运行中的后台任务
+- `POST /api/cron-jobs`：创建 `{"cron":"0 9 * * 1-5","source":"...","recurring":true,"durable":true}`
+- `GET /api/cron-jobs` / `GET /api/cron-jobs/:id`：查看计划及最近投递的后台任务 ID
+- `DELETE /api/cron-jobs/:id`：取消计划
 
 ## 目录结构
 
@@ -106,6 +124,7 @@ internal/dao/            # checkpoint / 任务存储，后续替换 MySQL、Redi
 internal/model/          # 请求、任务、评论、trace 模型
 .tasks/                  # 运行时持久化任务图（自动忽略）
 .background-tasks/       # 运行时后台任务元数据（自动忽略）
+.cron-jobs.json          # 可恢复的定时审查计划（自动忽略）
 web/                     # 独立前端页面
 ```
 

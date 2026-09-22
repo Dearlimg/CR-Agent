@@ -25,6 +25,10 @@ func main() {
 		store = mysqlStore
 	}
 	svc := logic.NewService(store, cfg)
+	if err := svc.Start(); err != nil {
+		panic(err)
+	}
+	defer svc.Stop()
 	hooks.RegisterAudit(svc.Loop.Hooks)
 	r := gin.Default()
 	r.StaticFile("/", "web/index.html")

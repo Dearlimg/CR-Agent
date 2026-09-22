@@ -13,4 +13,5 @@ coverage.out
 .memory/
 .tasks/
 .background-tasks/
+.cron-jobs.json
 *.exe

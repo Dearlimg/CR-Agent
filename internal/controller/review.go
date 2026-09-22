@@ -29,6 +29,70 @@ func (c *ReviewController) Register(r *gin.Engine) {
 	r.GET("/api/background-tasks/notifications", c.collectBackgroundNotifications)
 	r.GET("/api/background-tasks/:id", c.getBackgroundTask)
 	r.POST("/api/background-tasks/:id/cancel", c.cancelBackgroundTask)
+	r.POST("/api/cron-jobs", c.createCronJob)
+	r.GET("/api/cron-jobs", c.listCronJobs)
+	r.GET("/api/cron-jobs/:id", c.getCronJob)
+	r.DELETE("/api/cron-jobs/:id", c.cancelCronJob)
+}
+
+type createCronJobRequest struct {
+	Cron        string `json:"cron"`
+	Source      string `json:"source"`
+	MemoryQuery string `json:"memory_query"`
+	Recurring   bool   `json:"recurring"`
+	Durable     bool   `json:"durable"`
+}
+
+func (c *ReviewController) createCronJob(x *gin.Context) {
+	if c.Service.CronError != nil || c.Service.Cron == nil {
+		x.JSON(http.StatusServiceUnavailable, gin.H{"error": "定时调度器不可用"})
+		return
+	}
+	var req createCronJobRequest
+	if err := x.ShouldBindJSON(&req); err != nil {
+		x.JSON(http.StatusBadRequest, gin.H{"error": "定时任务格式无效"})
+		return
+	}
+	job, err := c.Service.Cron.Schedule(req.Cron, req.Source, req.MemoryQuery, req.Recurring, req.Durable)
+	if err != nil {
+		x.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusCreated, job)
+}
+
+func (c *ReviewController) listCronJobs(x *gin.Context) {
+	if c.Service.CronError != nil || c.Service.Cron == nil {
+		x.JSON(http.StatusServiceUnavailable, gin.H{"error": "定时调度器不可用"})
+		return
+	}
+	x.JSON(http.StatusOK, gin.H{"cron_jobs": c.Service.Cron.List()})
+}
+
+func (c *ReviewController) getCronJob(x *gin.Context) {
+	if c.Service.CronError != nil || c.Service.Cron == nil {
+		x.JSON(http.StatusServiceUnavailable, gin.H{"error": "定时调度器不可用"})
+		return
+	}
+	job, ok := c.Service.Cron.Get(x.Param("id"))
+	if !ok {
+		x.JSON(http.StatusNotFound, gin.H{"error": "定时任务不存在"})
+		return
+	}
+	x.JSON(http.StatusOK, job)
+}
+
+func (c *ReviewController) cancelCronJob(x *gin.Context) {
+	if c.Service.CronError != nil || c.Service.Cron == nil {
+		x.JSON(http.StatusServiceUnavailable, gin.H{"error": "定时调度器不可用"})
+		return
+	}
+	job, err := c.Service.Cron.Cancel(x.Param("id"))
+	if err != nil {
+		x.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusOK, job)
 }
 
 func (c *ReviewController) listBackgroundTasks(x *gin.Context) {

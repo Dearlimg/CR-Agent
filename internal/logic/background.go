@@ -102,6 +102,21 @@ func (m *BackgroundManager) List() ([]model.BackgroundTask, error) {
 	return m.listTasks()
 }
 
+// IsIdle reports whether a scheduled review may start without overlapping an
+// existing server-registered background runner.
+func (m *BackgroundManager) IsIdle() (bool, error) {
+	tasks, err := m.List()
+	if err != nil {
+		return false, err
+	}
+	for _, task := range tasks {
+		if task.Status == model.BackgroundTaskPending || task.Status == model.BackgroundTaskRunning {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (m *BackgroundManager) Cancel(taskID string) (model.BackgroundTask, error) {
 	m.mu.Lock()
 	task, err := m.readTask(taskID)

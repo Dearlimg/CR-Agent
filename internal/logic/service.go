@@ -24,6 +24,7 @@ type Service struct {
 	Cron             *CronScheduler
 	CronError        error
 	Team             *ReviewTeam
+	Workflows        *WorkflowRuntime
 	MCP              *MCPManager
 }
 
@@ -31,6 +32,11 @@ func NewService(store dao.Store, cfg Config) *Service {
 	skillLoader := NewSkillLoader(cfg.SkillsDir)
 	skillErr := skillLoader.Scan()
 	registry := NewToolRegistry()
+	workflowRegistry := NewWorkflowRegistry()
+	if err := registerReviewWorkflow(workflowRegistry); err != nil {
+		panic(err)
+	}
+	workflows := NewWorkflowRuntime(cfg.WorkflowDir, workflowRegistry)
 	mcp := NewMCPManager(DefaultMCPHostPolicy())
 	_ = mcp.RegisterServer("docs", newDocsMCPServer)
 	_ = mcp.RegisterServer("deploy", newDeployMCPServer)
@@ -67,6 +73,7 @@ func NewService(store dao.Store, cfg Config) *Service {
 		TaskStore:        NewTaskStore(cfg.TasksDir),
 		Background:       NewBackgroundManager(cfg.BackgroundTasksDir),
 		MCP:              mcp,
+		Workflows:        workflows,
 	}
 	service.Team = NewReviewTeam(service.TaskStore, NewMessageBus(cfg.TeamMailboxDir), cfg)
 	cron, cronErr := NewCronScheduler(

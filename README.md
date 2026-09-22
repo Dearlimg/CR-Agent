@@ -103,6 +103,17 @@ Harness 提供了 transport-agnostic 的 MCP 层：`MCPClient` 保存 server 返
 `ToolInput.Args` 传递，参数错误会作为 `MCP error` 工具结果返回，不会直接终止循环。真实
 stdio/HTTP transport 可在不修改 Agent Loop 的情况下实现 `MCPServerFactory` 接入。
 
+## S16 Workflow Runtime
+
+模型可以通过一次 `Workflow` 工具调用启动宿主注册的可恢复编排。当前内置
+`review-changes`，按 correctness、security、dependency 维度执行 audit → verify → summary；
+workflow 的中间结果写入 `.workflows/<run_id>.journal.jsonl`，续跑时按稳定调用键复用已有结果，
+不会把中间结果全部塞回主对话。
+
+Workflow 支持 `agent`、`parallel`、`pipeline`、`phase`、`log` 和一层嵌套调用；结构化输出
+失败会重试一次，工具完成后以 `<task_notification>` 唤醒当前模型会话。详细设计、恢复边界和
+尚未实现的任意脚本/worktree 能力见 [S16 对照说明](docs/s16-workflow.md)。
+
 ## 后台任务
 
 后台任务将服务端注册的慢操作放到独立 Goroutine 中执行，创建后立刻返回 `bg_<id>`，

@@ -25,19 +25,22 @@ type harnessTool struct {
 // ReviewHarness is conversation-local; connected servers and tool history cannot
 // leak between concurrent specialist or lead conversations.
 type ReviewHarness struct {
-	Model     HarnessModel
-	MCP       *MCPManager
-	Hooks     *HookBus
-	Policy    *PermissionPolicy
-	Compactor *ContextCompactor
-	System    func() string
-	Notify    func() ([]string, error)
-	Await     func(context.Context) ([]string, error)
-	Cleanup   func()
-	Record    func(string, string, string, int64)
-	MaxRounds int
-	tools     map[string]harnessTool
-	archives  map[string]string
+	Model            HarnessModel
+	MCP              *MCPManager
+	Hooks            *HookBus
+	Policy           *PermissionPolicy
+	Compactor        *ContextCompactor
+	System           func() string
+	Notify           func() ([]string, error)
+	Await            func(context.Context) ([]string, error)
+	Cleanup          func()
+	Workflow         *WorkflowRuntime
+	WorkflowRunner   WorkflowAgentRunner
+	WorkflowLaunched func(string)
+	Record           func(string, string, string, int64)
+	MaxRounds        int
+	tools            map[string]harnessTool
+	archives         map[string]string
 }
 
 func newReviewHarness() *ReviewHarness {
@@ -70,6 +73,35 @@ func newReviewHarness() *ReviewHarness {
 			data, err := os.ReadFile(path)
 			return string(data), err
 		})
+	h.add("Workflow", "运行宿主注册的可恢复 workflow；只接受名称、参数和续跑 ID", map[string]any{
+		"type": "object", "additionalProperties": false,
+		"properties": map[string]any{
+			"name":               map[string]any{"type": "string"},
+			"args":               map[string]any{"type": "object"},
+			"resume_from_run_id": map[string]any{"type": "string"},
+		}, "required": []string{"name"},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		if h.Workflow == nil || h.WorkflowRunner == nil {
+			return "", fmt.Errorf("workflow runtime 未配置")
+		}
+		name, err := requiredString(args, "name")
+		if err != nil {
+			return "", err
+		}
+		workflowArgs := map[string]any{}
+		if raw, ok := args["args"].(map[string]any); ok {
+			workflowArgs = raw
+		}
+		resume, _ := args["resume_from_run_id"].(string)
+		launch, err := h.Workflow.Launch(ctx, name, workflowArgs, resume, h.WorkflowRunner)
+		if err != nil {
+			return "", err
+		}
+		if h.WorkflowLaunched != nil {
+			h.WorkflowLaunched(launch.RunID)
+		}
+		return jsonString(launch), nil
+	})
 	return h
 }
 

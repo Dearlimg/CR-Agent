@@ -30,6 +30,7 @@ type Config struct {
 	ContextMaxMessages   int
 	ContextOutputDir     string
 	ContextTranscriptDir string
+	WorkflowDir          string
 	DeepSeekAPIKey       string
 	DeepSeekBaseURL      string
 	MySQLDSN             string
@@ -68,6 +69,7 @@ func LoadConfig() Config {
 		ContextMaxMessages:   intEnv(b, "CONTEXT_MAX_MESSAGES", 50),
 		ContextOutputDir:     b("CONTEXT_OUTPUT_DIR", ".task_outputs/tool-results"),
 		ContextTranscriptDir: b("CONTEXT_TRANSCRIPT_DIR", ".transcripts"),
+		WorkflowDir:          b("AGENT_WORKFLOW_DIR", ".workflows"),
 		DeepSeekAPIKey:       b("DEEPSEEK_API_KEY", ""),
 		DeepSeekBaseURL:      b("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
 		MySQLDSN:             b("MYSQL_DSN", ""),

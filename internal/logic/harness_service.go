@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -27,6 +28,8 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 	bound := context.WithValue(ctx, harnessSetupKey{}, func(h *ReviewHarness) {
 		h.Hooks = s.Loop.Hooks
 		h.Policy = s.Loop.Policy
+		h.Workflow = s.Workflows
+		h.WorkflowRunner = s.workflowAgentRunner(h)
 		todos := ""
 		h.System = func() string {
 			memories, err := s.MemoryStore.Recall(job.Source + "\n" + redact(diff))
@@ -88,6 +91,8 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 		owned := map[string]bool{}
 		owner := "harness-" + id(job.ID)
 		pending := map[string]bool{}
+		workflowPending := map[string]bool{}
+		h.WorkflowLaunched = func(runID string) { workflowPending[runID] = true }
 		teamNotifications := []string{}
 		for _, event := range job.TeamEvents {
 			teamNotifications = append(teamNotifications, jsonString(event))
@@ -105,12 +110,22 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 					delete(pending, taskID)
 				}
 			}
+			for runID := range workflowPending {
+				event, err := s.Workflows.Collect(runID)
+				if err != nil {
+					return nil, err
+				}
+				if event != "" {
+					events = append(events, event)
+					delete(workflowPending, runID)
+				}
+			}
 			return events, nil
 		}
 		h.Await = func(ctx context.Context) ([]string, error) {
 			ticker := time.NewTicker(25 * time.Millisecond)
 			defer ticker.Stop()
-			for len(pending) > 0 {
+			for len(pending) > 0 || len(workflowPending) > 0 {
 				events, err := h.Notify()
 				if err != nil || len(events) > 0 {
 					return events, err
@@ -126,6 +141,9 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 		h.Cleanup = func() {
 			for taskID := range pending {
 				_, _ = s.Background.Cancel(taskID)
+			}
+			for runID := range workflowPending {
+				_ = s.Workflows.Cancel(runID)
 			}
 		}
 		h.add("list_crons", "列出宿主定时审查计划", map[string]any{"type": "object"},
@@ -277,4 +295,31 @@ func stringObject(names ...string) map[string]any {
 		properties[name] = map[string]any{"type": "string"}
 	}
 	return map[string]any{"type": "object", "properties": properties, "required": names, "additionalProperties": false}
+}
+
+func (s *Service) workflowAgentRunner(h *ReviewHarness) WorkflowAgentRunner {
+	return func(ctx context.Context, prompt string, outputSchema map[string]any, label string) (WorkflowAgentResult, error) {
+		schemaJSON, _ := json.Marshal(outputSchema)
+		instruction := fmt.Sprintf("你是 workflow 子 Agent，标签 %s。只返回符合以下 JSON schema 的 JSON，不要 Markdown：%s\n\n%s", label, schemaJSON, prompt)
+		reply, err := h.Model(ctx, []*schema.Message{{Role: schema.User, Content: instruction}}, nil)
+		if err != nil {
+			return WorkflowAgentResult{}, err
+		}
+		if reply == nil || len(reply.ToolCalls) > 0 {
+			return WorkflowAgentResult{}, fmt.Errorf("workflow agent 返回了工具调用或空响应")
+		}
+		content := strings.TrimSpace(reply.Content)
+		content = strings.TrimPrefix(content, "```json")
+		content = strings.TrimPrefix(content, "```")
+		content = strings.TrimSuffix(strings.TrimSpace(content), "```")
+		var value any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &value); err != nil {
+			return WorkflowAgentResult{}, fmt.Errorf("workflow agent %s 输出不是 JSON: %w", label, err)
+		}
+		tokens := 0
+		if reply.ResponseMeta != nil && reply.ResponseMeta.Usage != nil {
+			tokens = reply.ResponseMeta.Usage.TotalTokens
+		}
+		return WorkflowAgentResult{Value: value, Tokens: tokens}, nil
+	}
 }

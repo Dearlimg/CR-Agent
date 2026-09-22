@@ -207,6 +207,98 @@ func TestHarnessRetryDoesNotReplaySuccessfulTool(t *testing.T) {
 	}
 }
 
+func TestHarnessGoalBlocksStopUntilIndependentEvaluatorSeesEvidence(t *testing.T) {
+	h := newReviewHarness()
+	evaluations := 0
+	goal, err := NewGoalController("syntax_check 必须成功", GoalEvaluatorFunc(func(_ context.Context, condition string, messages []*schema.Message) (GoalDecision, error) {
+		evaluations++
+		if condition != "syntax_check 必须成功" {
+			t.Fatalf("condition=%q", condition)
+		}
+		for _, message := range messages {
+			if strings.Contains(message.Content, "syntax_check 成功") {
+				return GoalDecision{OK: true, Reason: "验证结果已出现"}, nil
+			}
+		}
+		return GoalDecision{Reason: "对话中还没有 syntax_check 成功的结果"}, nil
+	}), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Goal = goal
+	rounds := 0
+	h.Model = func(_ context.Context, messages []*schema.Message, _ []*schema.ToolInfo) (*schema.Message, error) {
+		rounds++
+		switch rounds {
+		case 1:
+			return &schema.Message{Role: schema.Assistant, Content: "我已经完成"}, nil
+		case 2:
+			if !strings.Contains(messages[len(messages)-1].Content, "goal_feedback") {
+				t.Fatalf("goal feedback missing: %#v", messages)
+			}
+			return &schema.Message{Role: schema.Assistant, Content: "syntax_check 成功"}, nil
+		default:
+			return nil, errors.New("unexpected round")
+		}
+	}
+	answer, err := h.Run(context.Background(), "review")
+	if err != nil || answer != "syntax_check 成功" || rounds != 2 || evaluations != 2 {
+		t.Fatalf("answer=%q rounds=%d evaluations=%d err=%v", answer, rounds, evaluations, err)
+	}
+}
+
+func TestHarnessGoalRefusesFalseCompletionAndPreservesLimit(t *testing.T) {
+	h := newReviewHarness()
+	goal, err := NewGoalController("tests pass", GoalEvaluatorFunc(func(context.Context, string, []*schema.Message) (GoalDecision, error) {
+		return GoalDecision{Reason: "缺少测试退出码"}, nil
+	}), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Goal = goal
+	h.Model = func(context.Context, []*schema.Message, []*schema.ToolInfo) (*schema.Message, error) {
+		return &schema.Message{Role: schema.Assistant, Content: "done"}, nil
+	}
+	_, err = h.Run(context.Background(), "review")
+	if err == nil || !strings.Contains(err.Error(), "连续阻止结束达到上限") || goal.State.Blocks != 1 {
+		t.Fatalf("err=%v goal=%#v", err, goal.State)
+	}
+}
+
+func TestHarnessGoalStopsWhenEvaluatorMarksGoalImpossible(t *testing.T) {
+	h := newReviewHarness()
+	goal, err := NewGoalController("deploy", GoalEvaluatorFunc(func(context.Context, string, []*schema.Message) (GoalDecision, error) {
+		return GoalDecision{Impossible: true, Reason: "部署权限被拒绝"}, nil
+	}), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Goal = goal
+	h.Model = func(context.Context, []*schema.Message, []*schema.ToolInfo) (*schema.Message, error) {
+		return &schema.Message{Role: schema.Assistant, Content: "done"}, nil
+	}
+	_, err = h.Run(context.Background(), "review")
+	if err == nil || !strings.Contains(err.Error(), "goal 无法完成：部署权限被拒绝") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGoalProgressResetsConsecutiveStopLimit(t *testing.T) {
+	goal, err := NewGoalController("tests pass", GoalEvaluatorFunc(func(context.Context, string, []*schema.Message) (GoalDecision, error) {
+		return GoalDecision{Reason: "缺少测试退出码"}, nil
+	}), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := goal.EvaluateAfterTurn(context.Background(), nil, false); err != nil {
+		t.Fatal(err)
+	}
+	goal.RecordProgress()
+	if _, err := goal.EvaluateAfterTurn(context.Background(), nil, false); err != nil {
+		t.Fatalf("progress should reset the consecutive stop limit: %v", err)
+	}
+}
+
 func TestMCPHostDenialCannotBeOverriddenByGenericPermission(t *testing.T) {
 	h := newReviewHarness()
 	h.Policy.grants[PermissionRepositoryExec] = PermissionAllow

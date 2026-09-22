@@ -13,6 +13,11 @@ import (
 )
 
 type harnessSetupKey struct{}
+type goalConditionKey struct{}
+
+func withGoalCondition(ctx context.Context, condition string) context.Context {
+	return context.WithValue(ctx, goalConditionKey{}, condition)
+}
 
 // withReviewHarness binds host capabilities, not model-provided permissions.
 // Each invocation builds new session state, including the task ownership set.

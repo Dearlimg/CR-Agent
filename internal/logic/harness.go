@@ -37,6 +37,7 @@ type ReviewHarness struct {
 	Workflow         *WorkflowRuntime
 	WorkflowRunner   WorkflowAgentRunner
 	WorkflowLaunched func(string)
+	Goal             *GoalController
 	Record           func(string, string, string, int64)
 	MaxRounds        int
 	tools            map[string]harnessTool
@@ -236,22 +237,34 @@ func (h *ReviewHarness) Run(ctx context.Context, prompt string) (string, error) 
 			return "", fmt.Errorf("模型返回空响应")
 		}
 		if len(reply.ToolCalls) == 0 {
+			messages = append(messages, reply)
 			if h.Await != nil {
 				pending, err := h.Await(ctx)
 				if err != nil {
 					return "", err
 				}
 				if len(pending) > 0 {
-					messages = append(messages, reply)
 					for _, event := range pending {
 						messages = append(messages, &schema.Message{Role: schema.User, Content: "<task_notification>\n" + redact(event) + "\n</task_notification>"})
 					}
 					continue
 				}
 			}
+			decision, err := h.Goal.EvaluateAfterTurn(ctx, messages, false)
+			if err != nil {
+				return "", err
+			}
+			if decision.Impossible {
+				return "", &GoalStopError{Reason: "goal 无法完成：" + decision.Reason}
+			}
+			if !decision.OK {
+				messages = append(messages, &schema.Message{Role: schema.User, Content: "<goal_feedback>\n" + redact(decision.Reason) + "\n</goal_feedback>"})
+				continue
+			}
 			return reply.Content, nil
 		}
 		messages = append(messages, reply)
+		h.Goal.RecordProgress()
 		seen := map[string]bool{}
 		if len(reply.ToolCalls) > 32 {
 			return "", fmt.Errorf("单轮工具调用超过 32 次")

@@ -114,6 +114,22 @@ Workflow 支持 `agent`、`parallel`、`pipeline`、`phase`、`log` 和一层嵌
 失败会重试一次，工具完成后以 `<task_notification>` 唤醒当前模型会话。详细设计、恢复边界和
 尚未实现的任意脚本/worktree 能力见 [S16 对照说明](docs/s16-workflow.md)。
 
+## S17 Goal Stop Gate
+
+审查请求可选传入 `goal`，把“最终交付应满足什么条件”交给会话级 Stop Gate。例如：
+
+```json
+{"diff":"...","goal":"完成审查并在结果中明确报告 syntax_check 和 secret_scan 的实际输出"}
+```
+
+主模型不再调用工具时，Harness 不会因其一句“已完成”立即结束；独立的、无工具的 Goal
+判断器只读取当前会话记录与目标条件，确认记录中已有实际证据后才放行。证据不足时，判断原因会
+作为 `<goal_feedback>` 写回同一会话并自动继续下一轮；后台任务或 Workflow 尚未完成时，仍先等待
+`<task_notification>`，不会提前判定。判断器标记目标无法完成、调用失败、达到 `GOAL_MAX_BLOCKS`
+连续拦截上限或触及原有模型轮数上限时，任务会明确失败，目标不会被伪装成完成。
+
+`GOAL_MAX_BLOCKS` 默认是 6；它只限制连续自动续轮，主循环仍受既有 `MaxRounds` 限制。
+
 ## 后台任务
 
 后台任务将服务端注册的慢操作放到独立 Goroutine 中执行，创建后立刻返回 `bg_<id>`，
@@ -141,7 +157,7 @@ Cron 使用五字段格式：`分钟 小时 日期 月份 星期`，字段支持
 
 ## API
 
-- `POST /api/reviews`：`{"source":"...","diff":"...","memory_query":"...","budget_cents":1000}`
+- `POST /api/reviews`：`{"source":"...","diff":"...","memory_query":"...","goal":"可检查的完成条件","budget_cents":1000}`
 - `GET /api/reviews/:id`：查询任务、评论和 trace
 - `GET /api/health`
 - `GET /api/memories`：列出持久记忆

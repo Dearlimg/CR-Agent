@@ -26,6 +26,24 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 	}
 	harness := newReviewHarness()
 	harness.Compactor = NewContextCompactor(cfg)
+	if condition, ok := ctx.Value(goalConditionKey{}).(string); ok && strings.TrimSpace(condition) != "" {
+		controller, err := NewGoalController(condition, PromptGoalEvaluator{Generate: func(ctx context.Context, prompt string) (string, error) {
+			reply, err := retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
+				return chat.Generate(ctx, []*schema.Message{{Role: schema.User, Content: prompt}}, modeloptions.WithMaxTokens(1024))
+			})
+			if err != nil {
+				return "", err
+			}
+			if reply == nil {
+				return "", fmt.Errorf("goal evaluator 返回空响应")
+			}
+			return reply.Content, nil
+		}}, cfg.GoalMaxBlocks)
+		if err != nil {
+			return "", err
+		}
+		harness.Goal = controller
+	}
 	if setup, ok := ctx.Value(harnessSetupKey{}).(func(*ReviewHarness)); ok {
 		setup(harness)
 	} else {

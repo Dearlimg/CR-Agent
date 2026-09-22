@@ -6,6 +6,7 @@ type ReviewRequest struct {
 	Source      string `json:"source"`
 	Diff        string `json:"diff"`
 	MemoryQuery string `json:"memory_query"`
+	Goal        string `json:"goal"`
 	BudgetCents int    `json:"budget_cents"`
 }
 type ReviewComment struct {

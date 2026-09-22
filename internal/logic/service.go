@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -318,8 +319,16 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	}
 	prompt := BuildReviewSynthesisPrompt(promptContext, renderContextMessages(compacted.Messages))
 	modelStarted := time.Now()
-	reply, err := EinoReviewAgent(reviewCtx, s.Config, prompt)
+	reply, err := EinoReviewAgent(withGoalCondition(reviewCtx, req.Goal), s.Config, prompt)
 	flushHarness()
+	var goalStop *GoalStopError
+	if errors.As(err, &goalStop) {
+		j.Status = "failed"
+		j.Error = goalStop.Error()
+		j.UpdatedAt = time.Now()
+		_ = s.Store.Save(j)
+		return
+	}
 	synthesisWarning := err != nil
 	modelTraceID := id("deepseek-review" + j.ID)
 	modelDuration := time.Since(modelStarted).Milliseconds()

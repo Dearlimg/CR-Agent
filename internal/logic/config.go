@@ -31,6 +31,7 @@ type Config struct {
 	ContextOutputDir     string
 	ContextTranscriptDir string
 	WorkflowDir          string
+	GoalMaxBlocks        int
 	DeepSeekAPIKey       string
 	DeepSeekBaseURL      string
 	MySQLDSN             string
@@ -70,6 +71,7 @@ func LoadConfig() Config {
 		ContextOutputDir:     b("CONTEXT_OUTPUT_DIR", ".task_outputs/tool-results"),
 		ContextTranscriptDir: b("CONTEXT_TRANSCRIPT_DIR", ".transcripts"),
 		WorkflowDir:          b("AGENT_WORKFLOW_DIR", ".workflows"),
+		GoalMaxBlocks:        intEnv(b, "GOAL_MAX_BLOCKS", 6),
 		DeepSeekAPIKey:       b("DEEPSEEK_API_KEY", ""),
 		DeepSeekBaseURL:      b("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
 		MySQLDSN:             b("MYSQL_DSN", ""),

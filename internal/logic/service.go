@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -13,9 +14,16 @@ import (
 type Service struct {
 	Store  dao.Store
 	Config Config
+	Loop   *AgentLoop
 }
 
-func NewService(store dao.Store, cfg Config) *Service { return &Service{Store: store, Config: cfg} }
+func NewService(store dao.Store, cfg Config) *Service {
+	registry := NewToolRegistry()
+	registry.Register("diff_reader", func(_ context.Context, in ToolInput) (ToolResult, error) {
+		return ToolResult{Output: fmt.Sprintf("读取并脱敏完成，diff_bytes=%d", len(in.Diff))}, nil
+	})
+	return &Service{Store: store, Config: cfg, Loop: &AgentLoop{Registry: registry, Plan: []LoopStep{{Tool: "diff_reader", Reason: "读取并脱敏 diff"}}, MaxSteps: 3}}
+}
 func id(s string) string {
 	h := sha256.Sum256([]byte(s + time.Now().String()))
 	return hex.EncodeToString(h[:])[:16]
@@ -42,8 +50,16 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 		}
 		j.Source, req.Diff = resolved, diff
 	}
-	readID := id(req.Diff)
-	j.Trace = append(j.Trace, model.TraceEvent{ID: readID, Tool: "diff_reader", Input: "redacted diff", Output: "读取并脱敏完成", At: time.Now(), Phase: "observation"})
+	if err := s.Loop.Run(ctx, ToolInput{Job: j, Diff: req.Diff}); err != nil {
+		j.Status = "failed"
+		j.Error = err.Error()
+		_ = s.Store.Save(j)
+		return
+	}
+	readID := ""
+	if len(j.Trace) > 0 {
+		readID = j.Trace[len(j.Trace)-1].ID
+	}
 	reply, tokens, err := reviewWithDeepSeek(ctx, s.Config, req.Diff)
 	if err != nil {
 		j.Trace = append(j.Trace, model.TraceEvent{ID: id(err.Error()), Tool: "review-fallback", Input: "diff summary", Output: err.Error(), At: time.Now(), Phase: "reasoning"})

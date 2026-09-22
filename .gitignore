@@ -7,3 +7,5 @@
 *.log
 bin/
 coverage.out
+.checkpoints/
+*.exe

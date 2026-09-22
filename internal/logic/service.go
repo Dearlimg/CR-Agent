@@ -37,7 +37,7 @@ func NewService(store dao.Store, cfg Config) *Service {
 		return store.RecordToolCall(jobID, traceID, tool, status, input, output, callErr, durationMs)
 	}
 	plan := []LoopStep{{Tool: "diff_reader", Reason: "读取并脱敏 diff"}, {Tool: "parse_diff", Reason: "解析文件和变更范围"}, {Tool: "get_changed_lines", Reason: "提取新增行"}, {Tool: "static_check", Reason: "执行确定性规则检查"}, {Tool: "syntax_check", Reason: "前置语法和冲突检查"}, {Tool: "format_check", Reason: "前置格式检查"}, {Tool: "secret_scan", Reason: "扫描疑似敏感信息"}, {Tool: "dependency_diff", Reason: "检查依赖文件变更"}, {Tool: "get_file_context", Reason: "补充安全上下文"}, {Tool: "normalize_finding", Reason: "规范化审查输出"}}
-	return &Service{Store: store, Config: cfg, Loop: &AgentLoop{Registry: registry, Plan: plan, MaxSteps: len(plan), Record: record, Policy: DefaultPermissionPolicy()}}
+	return &Service{Store: store, Config: cfg, Loop: &AgentLoop{Registry: registry, Plan: plan, MaxSteps: len(plan), Record: record, Policy: DefaultPermissionPolicy(), Hooks: NewHookBus()}}
 }
 func id(s string) string {
 	h := sha256.Sum256([]byte(s + time.Now().String()))

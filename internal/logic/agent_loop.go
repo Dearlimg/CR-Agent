@@ -43,11 +43,15 @@ type AgentLoop struct {
 	MaxSteps int
 	Record   func(string, string, string, string, string, string, string, int64) error
 	Policy   *PermissionPolicy
+	Hooks    *HookBus
 }
 
 func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 	if a.MaxSteps <= 0 {
 		a.MaxSteps = len(a.Plan)
+	}
+	if a.Hooks != nil {
+		a.Hooks.Emit(ctx, HookLoopStart, HookContext{JobID: input.Job.ID})
 	}
 	for i, step := range a.Plan {
 		if i >= a.MaxSteps {
@@ -65,7 +69,13 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 			if a.Record != nil {
 				_ = a.Record(input.Job.ID, traceID, step.Tool, string(decision), step.Reason, "", err.Error(), 0)
 			}
+			if a.Hooks != nil {
+				a.Hooks.Emit(ctx, HookPermissionDenied, HookContext{JobID: input.Job.ID, Tool: step.Tool, Permission: tool.Permission, Reason: step.Reason, Error: err})
+			}
 			return err
+		}
+		if a.Hooks != nil {
+			a.Hooks.Emit(ctx, HookPreToolUse, HookContext{JobID: input.Job.ID, Tool: step.Tool, Permission: tool.Permission, Reason: step.Reason})
 		}
 		started := time.Now()
 		result, err := tool.Run(ctx, input)
@@ -76,12 +86,18 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 			if a.Record != nil {
 				_ = a.Record(input.Job.ID, traceID, step.Tool, "failed", step.Reason, "", err.Error(), duration)
 			}
+			if a.Hooks != nil {
+				a.Hooks.Emit(ctx, HookToolError, HookContext{JobID: input.Job.ID, Tool: step.Tool, Permission: tool.Permission, Reason: step.Reason, Error: err, DurationMs: duration})
+			}
 			return err
 		}
 		duration := time.Since(started).Milliseconds()
 		input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: result.Output, At: time.Now(), DurationMs: duration, Phase: "action"})
 		if a.Record != nil {
 			_ = a.Record(input.Job.ID, traceID, step.Tool, "succeeded", step.Reason, result.Output, "", duration)
+		}
+		if a.Hooks != nil {
+			a.Hooks.Emit(ctx, HookPostToolUse, HookContext{JobID: input.Job.ID, Tool: step.Tool, Permission: tool.Permission, Reason: step.Reason, Output: result.Output, DurationMs: duration})
 		}
 		if result.Diff != "" {
 			input.Diff = result.Diff
@@ -90,8 +106,14 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 			input.Job.Comments = result.Comments
 		}
 		if result.Done {
+			if a.Hooks != nil {
+				a.Hooks.Emit(ctx, HookLoopStop, HookContext{JobID: input.Job.ID})
+			}
 			return nil
 		}
+	}
+	if a.Hooks != nil {
+		a.Hooks.Emit(ctx, HookLoopStop, HookContext{JobID: input.Job.ID})
 	}
 	return nil
 }

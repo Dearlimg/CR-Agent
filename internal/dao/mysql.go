@@ -1,22 +1,28 @@
 package dao
 
 import (
-	"CR-Agent/internal/model"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"time"
+
+	"CR-Agent/internal/model"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"time"
 )
 
-type MySQLStore struct{ db *gorm.DB }
+type MySQLStore struct {
+	db *gorm.DB
+}
 
 func OpenMySQL(dsn string) (*MySQLStore, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("mysql dsn 不能为空")
 	}
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		TranslateError: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("连接 mysql: %w", err)
 	}
@@ -29,89 +35,132 @@ func OpenMySQL(dsn string) (*MySQLStore, error) {
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	return &MySQLStore{db: db}, nil
 }
-func (s *MySQLStore) DB() *gorm.DB   { return s.db }
+
+func (s *MySQLStore) DB() *gorm.DB { return s.db }
+
 func (s *MySQLStore) Migrate() error { return AutoMigrate(s.db) }
-func (s *MySQLStore) CreateJob(ctx context.Context, j *model.DBReviewJob) error {
-	return s.db.WithContext(ctx).Create(j).Error
+
+func (s *MySQLStore) CreateJob(ctx context.Context, job *model.DBReviewJob) error {
+	return s.db.WithContext(ctx).Create(job).Error
 }
+
 func (s *MySQLStore) FindJob(ctx context.Context, id string) (*model.DBReviewJob, error) {
-	var j model.DBReviewJob
-	err := s.db.WithContext(ctx).Where("public_id = ?", id).Preload("Comments").Preload("Traces").Preload("Todos").First(&j).Error
+	var job model.DBReviewJob
+	err := s.db.WithContext(ctx).
+		Where("public_id = ?", id).
+		Preload("Comments").
+		Preload("Traces").
+		Preload("Todos").
+		First(&job).Error
 	if err != nil {
 		return nil, err
 	}
-	return &j, nil
-}
-func (s *MySQLStore) UpdateJob(ctx context.Context, j *model.DBReviewJob) error {
-	return s.db.WithContext(ctx).Save(j).Error
-}
-func (s *MySQLStore) CreateTrace(ctx context.Context, t *model.DBTraceEvent) error {
-	return s.db.WithContext(ctx).Create(t).Error
-}
-func (s *MySQLStore) CreateComment(ctx context.Context, c *model.DBReviewComment) error {
-	return s.db.WithContext(ctx).Create(c).Error
-}
-func (s *MySQLStore) CreateToolCall(ctx context.Context, c *model.DBToolCall) error {
-	return s.db.WithContext(ctx).Create(c).Error
+	return &job, nil
 }
 
-func (s *MySQLStore) Save(j *model.ReviewJob) error {
+func (s *MySQLStore) UpdateJob(ctx context.Context, job *model.DBReviewJob) error {
+	return s.db.WithContext(ctx).Save(job).Error
+}
+
+func (s *MySQLStore) CreateTrace(ctx context.Context, trace *model.DBTraceEvent) error {
+	return s.db.WithContext(ctx).Create(trace).Error
+}
+
+func (s *MySQLStore) CreateComment(ctx context.Context, comment *model.DBReviewComment) error {
+	return s.db.WithContext(ctx).Create(comment).Error
+}
+
+func (s *MySQLStore) CreateToolCall(ctx context.Context, call *model.DBToolCall) error {
+	return s.db.WithContext(ctx).Create(call).Error
+}
+
+func (s *MySQLStore) Save(job *model.ReviewJob) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		var row model.DBReviewJob
-		err := tx.Where("public_id = ?", j.ID).First(&row).Error
-		if err == gorm.ErrRecordNotFound {
-			row = model.DBReviewJob{PublicID: j.ID, SourceURL: j.Source, Status: j.Status, BudgetCents: 1000, CreatedAt: time.Now()}
-		} else if err != nil {
+		row, err := s.findOrCreateJob(tx, job)
+		if err != nil {
 			return err
 		}
-		row.SourceURL, row.Status, row.SpentCents, row.ErrorMessage, row.UpdatedAt = j.Source, j.Status, j.SpentCents, j.Error, j.UpdatedAt
-		if err := tx.Save(&row).Error; err != nil {
+		if err := s.saveComments(tx, row.ID, job); err != nil {
 			return err
 		}
-		if err := tx.Where("job_id = ?", row.ID).Delete(&model.DBReviewComment{}).Error; err != nil {
+		if err := s.saveTraces(tx, row.ID, job); err != nil {
 			return err
 		}
-		for _, c := range j.Comments {
-			if err := tx.Create(&model.DBReviewComment{JobID: row.ID, TraceID: c.TraceID, File: c.File, Line: c.Line, Severity: c.Severity, Confidence: c.Confidence, Body: c.Body, Status: "open", CreatedAt: time.Now()}).Error; err != nil {
-				return err
-			}
-		}
-		if err := tx.Where("job_id = ?", row.ID).Delete(&model.DBTraceEvent{}).Error; err != nil {
+		if err := s.saveTodos(tx, row.ID, job); err != nil {
 			return err
 		}
-		for _, t := range j.Trace {
-			if err := tx.Create(&model.DBTraceEvent{JobID: row.ID, TraceID: t.ID, Tool: t.Tool, Phase: t.Phase, Input: t.Input, Output: t.Output, Prompt: t.Prompt, ModelReply: t.ModelReply, DurationMs: t.DurationMs, CreatedAt: t.At}).Error; err != nil {
-				return err
-			}
-		}
-		if err := tx.Where("job_id = ?", row.ID).Delete(&model.DBTodoItem{}).Error; err != nil {
-			return err
-		}
-		for _, todo := range j.Todos {
-			if err := tx.Create(&model.DBTodoItem{JobID: row.ID, Content: todo.Content, Status: todo.Status, SortOrder: todo.Order, CreatedAt: time.Now(), UpdatedAt: time.Now()}).Error; err != nil {
-				return err
-			}
-		}
-		return nil
+		return s.saveTeamEvents(tx, job)
 	})
 }
 
 func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 	var row model.DBReviewJob
-	if s.db.Where("public_id = ?", id).Preload("Comments").Preload("Traces").Preload("Todos").First(&row).Error != nil {
+	query := s.db.Where("public_id = ?", id).
+		Preload("Comments").
+		Preload("Traces").
+		Preload("Todos")
+	if query.First(&row).Error != nil {
 		return nil, false
 	}
-	j := &model.ReviewJob{ID: row.PublicID, Status: row.Status, Source: row.SourceURL, SpentCents: row.SpentCents, UpdatedAt: row.UpdatedAt, Error: row.ErrorMessage, Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}, Todos: []model.TodoItem{}}
-	for _, c := range row.Comments {
-		j.Comments = append(j.Comments, model.ReviewComment{File: c.File, Line: c.Line, Severity: c.Severity, Confidence: c.Confidence, Body: c.Body, TraceID: c.TraceID})
+	job := &model.ReviewJob{
+		ID:               row.PublicID,
+		TaskID:           row.TaskID,
+		BackgroundTaskID: row.BackgroundTaskID,
+		Status:           row.Status,
+		Source:           row.SourceURL,
+		SpentCents:       row.SpentCents,
+		UpdatedAt:        row.UpdatedAt,
+		Error:            row.ErrorMessage,
+		Comments:         []model.ReviewComment{},
+		Trace:            []model.TraceEvent{},
+		Todos:            []model.TodoItem{},
+		TeamEvents:       []model.TeamEvent{},
 	}
-	for _, t := range row.Traces {
-		j.Trace = append(j.Trace, model.TraceEvent{ID: t.TraceID, Tool: t.Tool, Phase: t.Phase, Input: t.Input, Output: t.Output, Prompt: t.Prompt, ModelReply: t.ModelReply, DurationMs: t.DurationMs, At: t.CreatedAt})
+	for _, comment := range row.Comments {
+		job.Comments = append(job.Comments, model.ReviewComment{
+			File:       comment.File,
+			Line:       comment.Line,
+			Severity:   comment.Severity,
+			Confidence: comment.Confidence,
+			Body:       comment.Body,
+			TraceID:    comment.TraceID,
+		})
+	}
+	for _, trace := range row.Traces {
+		job.Trace = append(job.Trace, model.TraceEvent{
+			ID:         trace.TraceID,
+			Tool:       trace.Tool,
+			Input:      trace.Input,
+			Output:     trace.Output,
+			Prompt:     trace.Prompt,
+			ModelReply: trace.ModelReply,
+			DurationMs: trace.DurationMs,
+			At:         trace.CreatedAt,
+			Phase:      trace.Phase,
+		})
 	}
 	for _, todo := range row.Todos {
-		j.Todos = append(j.Todos, model.TodoItem{Content: todo.Content, Status: todo.Status, Order: todo.SortOrder})
+		job.Todos = append(job.Todos, model.TodoItem{
+			Content: todo.Content,
+			Status:  todo.Status,
+			Order:   todo.SortOrder,
+		})
 	}
-	return j, true
+	var messages []model.DBTeamMessage
+	if err := s.db.Where("job_id = ?", id).Order("created_at asc").Find(&messages).Error; err == nil {
+		for _, message := range messages {
+			job.TeamEvents = append(job.TeamEvents, model.TeamEvent{
+				ID:      message.MessageID,
+				From:    message.FromAgent,
+				To:      message.ToAgent,
+				Type:    message.MessageType,
+				TaskID:  message.JobID,
+				Content: message.Content,
+				At:      message.CreatedAt,
+			})
+		}
+	}
+	return job, true
 }
 
 func (s *MySQLStore) RecordToolCall(jobPublicID, traceID, tool, status, input, output, callErr string, durationMs int64) error {
@@ -119,5 +168,230 @@ func (s *MySQLStore) RecordToolCall(jobPublicID, traceID, tool, status, input, o
 	if err := s.db.Where("public_id = ?", jobPublicID).First(&job).Error; err != nil {
 		return err
 	}
-	return s.db.Create(&model.DBToolCall{JobID: job.ID, TraceID: traceID, Tool: tool, Status: status, InputHash: fmt.Sprintf("%x", sha256.Sum256([]byte(input))), Output: output, Error: callErr, DurationMs: durationMs, CreatedAt: time.Now()}).Error
+	idempotencyKey := jobPublicID + ":" + traceID + ":" + tool
+	call := model.DBToolCall{
+		JobID:          job.ID,
+		TraceID:        traceID,
+		IdempotencyKey: idempotencyKey,
+		Tool:           tool,
+		Status:         status,
+		InputHash:      hashText(input),
+		Output:         output,
+		Error:          callErr,
+		DurationMs:     durationMs,
+		CreatedAt:      time.Now().UTC(),
+	}
+	result := s.db.Where("idempotency_key = ?", idempotencyKey).FirstOrCreate(&call)
+	if result.Error != nil {
+		return fmt.Errorf("记录工具调用: %w", result.Error)
+	}
+	return nil
+}
+
+func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.DBReviewJob, error) {
+	var row model.DBReviewJob
+	err := tx.Where("public_id = ?", job.ID).First(&row).Error
+	if err == gorm.ErrRecordNotFound {
+		now := job.UpdatedAt
+		if now.IsZero() {
+			now = time.Now().UTC()
+		}
+		row = model.DBReviewJob{
+			PublicID:    job.ID,
+			InputHash:   hashText(job.Source),
+			BudgetCents: 1000,
+			CreatedAt:   now,
+		}
+	} else if err != nil {
+		return model.DBReviewJob{}, err
+	}
+	now := job.UpdatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	row.TaskID = job.TaskID
+	row.BackgroundTaskID = job.BackgroundTaskID
+	row.SourceURL = job.Source
+	row.Status = job.Status
+	row.SpentCents = job.SpentCents
+	row.ErrorMessage = job.Error
+	row.UpdatedAt = now
+	row.Version++
+	if row.InputHash == "" {
+		row.InputHash = hashText(job.Source)
+	}
+	if row.CreatedAt.IsZero() {
+		row.CreatedAt = now
+	}
+	if row.ID == 0 {
+		if err := tx.Create(&row).Error; err != nil {
+			return model.DBReviewJob{}, fmt.Errorf("创建 review job: %w", err)
+		}
+		return row, nil
+	}
+	if err := tx.Model(&row).Updates(map[string]any{
+		"task_id":            row.TaskID,
+		"background_task_id": row.BackgroundTaskID,
+		"source_url":         row.SourceURL,
+		"status":             row.Status,
+		"spent_cents":        row.SpentCents,
+		"error_message":      row.ErrorMessage,
+		"updated_at":         row.UpdatedAt,
+		"version":            row.Version,
+	}).Error; err != nil {
+		return model.DBReviewJob{}, fmt.Errorf("更新 review job: %w", err)
+	}
+	return row, nil
+}
+
+func (s *MySQLStore) saveComments(tx *gorm.DB, jobID uint, job *model.ReviewJob) error {
+	for _, comment := range job.Comments {
+		fingerprint := commentFingerprint(job.ID, comment)
+		var row model.DBReviewComment
+		err := tx.Where("job_id = ? AND fingerprint = ?", jobID, fingerprint).First(&row).Error
+		if err == gorm.ErrRecordNotFound {
+			row = model.DBReviewComment{
+				JobID:       jobID,
+				TraceID:     comment.TraceID,
+				Fingerprint: fingerprint,
+				File:        comment.File,
+				Line:        comment.Line,
+				Severity:    comment.Severity,
+				Confidence:  comment.Confidence,
+				Body:        comment.Body,
+				Status:      "open",
+				CreatedAt:   time.Now().UTC(),
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return fmt.Errorf("保存 review comment: %w", err)
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&row).Updates(map[string]any{
+			"trace_id":   comment.TraceID,
+			"severity":   comment.Severity,
+			"confidence": comment.Confidence,
+			"status":     "open",
+		}).Error; err != nil {
+			return fmt.Errorf("更新 review comment: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *MySQLStore) saveTraces(tx *gorm.DB, jobID uint, job *model.ReviewJob) error {
+	for _, trace := range job.Trace {
+		var row model.DBTraceEvent
+		err := tx.Where("trace_id = ?", trace.ID).First(&row).Error
+		if err == gorm.ErrRecordNotFound {
+			row = model.DBTraceEvent{
+				JobID:      jobID,
+				TraceID:    trace.ID,
+				Tool:       trace.Tool,
+				Phase:      trace.Phase,
+				Input:      trace.Input,
+				Output:     trace.Output,
+				Prompt:     trace.Prompt,
+				ModelReply: trace.ModelReply,
+				DurationMs: trace.DurationMs,
+				CreatedAt:  trace.At,
+			}
+			if row.CreatedAt.IsZero() {
+				row.CreatedAt = time.Now().UTC()
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return fmt.Errorf("保存 trace event: %w", err)
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&row).Updates(map[string]any{
+			"tool":        trace.Tool,
+			"phase":       trace.Phase,
+			"input":       trace.Input,
+			"output":      trace.Output,
+			"prompt":      trace.Prompt,
+			"model_reply": trace.ModelReply,
+			"duration_ms": trace.DurationMs,
+		}).Error; err != nil {
+			return fmt.Errorf("更新 trace event: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *MySQLStore) saveTodos(tx *gorm.DB, jobID uint, job *model.ReviewJob) error {
+	for _, todo := range job.Todos {
+		var row model.DBTodoItem
+		err := tx.Where("job_id = ? AND sort_order = ?", jobID, todo.Order).First(&row).Error
+		if err == gorm.ErrRecordNotFound {
+			now := time.Now().UTC()
+			row = model.DBTodoItem{
+				JobID:     jobID,
+				Content:   todo.Content,
+				Status:    todo.Status,
+				SortOrder: todo.Order,
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return fmt.Errorf("保存 todo: %w", err)
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&row).Updates(map[string]any{
+			"content":    todo.Content,
+			"status":     todo.Status,
+			"updated_at": time.Now().UTC(),
+		}).Error; err != nil {
+			return fmt.Errorf("更新 todo: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *MySQLStore) saveTeamEvents(tx *gorm.DB, job *model.ReviewJob) error {
+	for _, event := range job.TeamEvents {
+		if event.ID == "" {
+			event.ID = "legacy-" + hashText(event.From + event.To + event.Type + event.TaskID + event.Content + event.At.String())[:32]
+		}
+		row := model.DBTeamMessage{
+			MessageID:      event.ID,
+			JobID:          event.TaskID,
+			FromAgent:      event.From,
+			ToAgent:        event.To,
+			MessageType:    event.Type,
+			Content:        event.Content,
+			DeliveryStatus: "acked",
+			ConsumedAt:     &event.At,
+			CreatedAt:      event.At,
+		}
+		if row.CreatedAt.IsZero() {
+			row.CreatedAt = time.Now().UTC()
+			row.ConsumedAt = &row.CreatedAt
+		}
+		result := tx.Where("message_id = ?", row.MessageID).FirstOrCreate(&row)
+		if result.Error != nil {
+			return fmt.Errorf("保存团队事件: %w", result.Error)
+		}
+	}
+	return nil
+}
+
+func commentFingerprint(jobID string, comment model.ReviewComment) string {
+	value := fmt.Sprintf("%s|%s|%d|%s|%s|%s", jobID, comment.File, comment.Line, comment.Severity, comment.Confidence, comment.Body)
+	return hashText(value)
+}
+
+func hashText(value string) string {
+	hash := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(hash[:])
 }

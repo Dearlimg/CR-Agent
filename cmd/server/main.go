@@ -11,20 +11,34 @@ import (
 
 func main() {
 	cfg := logic.LoadConfig()
-	store := dao.Store(dao.NewJobStore(".checkpoints"))
-	if cfg.MySQLDSN != "" {
-		mysqlStore, err := dao.OpenMySQL(cfg.MySQLDSN)
-		if err != nil {
+	if cfg.PersistenceMode != "mysql" {
+		panic("生产服务只支持 mysql 持久化，PERSISTENCE_MODE 必须为 mysql")
+	}
+	if cfg.MySQLDSN == "" {
+		panic("MYSQL_DSN 不能为空，服务不会回退到本地文件存储")
+	}
+	mysqlStore, err := dao.OpenMySQL(cfg.MySQLDSN)
+	if err != nil {
+		panic(err)
+	}
+	if os.Getenv("AUTO_MIGRATE") != "false" {
+		if err := mysqlStore.Migrate(); err != nil {
 			panic(err)
 		}
-		if os.Getenv("AUTO_MIGRATE") != "false" {
-			if err := mysqlStore.Migrate(); err != nil {
-				panic(err)
-			}
-		}
-		store = mysqlStore
 	}
-	svc := logic.NewService(store, cfg)
+	background, err := dao.NewMySQLBackgroundRepository(mysqlStore.DB())
+	if err != nil {
+		panic(err)
+	}
+	mailbox, err := dao.NewMySQLTeamMailbox(mysqlStore.DB())
+	if err != nil {
+		panic(err)
+	}
+	svc := logic.NewServiceWithRuntime(mysqlStore, cfg, logic.RuntimeRepositories{
+		Tasks:      dao.NewMySQLTaskRepository(mysqlStore.DB()),
+		Background: background,
+		Mailbox:    mailbox,
+	})
 	if err := svc.Start(); err != nil {
 		panic(err)
 	}

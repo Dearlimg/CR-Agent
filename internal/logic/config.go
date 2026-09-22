@@ -11,6 +11,7 @@ import (
 
 type Config struct {
 	Port                 string
+	PersistenceMode      string
 	SkillsDir            string
 	MemoryDir            string
 	TasksDir             string
@@ -51,6 +52,7 @@ func LoadConfig() Config {
 	n, _ := strconv.Atoi(b("REVIEW_BUDGET_CENTS", "1000"))
 	return Config{
 		Port:                 b("PORT", "8080"),
+		PersistenceMode:      b("PERSISTENCE_MODE", "mysql"),
 		SkillsDir:            b("AGENT_SKILLS_DIR", "skills"),
 		MemoryDir:            b("AGENT_MEMORY_DIR", ".memory"),
 		TasksDir:             b("AGENT_TASKS_DIR", ".tasks"),

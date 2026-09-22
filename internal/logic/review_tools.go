@@ -13,14 +13,14 @@ var secretPattern = regexp.MustCompile(`(?i)(api[_-]?key|secret|password|token)\
 var filePattern = regexp.MustCompile(`^diff --git a/(.+) b/(.+)$`)
 
 func registerReviewTools(reg *ToolRegistry) {
-	reg.Register("parse_diff", parseDiffTool)
-	reg.Register("get_changed_lines", changedLinesTool)
-	reg.Register("syntax_check", syntaxCheckTool)
-	reg.Register("format_check", formatCheckTool)
-	reg.Register("secret_scan", secretScanTool)
-	reg.Register("dependency_diff", dependencyDiffTool)
-	reg.Register("get_file_context", contextTool)
-	reg.Register("normalize_finding", normalizeFinding)
+	reg.RegisterWithPermission("parse_diff", PermissionReadDiff, parseDiffTool)
+	reg.RegisterWithPermission("get_changed_lines", PermissionReadDiff, changedLinesTool)
+	reg.RegisterWithPermission("syntax_check", PermissionStaticAnalysis, syntaxCheckTool)
+	reg.RegisterWithPermission("format_check", PermissionStaticAnalysis, formatCheckTool)
+	reg.RegisterWithPermission("secret_scan", PermissionStaticAnalysis, secretScanTool)
+	reg.RegisterWithPermission("dependency_diff", PermissionStaticAnalysis, dependencyDiffTool)
+	reg.RegisterWithPermission("get_file_context", PermissionRepositoryRead, contextTool)
+	reg.RegisterWithPermission("normalize_finding", PermissionReadDiff, normalizeFinding)
 }
 
 func parseDiffTool(_ context.Context, in ToolInput) (ToolResult, error) {

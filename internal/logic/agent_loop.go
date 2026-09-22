@@ -18,11 +18,20 @@ type ToolResult struct {
 	Comments []model.ReviewComment
 }
 type Tool func(context.Context, ToolInput) (ToolResult, error)
-type ToolRegistry struct{ tools map[string]Tool }
+type ToolDefinition struct {
+	Permission Permission
+	Run        Tool
+}
+type ToolRegistry struct{ tools map[string]ToolDefinition }
 
-func NewToolRegistry() *ToolRegistry                    { return &ToolRegistry{tools: map[string]Tool{}} }
-func (r *ToolRegistry) Register(name string, tool Tool) { r.tools[name] = tool }
-func (r *ToolRegistry) Get(name string) (Tool, bool)    { t, ok := r.tools[name]; return t, ok }
+func NewToolRegistry() *ToolRegistry { return &ToolRegistry{tools: map[string]ToolDefinition{}} }
+func (r *ToolRegistry) Register(name string, tool Tool) {
+	r.RegisterWithPermission(name, PermissionReadDiff, tool)
+}
+func (r *ToolRegistry) RegisterWithPermission(name string, permission Permission, tool Tool) {
+	r.tools[name] = ToolDefinition{Permission: permission, Run: tool}
+}
+func (r *ToolRegistry) Get(name string) (ToolDefinition, bool) { t, ok := r.tools[name]; return t, ok }
 
 type LoopStep struct {
 	Tool   string
@@ -33,6 +42,7 @@ type AgentLoop struct {
 	Plan     []LoopStep
 	MaxSteps int
 	Record   func(string, string, string, string, string, string, string, int64) error
+	Policy   *PermissionPolicy
 }
 
 func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
@@ -47,8 +57,18 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 		if !ok {
 			return fmt.Errorf("工具未注册: %s", step.Tool)
 		}
+		decision := a.Policy.Decide(tool.Permission)
+		if decision != PermissionAllow {
+			err := permissionError(step.Tool, tool.Permission, decision)
+			traceID := id(step.Tool + err.Error())
+			input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: err.Error(), At: time.Now(), Phase: "permission"})
+			if a.Record != nil {
+				_ = a.Record(input.Job.ID, traceID, step.Tool, string(decision), step.Reason, "", err.Error(), 0)
+			}
+			return err
+		}
 		started := time.Now()
-		result, err := tool(ctx, input)
+		result, err := tool.Run(ctx, input)
 		traceID := id(step.Tool + step.Reason + time.Now().String())
 		if err != nil {
 			duration := time.Since(started).Milliseconds()

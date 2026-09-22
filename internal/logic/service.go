@@ -19,10 +19,10 @@ type Service struct {
 
 func NewService(store dao.Store, cfg Config) *Service {
 	registry := NewToolRegistry()
-	registry.Register("diff_reader", func(_ context.Context, in ToolInput) (ToolResult, error) {
+	registry.RegisterWithPermission("diff_reader", PermissionReadDiff, func(_ context.Context, in ToolInput) (ToolResult, error) {
 		return ToolResult{Output: fmt.Sprintf("读取并脱敏完成，diff_bytes=%d", len(in.Diff))}, nil
 	})
-	registry.Register("static_check", func(_ context.Context, in ToolInput) (ToolResult, error) {
+	registry.RegisterWithPermission("static_check", PermissionStaticAnalysis, func(_ context.Context, in ToolInput) (ToolResult, error) {
 		hits := []string{}
 		if strings.Contains(in.Diff, "TODO") {
 			hits = append(hits, "TODO")
@@ -37,7 +37,7 @@ func NewService(store dao.Store, cfg Config) *Service {
 		return store.RecordToolCall(jobID, traceID, tool, status, input, output, callErr, durationMs)
 	}
 	plan := []LoopStep{{Tool: "diff_reader", Reason: "读取并脱敏 diff"}, {Tool: "parse_diff", Reason: "解析文件和变更范围"}, {Tool: "get_changed_lines", Reason: "提取新增行"}, {Tool: "static_check", Reason: "执行确定性规则检查"}, {Tool: "syntax_check", Reason: "前置语法和冲突检查"}, {Tool: "format_check", Reason: "前置格式检查"}, {Tool: "secret_scan", Reason: "扫描疑似敏感信息"}, {Tool: "dependency_diff", Reason: "检查依赖文件变更"}, {Tool: "get_file_context", Reason: "补充安全上下文"}, {Tool: "normalize_finding", Reason: "规范化审查输出"}}
-	return &Service{Store: store, Config: cfg, Loop: &AgentLoop{Registry: registry, Plan: plan, MaxSteps: len(plan), Record: record}}
+	return &Service{Store: store, Config: cfg, Loop: &AgentLoop{Registry: registry, Plan: plan, MaxSteps: len(plan), Record: record, Policy: DefaultPermissionPolicy()}}
 }
 func id(s string) string {
 	h := sha256.Sum256([]byte(s + time.Now().String()))
@@ -55,6 +55,12 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 	j.Status = "running"
 	_ = s.Store.Save(j)
 	if strings.TrimSpace(req.Diff) == "" {
+		if decision := s.Loop.Policy.Decide(PermissionNetworkFetch); decision != PermissionAllow {
+			j.Status = "failed"
+			j.Error = permissionError("diff_fetcher", PermissionNetworkFetch, decision).Error()
+			_ = s.Store.Save(j)
+			return
+		}
 		fetchStarted := time.Now()
 		resolved, diff, err := fetchDiff(ctx, req.Source)
 		fetchTraceID := id("diff_fetcher" + j.ID)
@@ -81,6 +87,12 @@ func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewR
 		readID = j.Trace[len(j.Trace)-1].ID
 	}
 	prompt := "只基于下面 git diff 输出 JSON 数组，字段为 file,line,severity,confidence,body,suggestion；没有问题输出 []。不要编造。\n\n" + redact(req.Diff)
+	if decision := s.Loop.Policy.Decide(PermissionLLMInference); decision != PermissionAllow {
+		j.Status = "failed"
+		j.Error = permissionError("deepseek_review", PermissionLLMInference, decision).Error()
+		_ = s.Store.Save(j)
+		return
+	}
 	modelStarted := time.Now()
 	reply, err := EinoReviewAgent(ctx, s.Config, prompt)
 	modelTraceID := id("deepseek-review" + j.ID)

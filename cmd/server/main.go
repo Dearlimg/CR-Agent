@@ -47,6 +47,7 @@ func main() {
 	hooks.RegisterAudit(svc.Loop.Hooks)
 	r := gin.Default()
 	r.StaticFile("/", "web/index.html")
+	r.Static("/assets", "web/assets")
 	controller.NewReviewController(svc).Register(r)
 	_ = r.Run(":" + cfg.Port)
 }

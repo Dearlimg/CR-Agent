@@ -1,0 +1,35 @@
+/* Animate composited properties; never loop layout animations on streaming rows. */
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .overview,
+  .trace-panel,
+  .composer {
+    animation: reveal 320ms ease both;
+  }
+  #conversation:not([hidden]),
+  #findings:not([hidden]),
+  #trajectory:not([hidden]) {
+    animation: reveal 200ms ease both;
+  }
+  .event[open] pre {
+    animation: reveal 160ms ease;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

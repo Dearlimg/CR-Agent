@@ -261,16 +261,28 @@ func (c *ReviewController) events(x *gin.Context) {
 			flusher.Flush()
 			return
 		}
-		x.SSEvent("review", j)
-		flusher.Flush()
-		if j.Status == "completed" || j.Status == "completed_with_warnings" || j.Status == "failed" || j.Status == "cancelled" {
-			return
+		terminal := reviewTerminal(j.Status)
+		if !terminal || j.FinishedAt != nil {
+			x.SSEvent("review", j)
+			flusher.Flush()
+			if terminal {
+				return
+			}
 		}
 		select {
 		case <-x.Request.Context().Done():
 			return
 		case <-time.After(250 * time.Millisecond):
 		}
+	}
+}
+
+func reviewTerminal(status string) bool {
+	switch status {
+	case "completed", "completed_with_warnings", "failed", "cancelled":
+		return true
+	default:
+		return false
 	}
 }
 func (c *ReviewController) create(x *gin.Context) {

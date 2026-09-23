@@ -195,8 +195,11 @@ func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 		}
 		return fmt.Sprintf("审查任务 %s 已完成", j.ID), nil
 	}); err != nil {
+		finished := time.Now().UTC()
 		j.Status = "failed"
 		j.Error = fmt.Sprintf("启动后台审查失败：%v", err)
+		j.FinishedAt = &finished
+		j.UpdatedAt = finished
 		_ = s.Store.Save(j)
 		return nil, err
 	}
@@ -220,10 +223,9 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	defer func() {
 		recorder.Flush()
 		finished := time.Now().UTC()
-		if j.FinishedAt == nil {
-			j.FinishedAt = &finished
-		}
+		j.FinishedAt = &finished
 		j.UpdatedAt = finished
+		// Publish the terminal status, final timestamps, and complete trace together.
 		_ = s.Store.Save(j)
 	}()
 	if strings.TrimSpace(req.Diff) == "" {
@@ -233,7 +235,6 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 			fetchSpan.End(TraceResult{Status: "denied", Err: err, Origin: "orchestrator"})
 			j.Status = "failed"
 			j.Error = err.Error()
-			_ = s.Store.Save(j)
 			return
 		}
 		fetchStarted := time.Now()
@@ -250,7 +251,6 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 			_ = s.Store.RecordToolCall(j.ID, fetchTraceID, "diff_fetcher", "failed", req.Source, "", err.Error(), fetchDuration)
 			j.Status = "failed"
 			j.Error = err.Error()
-			_ = s.Store.Save(j)
 			return
 		}
 		_ = s.Store.RecordToolCall(j.ID, fetchTraceID, "diff_fetcher", "succeeded", req.Source, fmt.Sprintf("diff_bytes=%d", len(diff)), "", fetchDuration)
@@ -261,21 +261,18 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		j.Status = "failed"
 		j.Error = err.Error()
 		recorder.Flush()
-		_ = s.Store.Save(j)
 		return
 	}
 	recorder.Flush()
 	if decision := s.Loop.Policy.Decide(PermissionLLMInference); decision != PermissionAllow {
 		j.Status = "failed"
 		j.Error = permissionError("subagent_review", PermissionLLMInference, decision).Error()
-		_ = s.Store.Save(j)
 		return
 	}
 	teamWarnings := false
 	if s.SkillError != nil {
 		j.Status = "failed"
 		j.Error = fmt.Sprintf("加载 Agent skills 失败：%v", s.SkillError)
-		_ = s.Store.Save(j)
 		return
 	}
 	skillSpan := recorder.Start("input", "load_skill", "skill", "code-review", "")
@@ -284,7 +281,6 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		skillSpan.End(TraceResult{Err: err})
 		j.Status = "failed"
 		j.Error = fmt.Sprintf("加载 code-review skill 失败：%v", err)
-		_ = s.Store.Save(j)
 		return
 	}
 	skillSpan.End(TraceResult{Output: "已加载完整 SKILL.md"})
@@ -313,7 +309,10 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	}
 
 	reviewMode := chooseReviewMode(*artifacts)
-	recorder.Record("input", "review_route", "planning", "按文件和新增行规模选择审查方式", "", TraceResult{
+	if s.Config.ReviewModeOverride == "single" || s.Config.ReviewModeOverride == "specialists" {
+		reviewMode = s.Config.ReviewModeOverride
+	}
+	recorder.Record("input", "review_route", "planning", "按文件风险和变更规模选择审查方式", "", TraceResult{
 		Output: reviewMode, Origin: "orchestrator",
 	})
 	reviewCtx, flushHarness := s.withReviewHarness(ctx, j, artifacts.SanitizedDiff, *artifacts)
@@ -349,7 +348,6 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	if teamErr != nil {
 		j.Status = "failed"
 		j.Error = fmt.Sprintf("团队专项审查失败：%v", teamErr)
-		_ = s.Store.Save(j)
 		return
 	}
 	j.TeamEvents = append(j.TeamEvents, teamEvents...)
@@ -415,7 +413,6 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 			compactSpan.End(TraceResult{Err: compactErr, Origin: "orchestrator"})
 			j.Status = "failed"
 			j.Error = fmt.Sprintf("压缩审查上下文失败：%v", compactErr)
-			_ = s.Store.Save(j)
 			return
 		}
 		compactSpan.End(TraceResult{
@@ -448,8 +445,6 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	if errors.As(synthesisErr, &goalStop) {
 		j.Status = "failed"
 		j.Error = goalStop.Error()
-		j.UpdatedAt = time.Now()
-		_ = s.Store.Save(j)
 		return
 	}
 	synthesisWarning := synthesisErr != nil
@@ -486,18 +481,15 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	if err := ctx.Err(); err != nil {
 		j.Status = "failed"
 		j.Error = "后台审查已取消"
-		j.UpdatedAt = time.Now()
-		_ = s.Store.Save(j)
 		return
 	}
+	s.extractReviewMemories(ctx, j, req)
+	s.completeReviewTask(j, recorder)
 	if teamWarnings || synthesisWarning {
 		j.Status = "completed_with_warnings"
 	} else {
 		j.Status = "completed"
 	}
-	s.extractReviewMemories(ctx, j, req)
-	s.completeReviewTask(j, recorder)
-	_ = s.Store.Save(j)
 }
 
 func reviewTaskSubject(req model.ReviewRequest) string {

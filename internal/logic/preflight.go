@@ -53,18 +53,30 @@ type ReviewArtifacts struct {
 }
 
 func (a ReviewArtifacts) PromptSummary() string {
-	safe := a
-	safe.Files = make([]ChangedFile, len(a.Files))
-	for index, file := range a.Files {
-		safe.Files[index] = ChangedFile{
-			Path: redactFindingText(file.Path), AddedLines: file.AddedLines, New: file.New,
-		}
+	// The diff already contains hunk line numbers. Repeating every added line
+	// and verbose check message can cost more tokens than the useful evidence.
+	safe := struct {
+		Files           []string          `json:"files"`
+		AddedLines      int               `json:"diff_added_lines"`
+		DependencyFiles []string          `json:"dependency_files"`
+		Checks          map[string]string `json:"checks"`
+		SecretFindings  []SecretFinding   `json:"secret_findings"`
+	}{
+		Files:           make([]string, len(a.Files)),
+		AddedLines:      a.AddedLines,
+		DependencyFiles: make([]string, len(a.DependencyFiles)),
+		Checks:          make(map[string]string, len(a.Checks)),
+		SecretFindings:  make([]SecretFinding, len(a.SecretFindings)),
 	}
-	safe.DependencyFiles = make([]string, len(a.DependencyFiles))
+	for index, file := range a.Files {
+		safe.Files[index] = redactFindingText(file.Path)
+	}
 	for index, file := range a.DependencyFiles {
 		safe.DependencyFiles[index] = redactFindingText(file)
 	}
-	safe.SecretFindings = make([]SecretFinding, len(a.SecretFindings))
+	for _, check := range a.Checks {
+		safe.Checks[check.Name] = check.Status
+	}
 	for index, finding := range a.SecretFindings {
 		safe.SecretFindings[index] = SecretFinding{
 			Rule: finding.Rule, File: redactFindingText(finding.File), Line: finding.Line,
@@ -424,11 +436,93 @@ func sanitizeDiff(diff string) string {
 }
 
 func chooseReviewMode(artifacts ReviewArtifacts) string {
-	if len(artifacts.Files) >= 4 || artifacts.AddedLines >= 300 {
+	if len(artifacts.SecretFindings) > 0 {
 		return "specialists"
 	}
-	if len(artifacts.DependencyFiles) > 0 && len(artifacts.Files) > 1 {
+	productionFiles := 0
+	directories := map[string]bool{}
+	for _, file := range artifacts.Files {
+		if !isReviewProductionFile(file.Path) {
+			continue
+		}
+		productionFiles++
+		directories[path.Dir(file.Path)] = true
+		if isSensitiveReviewPath(file.Path) {
+			return "specialists"
+		}
+	}
+	if len(artifacts.DependencyFiles) > 0 && (productionFiles > 0 || len(artifacts.DependencyFiles) > 1) {
+		return "specialists"
+	}
+	if productionFiles >= 6 || (productionFiles >= 4 && len(directories) >= 2) {
+		return "specialists"
+	}
+	if productionFiles > 0 && hasSensitiveAddedCode(artifacts.SanitizedDiff) {
 		return "specialists"
 	}
 	return "single"
+}
+
+func isReviewProductionFile(name string) bool {
+	if isDependencyFile(name) {
+		return false
+	}
+	lower := strings.ToLower(name)
+	base := path.Base(lower)
+	for _, segment := range strings.Split(lower, "/") {
+		if segment == "test" || segment == "tests" || segment == "testdata" || segment == "docs" {
+			return false
+		}
+	}
+	if strings.HasSuffix(base, "_test.go") || strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") {
+		return false
+	}
+	switch path.Ext(base) {
+	case ".md", ".mdx", ".txt", ".rst", ".png", ".jpg", ".jpeg", ".svg", ".gif", ".lock":
+		return false
+	default:
+		return true
+	}
+}
+
+func isSensitiveReviewPath(name string) bool {
+	segments := strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return r == '/' || r == '_' || r == '-' || r == '.'
+	})
+	for _, segment := range segments {
+		switch segment {
+		case "auth", "authentication", "authorization", "security", "crypto", "permission",
+			"permissions", "secrets", "migration", "migrations", "database", "db":
+			return true
+		}
+	}
+	return false
+}
+
+var sensitiveAddedCodePattern = regexp.MustCompile(
+	`(?i)\b(?:authorization|authentication|password|credentials?|permissions?|jwt|csrf|transaction|rollback|execcontext|idempotency|lease)\b`,
+)
+
+func hasSensitiveAddedCode(diff string) bool {
+	productionFile := !strings.Contains(diff, "diff --git ")
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			productionFile = isReviewProductionFile(diffFilePath(line))
+			continue
+		}
+		if !productionFile || !strings.HasPrefix(line, "+") || strings.HasPrefix(line, "+++") {
+			continue
+		}
+		content := strings.TrimSpace(line[1:])
+		if strings.Contains(content, "[REDACTED]") {
+			return true
+		}
+		if strings.HasPrefix(content, "//") || strings.HasPrefix(content, "#") {
+			continue
+		}
+		if sensitiveAddedCodePattern.MatchString(content) {
+			return true
+		}
+	}
+	return false
 }

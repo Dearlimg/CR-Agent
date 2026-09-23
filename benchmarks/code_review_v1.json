@@ -1,0 +1,134 @@
+[
+  {
+    "id": "nil-dereference",
+    "category": "correctness",
+    "diff": "diff --git a/internal/user/name.go b/internal/user/name.go\nindex 1111111..2222222 100644\n--- a/internal/user/name.go\n+++ b/internal/user/name.go\n@@ -0,0 +1,7 @@\n+package user\n+\n+func DisplayName(profile *Profile) string {\n+\tif profile == nil {\n+\t\treturn profile.Name\n+\t}\n+\treturn profile.Name\n+}\n",
+    "expected": [{"file":"internal/user/name.go","line":5,"match_groups":[["nil","空指针","空值"],["panic","崩溃","解引用"]]}]
+  },
+  {
+    "id": "off-by-one-slice",
+    "category": "correctness",
+    "diff": "diff --git a/internal/page/page.go b/internal/page/page.go\nindex 1111111..2222222 100644\n--- a/internal/page/page.go\n+++ b/internal/page/page.go\n@@ -0,0 +1,9 @@\n+package page\n+\n+func Take(values []string, limit int) []string {\n+\tif limit < 0 {\n+\t\treturn nil\n+\t}\n+\treturn values[:limit+1]\n+}\n",
+    "expected": [{"file":"internal/page/page.go","line":7,"match_groups":[["越界","panic","边界"],["limit","长度","索引"]]}]
+  },
+  {
+    "id": "map-concurrent-write",
+    "category": "concurrency",
+    "diff": "diff --git a/internal/cache/cache.go b/internal/cache/cache.go\nindex 1111111..2222222 100644\n--- a/internal/cache/cache.go\n+++ b/internal/cache/cache.go\n@@ -0,0 +1,10 @@\n+package cache\n+\n+var entries = map[string]string{}\n+\n+func PutAll(values map[string]string) {\n+\tfor key, value := range values {\n+\t\tgo func() {\n+\t\t\tentries[key] = value\n+\t\t}()\n+\t}\n+}\n",
+    "expected": [{"file":"internal/cache/cache.go","line":8,"match_groups":[["并发","goroutine","协程","竞态"],["map","映射"],["锁","同步","fatal error"]]}]
+  },
+  {
+    "id": "sql-injection",
+    "category": "security",
+    "diff": "diff --git a/internal/user/search.go b/internal/user/search.go\nindex 1111111..2222222 100644\n--- a/internal/user/search.go\n+++ b/internal/user/search.go\n@@ -0,0 +1,9 @@\n+package user\n+\n+func Search(db *sql.DB, name string) error {\n+\tquery := fmt.Sprintf(\"SELECT id FROM users WHERE name = '%s'\", name)\n+\trows, err := db.Query(query)\n+\tif err != nil {\n+\t\treturn err\n+\t}\n+\tdefer rows.Close()\n+\treturn nil\n+}\n",
+    "expected": [
+      {"file":"internal/user/search.go","line":4,"match_groups":[["SQL 注入","sql injection","注入"],["参数化","占位符","预编译"]]},
+      {"file":"internal/user/search.go","line":5,"match_groups":[["rows","结果集","查询结果"],["未被消费","未消费","未读取","未返回"]]}
+    ]
+  },
+  {
+    "id": "http-response-body-leak",
+    "category": "resource",
+    "diff": "diff --git a/internal/client/fetch.go b/internal/client/fetch.go\nindex 1111111..2222222 100644\n--- a/internal/client/fetch.go\n+++ b/internal/client/fetch.go\n@@ -0,0 +1,10 @@\n+package client\n+\n+func Fetch(client *http.Client, url string) ([]byte, error) {\n+\tresp, err := client.Get(url)\n+\tif err != nil {\n+\t\treturn nil, err\n+\t}\n+\treturn io.ReadAll(resp.Body)\n+}\n",
+    "expected": [
+      {"file":"internal/client/fetch.go","line":8,"match_groups":[["Body","响应体","response body"],["Close","关闭"],["连接","泄漏","资源"]]},
+      {"file":"internal/client/fetch.go","line":3,"match_groups":[["import","导入"],["编译","构建","build"]]}
+    ]
+  },
+  {
+    "id": "path-traversal",
+    "category": "security",
+    "diff": "diff --git a/internal/file/read.go b/internal/file/read.go\nindex 1111111..2222222 100644\n--- a/internal/file/read.go\n+++ b/internal/file/read.go\n@@ -0,0 +1,7 @@\n+package file\n+\n+func Read(root, name string) ([]byte, error) {\n+\tpath := filepath.Join(root, name)\n+\treturn os.ReadFile(path)\n+}\n",
+    "expected": [{"file":"internal/file/read.go","line":4,"match_groups":[["路径穿越","path traversal","目录遍历"],["..","逃逸","根目录","root"]]}]
+  },
+  {
+    "id": "empty-average",
+    "category": "correctness",
+    "diff": "diff --git a/internal/stats/average.go b/internal/stats/average.go\nindex 1111111..2222222 100644\n--- a/internal/stats/average.go\n+++ b/internal/stats/average.go\n@@ -0,0 +1,7 @@\n+package stats\n+\n+func Average(values []int) int {\n+\tsum := 0\n+\tfor _, value := range values {\n+\t\tsum += value\n+\t}\n+\treturn sum / len(values)\n+}\n",
+    "expected": [{"file":"internal/stats/average.go","line":8,"match_groups":[["空切片","空数组","empty"],["除零","除以零","divide by zero","panic"]]}]
+  },
+  {
+    "id": "retry-payment-without-idempotency",
+    "category": "reliability",
+    "diff": "diff --git a/internal/payments/charge.go b/internal/payments/charge.go\nindex 1111111..2222222 100644\n--- a/internal/payments/charge.go\n+++ b/internal/payments/charge.go\n@@ -0,0 +1,10 @@\n+package payments\n+\n+func Charge(ctx context.Context, gateway Gateway, order Order) error {\n+\treturn retry.Do(ctx, func() error {\n+\t\treturn gateway.Charge(ctx, order.Amount)\n+\t})\n+}\n",
+    "expected": [{"file":"internal/payments/charge.go","line":5,"match_groups":[["重试","retry"],["重复","多次","再次"],["扣款","支付","charge"],["幂等","idempotency"]]}]
+  },
+  {
+    "id": "broad-file-permissions",
+    "category": "security",
+    "diff": "diff --git a/internal/credentials/save.go b/internal/credentials/save.go\nindex 1111111..2222222 100644\n--- a/internal/credentials/save.go\n+++ b/internal/credentials/save.go\n@@ -0,0 +1,7 @@\n+package credentials\n+\n+func Save(path string, encrypted []byte) error {\n+\treturn os.WriteFile(path, encrypted, 0644)\n+}\n",
+    "expected": [{"file":"internal/credentials/save.go","line":4,"match_groups":[["0644","权限","permission"],["凭据","敏感","credential","secret"],["读取","访问","泄露"]]}]
+  },
+  {
+    "id": "json-api-breaking-change",
+    "category": "compatibility",
+    "diff": "diff --git a/internal/api/user.go b/internal/api/user.go\nindex 1111111..2222222 100644\n--- a/internal/api/user.go\n+++ b/internal/api/user.go\n@@ -1,7 +1,7 @@\n package api\n \n type User struct {\n-\tID string `json:\"user_id\"`\n+\tID string `json:\"userID\"`\n }\n \n func Encode(user User) ([]byte, error) { return json.Marshal(user) }\n",
+    "expected": [{"file":"internal/api/user.go","line":4,"match_groups":[["兼容","breaking","破坏"],["user_id","userID","字段名","json"]]}]
+  },
+  {
+    "id": "password-in-log",
+    "category": "security",
+    "diff": "diff --git a/internal/auth/login.go b/internal/auth/login.go\nindex 1111111..2222222 100644\n--- a/internal/auth/login.go\n+++ b/internal/auth/login.go\n@@ -0,0 +1,7 @@\n+package auth\n+\n+func Debug(password string) {\n+\tlog.Printf(\"password=%s\", password)\n+}\n",
+    "expected": [{"file":"internal/auth/login.go","line":4,"match_groups":[["口令","密码","password"],["日志","log","输出"],["泄露","暴露","敏感"]]}]
+  },
+  {
+    "id": "ignored-error",
+    "category": "error-handling",
+    "diff": "diff --git a/internal/config/save.go b/internal/config/save.go\nindex 1111111..2222222 100644\n--- a/internal/config/save.go\n+++ b/internal/config/save.go\n@@ -0,0 +1,8 @@\n+package config\n+\n+func Save(path string, cfg Config) error {\n+\tdata, err := json.Marshal(cfg)\n+\tif err != nil { return err }\n+\t_ = os.WriteFile(path, data, 0600)\n+\treturn nil\n+}\n",
+    "expected": [{"file":"internal/config/save.go","line":6,"match_groups":[["忽略","丢弃","discard"],["错误","error"],["写入","保存","write"]]}]
+  },
+  {
+    "id": "negative-parameterized-sql",
+    "category": "negative-control",
+    "diff": "diff --git a/internal/user/search.go b/internal/user/search.go\nindex 1111111..2222222 100644\n--- a/internal/user/search.go\n+++ b/internal/user/search.go\n@@ -0,0 +1,10 @@\n+package user\n+\n+func Search(db *sql.DB, name string) ([]User, error) {\n+\trows, err := db.Query(\"SELECT id FROM users WHERE name = ?\", name)\n+\tif err != nil { return nil, err }\n+\tdefer rows.Close()\n+\treturn scanUsers(rows)\n+}\n",
+    "expected": []
+  },
+  {
+    "id": "negative-guarded-empty-input",
+    "category": "negative-control",
+    "diff": "diff --git a/internal/stats/average.go b/internal/stats/average.go\nindex 1111111..2222222 100644\n--- a/internal/stats/average.go\n+++ b/internal/stats/average.go\n@@ -0,0 +1,10 @@\n+package stats\n+\n+func Average(values []int) (int, error) {\n+\tif len(values) == 0 {\n+\t\treturn 0, errors.New(\"empty input\")\n+\t}\n+\tsum := 0\n+\tfor _, value := range values { sum += value }\n+\treturn sum / len(values), nil\n+}\n",
+    "expected": []
+  },
+  {
+    "id": "negative-error-checked-close",
+    "category": "negative-control",
+    "diff": "diff --git a/internal/client/fetch.go b/internal/client/fetch.go\nindex 1111111..2222222 100644\n--- a/internal/client/fetch.go\n+++ b/internal/client/fetch.go\n@@ -0,0 +1,12 @@\n+package client\n+\n+func Fetch(client *http.Client, url string) ([]byte, error) {\n+\tresp, err := client.Get(url)\n+\tif err != nil { return nil, err }\n+\tdefer resp.Body.Close()\n+\treturn io.ReadAll(resp.Body)\n+}\n",
+    "expected": []
+  },
+  {
+    "id": "negative-safe-join-after-containment-check",
+    "category": "negative-control",
+    "diff": "diff --git a/internal/file/read.go b/internal/file/read.go\nindex 1111111..2222222 100644\n--- a/internal/file/read.go\n+++ b/internal/file/read.go\n@@ -0,0 +1,13 @@\n+package file\n+\n+func Read(root, name string) ([]byte, error) {\n+\tif filepath.IsAbs(name) || strings.Contains(name, \"..\") {\n+\t\treturn nil, errors.New(\"invalid path\")\n+\t}\n+\tpath := filepath.Join(root, name)\n+\treturn os.ReadFile(path)\n+}\n",
+    "expected": []
+  },
+  {
+    "id": "negative-test-only-fatal",
+    "category": "negative-control",
+    "diff": "diff --git a/internal/parser/parser_test.go b/internal/parser/parser_test.go\nindex 1111111..2222222 100644\n--- a/internal/parser/parser_test.go\n+++ b/internal/parser/parser_test.go\n@@ -0,0 +1,7 @@\n+package parser\n+\n+func TestMustRejectInvalidInput(t *testing.T) {\n+\tif got := Parse(\"bad\"); got != nil {\n+\t\tt.Fatal(\"expected nil\")\n+\t}\n+}\n",
+    "expected": []
+  },
+  {
+    "id": "negative-placeholder-secret",
+    "category": "negative-control",
+    "diff": "diff --git a/internal/config/example.go b/internal/config/example.go\nindex 1111111..2222222 100644\n--- a/internal/config/example.go\n+++ b/internal/config/example.go\n@@ -0,0 +1,5 @@\n+package config\n+\n+// api_key = \"BENCHMARK_FAKE_VALUE_NOT_A_CREDENTIAL_0001\"\n+const Example = \"replace-me\"\n",
+    "expected": []
+  },
+  {
+    "id": "negative-safe-file-permission",
+    "category": "negative-control",
+    "diff": "diff --git a/internal/credentials/save.go b/internal/credentials/save.go\nindex 1111111..2222222 100644\n--- a/internal/credentials/save.go\n+++ b/internal/credentials/save.go\n@@ -0,0 +1,7 @@\n+package credentials\n+\n+func Save(path string, encrypted []byte) error {\n+\treturn os.WriteFile(path, encrypted, 0600)\n+}\n",
+    "expected": []
+  },
+  {
+    "id": "negative-safe-retry-read",
+    "category": "negative-control",
+    "diff": "diff --git a/internal/catalog/fetch.go b/internal/catalog/fetch.go\nindex 1111111..2222222 100644\n--- a/internal/catalog/fetch.go\n+++ b/internal/catalog/fetch.go\n@@ -0,0 +1,9 @@\n+package catalog\n+\n+func Fetch(ctx context.Context, client *http.Client, url string) (*http.Response, error) {\n+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)\n+\tif err != nil { return nil, err }\n+\treturn client.Do(request)\n+}\n",
+    "expected": []
+  },
+  {
+    "id": "negative-transaction-rollback",
+    "category": "negative-control",
+    "diff": "diff --git a/internal/store/update.go b/internal/store/update.go\nindex 1111111..2222222 100644\n--- a/internal/store/update.go\n+++ b/internal/store/update.go\n@@ -0,0 +1,10 @@\n+package store\n+\n+func Update(tx *sql.Tx, id int64, name string) error {\n+\tif _, err := tx.Exec(\"UPDATE users SET name = ? WHERE id = ?\", name, id); err != nil {\n+\t\t_ = tx.Rollback()\n+\t\treturn err\n+\t}\n+\treturn tx.Commit()\n+}\n",
+    "expected": []
+  }
+]

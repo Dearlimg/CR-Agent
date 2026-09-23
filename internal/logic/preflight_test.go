@@ -43,6 +43,11 @@ func TestPreflightScansRawDiffAndSharesOnlyRedactedEvidence(t *testing.T) {
 			t.Fatalf("secret value entered shared output: %q", exposed)
 		}
 	}
+	summary := artifacts.PromptSummary()
+	if strings.Contains(summary, `"added_lines":`) || strings.Contains(summary, "diff_digest") ||
+		strings.Contains(summary, "原始 diff") || !strings.Contains(summary, `"syntax_check"`) {
+		t.Fatalf("prompt summary repeats diff details or loses check status: %q", summary)
+	}
 	for _, check := range artifacts.Checks {
 		if check.Name == "static_check" && !strings.Contains(check.Message, "提示=0") {
 			t.Fatalf("context line was treated as added code: %#v", check)
@@ -158,8 +163,7 @@ func TestReviewRoutingAndFindingVerification(t *testing.T) {
 	if chooseReviewMode(artifacts) != "specialists" {
 		t.Fatal("dependency plus source change should use specialists")
 	}
-	artifacts.DependencyFiles = []string{}
-	if chooseReviewMode(artifacts) != "single" {
+	if chooseReviewMode(ReviewArtifacts{Files: []ChangedFile{{Path: "main.go"}}}) != "single" {
 		t.Fatal("small source change should use one agent")
 	}
 	findings := []ReviewFinding{
@@ -171,6 +175,95 @@ func TestReviewRoutingAndFindingVerification(t *testing.T) {
 	comments := verifiedComments(findings, artifacts, "trace")
 	if len(comments) != 1 || comments[0].Line != 3 || comments[0].Severity != "high" {
 		t.Fatalf("verified comments=%#v", comments)
+	}
+}
+
+func TestReviewRoutingUsesRiskRatherThanLineCount(t *testing.T) {
+	cases := []struct {
+		name      string
+		artifacts ReviewArtifacts
+		want      string
+	}{
+		{
+			name: "large ordinary file",
+			artifacts: ReviewArtifacts{
+				Files:      []ChangedFile{{Path: "compose/field_mapping.go"}, {Path: "compose/field_mapping_test.go"}},
+				AddedLines: 323,
+			},
+			want: "single",
+		},
+		{
+			name:      "many documentation files",
+			artifacts: ReviewArtifacts{Files: []ChangedFile{{Path: "docs/a.md"}, {Path: "docs/b.md"}, {Path: "docs/c.md"}, {Path: "docs/d.md"}}},
+			want:      "single",
+		},
+		{
+			name:      "authentication boundary",
+			artifacts: ReviewArtifacts{Files: []ChangedFile{{Path: "internal/auth/session.go"}}},
+			want:      "specialists",
+		},
+		{
+			name: "sensitive changed code",
+			artifacts: ReviewArtifacts{
+				Files:         []ChangedFile{{Path: "main.go"}},
+				SanitizedDiff: "diff --git a/main.go b/main.go\n@@ -1 +1 @@\n+if Authorization == \"\" { return err }\n",
+			},
+			want: "specialists",
+		},
+		{
+			name: "sensitive test line only",
+			artifacts: ReviewArtifacts{
+				Files: []ChangedFile{{Path: "main.go"}, {Path: "main_test.go"}},
+				SanitizedDiff: "diff --git a/main.go b/main.go\n@@ -1 +1 @@\n+func f() {}\n" +
+					"diff --git a/main_test.go b/main_test.go\n@@ -1 +1 @@\n+Authorization := \"test\"\n",
+			},
+			want: "single",
+		},
+		{
+			name:      "dependency and production code",
+			artifacts: ReviewArtifacts{Files: []ChangedFile{{Path: "go.mod"}, {Path: "main.go"}}, DependencyFiles: []string{"go.mod"}},
+			want:      "specialists",
+		},
+		{
+			name:      "dependency and docs",
+			artifacts: ReviewArtifacts{Files: []ChangedFile{{Path: "go.mod"}, {Path: "README.md"}}, DependencyFiles: []string{"go.mod"}},
+			want:      "single",
+		},
+		{
+			name: "manifest and lockfile",
+			artifacts: ReviewArtifacts{
+				Files:           []ChangedFile{{Path: "go.mod"}, {Path: "go.sum"}},
+				DependencyFiles: []string{"go.mod", "go.sum"},
+			},
+			want: "specialists",
+		},
+		{
+			name:      "broad cross directory change",
+			artifacts: ReviewArtifacts{Files: []ChangedFile{{Path: "api/a.go"}, {Path: "api/b.go"}, {Path: "worker/c.go"}, {Path: "worker/d.go"}}},
+			want:      "specialists",
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := chooseReviewMode(test.artifacts); got != test.want {
+				t.Fatalf("route=%q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestReviewRoutingRetainsRiskAfterDiffRedaction(t *testing.T) {
+	diff := "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n" +
+		"@@ -1 +1 @@\n+token := value\n"
+	artifacts, err := NewPreflightCache().Run(context.Background(), "inline", diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts.SecretFindings) != 0 || !strings.Contains(artifacts.SanitizedDiff, "+[REDACTED]") {
+		t.Fatalf("unexpected redaction/scanner result: findings=%#v diff=%q", artifacts.SecretFindings, artifacts.SanitizedDiff)
+	}
+	if mode := chooseReviewMode(artifacts); mode != "specialists" {
+		t.Fatalf("redacted sensitive source routed to %q", mode)
 	}
 }
 
@@ -245,7 +338,7 @@ func TestSmallReviewUsesOneModelTurnAndSharedPreflight(t *testing.T) {
 	}
 }
 
-func TestLargeReviewUsesSpecialistsAndOneSynthesis(t *testing.T) {
+func TestHighRiskReviewUsesSpecialistsAndOneSynthesis(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
@@ -274,12 +367,9 @@ func TestLargeReviewUsesSpecialistsAndOneSynthesis(t *testing.T) {
 		},
 		TeamEvents: []model.TeamEvent{},
 	}
-	var diff strings.Builder
-	diff.WriteString("diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -0,0 +1,300 @@\n")
-	for index := range 300 {
-		fmt.Fprintf(&diff, "+// added line %d\n", index)
-	}
-	service.run(context.Background(), job, model.ReviewRequest{Diff: diff.String()})
+	diff := "diff --git a/internal/auth/session.go b/internal/auth/session.go\n" +
+		"--- a/internal/auth/session.go\n+++ b/internal/auth/session.go\n@@ -1 +1 @@\n+func canAccess() bool { return true }\n"
+	service.run(context.Background(), job, model.ReviewRequest{Diff: diff})
 	if job.Status != "completed" || calls.Load() != 4 {
 		t.Fatalf("status=%q model calls=%d error=%q", job.Status, calls.Load(), job.Error)
 	}
@@ -291,5 +381,44 @@ func TestLargeReviewUsesSpecialistsAndOneSynthesis(t *testing.T) {
 	}
 	if preflightCalls != 1 || len(job.TeamEvents) != 6 {
 		t.Fatalf("preflight calls=%d team events=%d", preflightCalls, len(job.TeamEvents))
+	}
+}
+
+func TestLargeBenignReviewUsesOneModelTurn(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "test", "object": "chat.completion",
+			"choices": []any{map[string]any{
+				"index":         0,
+				"message":       map[string]any{"role": "assistant", "content": "[]"},
+				"finish_reason": "stop",
+			}},
+		})
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	service := NewService(dao.NewJobStore(filepath.Join(root, "jobs")), Config{
+		SkillsDir: "../../skills", MemoryDir: filepath.Join(root, "memory"),
+		TasksDir: filepath.Join(root, "tasks"), BackgroundTasksDir: filepath.Join(root, "background"),
+		TeamMailboxDir: filepath.Join(root, "team"), CronFile: filepath.Join(root, "cron.json"),
+		DeepSeekAPIKey: "test-only", DeepSeekBaseURL: server.URL,
+	})
+	job := &model.ReviewJob{
+		ID: "large-single-review", Source: "inline", Trace: []model.TraceEvent{},
+		Comments: []model.ReviewComment{}, Todos: []model.TodoItem{
+			{Order: 0, Status: "pending"}, {Order: 1, Status: "pending"}, {Order: 2, Status: "pending"},
+		},
+	}
+	var diff strings.Builder
+	diff.WriteString("diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -0,0 +1,300 @@\n")
+	for index := range 300 {
+		fmt.Fprintf(&diff, "+// added line %d\n", index)
+	}
+	service.run(context.Background(), job, model.ReviewRequest{Diff: diff.String()})
+	if job.Status != "completed" || calls.Load() != 1 || len(job.TeamEvents) != 0 {
+		t.Fatalf("status=%q calls=%d team events=%d error=%q", job.Status, calls.Load(), len(job.TeamEvents), job.Error)
 	}
 }

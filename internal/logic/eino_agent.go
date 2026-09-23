@@ -26,16 +26,27 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 	}
 	harness := newReviewHarness()
 	harness.Compactor = NewContextCompactor(cfg)
+	round := 0
+	nextRound := func() int {
+		round++
+		return round
+	}
 	if condition, ok := ctx.Value(goalConditionKey{}).(string); ok && strings.TrimSpace(condition) != "" {
 		controller, err := NewGoalController(condition, PromptGoalEvaluator{Generate: func(ctx context.Context, prompt string) (string, error) {
-			reply, err := retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
-				return chat.Generate(ctx, []*schema.Message{{Role: schema.User, Content: prompt}}, modeloptions.WithMaxTokens(1024))
+			messages := []*schema.Message{{Role: schema.User, Content: prompt}}
+			modelRound := nextRound()
+			retryCount := 0
+			reply, err := generateWithinLengthBudget(messages, 1024, func(input []*schema.Message, budget int) (*schema.Message, error) {
+				return retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
+					attempt := retryCount
+					retryCount++
+					return observedModelRequest(ctx, "goal_evaluator", modelRound, attempt, budget, func() (*schema.Message, error) {
+						return chat.Generate(ctx, input, modeloptions.WithMaxTokens(budget))
+					})
+				})
 			})
 			if err != nil {
 				return "", err
-			}
-			if reply == nil {
-				return "", fmt.Errorf("goal evaluator 返回空响应")
 			}
 			return reply.Content, nil
 		}}, cfg.GoalMaxBlocks)
@@ -55,23 +66,107 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		if err != nil {
 			return nil, err
 		}
-		for _, budget := range []int{4096, 8192} {
-			reply, err := retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
-				return bound.Generate(ctx, messages, modeloptions.WithMaxTokens(budget))
+		modelRound := nextRound()
+		retryCount := 0
+		return generateWithinLengthBudget(messages, 4096, func(input []*schema.Message, budget int) (*schema.Message, error) {
+			return retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
+				attempt := retryCount
+				retryCount++
+				return observedModelRequest(ctx, "deepseek_chat", modelRound, attempt, budget, func() (*schema.Message, error) {
+					return bound.Generate(ctx, input, modeloptions.WithMaxTokens(budget))
+				})
 			})
-			if err != nil {
-				return nil, err
-			}
-			if reply == nil {
-				return nil, fmt.Errorf("模型返回空响应")
-			}
-			if reply.ResponseMeta == nil || reply.ResponseMeta.FinishReason != "length" {
-				return reply, nil
-			}
-		}
-		return nil, fmt.Errorf("模型输出达到 token 上限，拒绝执行不完整工具调用")
+		})
 	}
 	return harness.Run(ctx, prompt)
+}
+
+// A length-truncated tool call is never sent to the harness for execution.
+// A text-only truncation gets one concise re-answer within the same token budget.
+func generateWithinLengthBudget(
+	messages []*schema.Message,
+	budget int,
+	generate func([]*schema.Message, int) (*schema.Message, error),
+) (*schema.Message, error) {
+	reply, err := generate(messages, budget)
+	if err != nil {
+		return nil, err
+	}
+	if reply == nil {
+		return nil, fmt.Errorf("模型返回空响应")
+	}
+	if reply.ResponseMeta == nil || reply.ResponseMeta.FinishReason != "length" {
+		return reply, nil
+	}
+	if len(reply.ToolCalls) > 0 {
+		return nil, fmt.Errorf("模型输出达到 token 上限，拒绝执行不完整工具调用")
+	}
+
+	concise := &schema.Message{
+		Role:    schema.User,
+		Content: "上一轮输出被长度限制截断。请重新给出完整且精简的回答，只保留任务要求的结果；如需工具，仅调用必要的工具。",
+	}
+	input := append(append([]*schema.Message{}, messages...), concise)
+	reply, err = generate(input, budget)
+	if err != nil {
+		return nil, err
+	}
+	if reply == nil {
+		return nil, fmt.Errorf("模型返回空响应")
+	}
+	if reply.ResponseMeta != nil && reply.ResponseMeta.FinishReason == "length" {
+		return nil, fmt.Errorf("模型输出达到 token 上限，精简重答仍被截断")
+	}
+	return reply, nil
+}
+
+// A request span contains provider metadata only; prompts, replies and raw
+// provider errors must not become durable trace data.
+func observedModelRequest(
+	ctx context.Context,
+	name string,
+	round int,
+	retryCount int,
+	budget int,
+	generate func() (*schema.Message, error),
+) (*schema.Message, error) {
+	var span *TraceSpan
+	if recorder := traceRecorderFrom(ctx); recorder != nil {
+		span = recorder.Start(
+			"model_request",
+			name,
+			"inference",
+			fmt.Sprintf("max_tokens=%d", budget),
+			traceParentFrom(ctx),
+		)
+	}
+	reply, err := generate()
+	if span == nil {
+		return reply, err
+	}
+	result := TraceResult{
+		Status:     "succeeded",
+		Output:     "模型请求完成",
+		Origin:     "model",
+		Round:      round,
+		RetryCount: retryCount,
+	}
+	if err != nil || reply == nil {
+		result.Status = "failed"
+		result.Output = "模型请求失败"
+	} else if reply.ResponseMeta != nil {
+		result.FinishReason = reply.ResponseMeta.FinishReason
+		if usage := reply.ResponseMeta.Usage; usage != nil {
+			result.InputTokens = usage.PromptTokens
+			result.OutputTokens = usage.CompletionTokens
+		}
+		if result.FinishReason == "length" {
+			result.Status = "truncated"
+			result.Output = "模型输出达到 token 上限"
+		}
+	}
+	span.End(result)
+	return reply, err
 }
 
 func retryHarnessInference(ctx context.Context, cfg Config, generate func() (*schema.Message, error)) (*schema.Message, error) {
@@ -125,11 +220,17 @@ func isRetryableModelError(err error) bool {
 		"timeout",
 		"temporarily unavailable",
 		"http 429",
+		"status code: 429",
 		"http 500",
+		"status code: 500",
 		"http 502",
+		"status code: 502",
 		"http 503",
+		"status code: 503",
 		"http 504",
+		"status code: 504",
 		"http 529",
+		"status code: 529",
 	} {
 		if strings.Contains(message, marker) {
 			return true

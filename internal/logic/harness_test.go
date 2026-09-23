@@ -85,6 +85,12 @@ func TestServiceHarnessBackgroundCompletionWakesModelAndRecordsTrace(t *testing.
 	ctx, flush := s.withReviewHarness(context.Background(), job, "diff --git a/a.go b/a.go\n+package a")
 	h := newReviewHarness()
 	ctx.Value(harnessSetupKey{}).(func(*ReviewHarness))(h)
+	if h.MaxToolRounds != 4 || h.MaxStalledRounds != 2 {
+		t.Fatalf("review tool limits=%d/%d", h.MaxToolRounds, h.MaxStalledRounds)
+	}
+	if system := h.System(); system != "" {
+		t.Fatalf("system prompt repeats request context: %q", system)
+	}
 	round := 0
 	notified := false
 	h.Model = func(_ context.Context, messages []*schema.Message, _ []*schema.ToolInfo) (*schema.Message, error) {
@@ -105,6 +111,68 @@ func TestServiceHarnessBackgroundCompletionWakesModelAndRecordsTrace(t *testing.
 	flush()
 	if !notified || len(job.Trace) < 2 {
 		t.Fatalf("notified=%v trace=%#v", notified, job.Trace)
+	}
+}
+
+func TestHarnessStopsRepeatedFailedToolRoundsWithFinalAnswer(t *testing.T) {
+	h := newReviewHarness()
+	h.MaxStalledRounds = 2
+	h.add("broken", "always fails", map[string]any{"type": "object"}, func(context.Context, map[string]any) (string, error) {
+		return "", errors.New("unavailable")
+	})
+	rounds := 0
+	h.Model = func(_ context.Context, messages []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
+		rounds++
+		if rounds <= 2 {
+			if len(tools) == 0 {
+				t.Fatal("tool budget exhausted too early")
+			}
+			return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{
+				testToolCall(string(rune('a'+rounds)), "broken", `{}`),
+			}}, nil
+		}
+		if len(tools) != 0 || !strings.Contains(messages[len(messages)-1].Content, "Tool error:") {
+			t.Fatalf("final model turn still has tools or lost errors: tools=%d messages=%#v", len(tools), messages)
+		}
+		return &schema.Message{Role: schema.Assistant, Content: "[]"}, nil
+	}
+	answer, err := h.Run(context.Background(), "review")
+	if err != nil || answer != "[]" || rounds != 3 {
+		t.Fatalf("answer=%q rounds=%d err=%v", answer, rounds, err)
+	}
+}
+
+func TestHarnessToolRoundCapOnlyWhenConfigured(t *testing.T) {
+	h := newReviewHarness()
+	if h.MaxToolRounds != 0 || h.MaxStalledRounds != 0 {
+		t.Fatal("generic harness unexpectedly has review tool limits")
+	}
+	h.MaxToolRounds = 2
+	h.add("evidence", "read evidence", map[string]any{"type": "object"}, func(context.Context, map[string]any) (string, error) {
+		return "fact", nil
+	})
+	rounds := 0
+	h.Model = func(_ context.Context, _ []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
+		rounds++
+		switch rounds {
+		case 1:
+			return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{
+				testToolCall("first", "evidence", `{"step":1}`),
+			}}, nil
+		case 2:
+			return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{
+				testToolCall("second", "evidence", `{"step":2}`),
+			}}, nil
+		default:
+			if len(tools) != 0 {
+				t.Fatalf("tools remain available after configured cap: %d", len(tools))
+			}
+			return &schema.Message{Role: schema.Assistant, Content: "[]"}, nil
+		}
+	}
+	answer, err := h.Run(context.Background(), "review")
+	if err != nil || answer != "[]" || rounds != 3 {
+		t.Fatalf("answer=%q rounds=%d err=%v", answer, rounds, err)
 	}
 }
 

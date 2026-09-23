@@ -19,6 +19,7 @@ type Config struct {
 	CronFile             string
 	TeamMailboxDir       string
 	TeamMaxConcurrency   int
+	ReviewModeOverride   string // Only set by controlled evaluations; empty uses automatic routing.
 	ModelMaxRetries      int
 	ModelRetryBaseMs     int
 	CronPollIntervalMs   int

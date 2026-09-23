@@ -54,12 +54,23 @@ func TestSkillLoaderRejectsUnknownSkill(t *testing.T) {
 
 func TestReviewPromptLoadsOnlySelectedSkill(t *testing.T) {
 	prompt := BuildReviewSubagentPrompt("审查正确性", ReviewPromptContext{
-		Catalog:      "- code-review: review",
+		Catalog:      "- code-review: review; unused catalog text",
 		SkillContent: "full skill",
 		Memories:     "- [project] error-style: wrap errors",
 	}, "diff --git")
-	if !strings.Contains(prompt, "tool_result: load_skill(\"code-review\")") || !strings.Contains(prompt, "full skill") || !strings.Contains(prompt, "wrap errors") {
+	if !strings.Contains(prompt, "full skill") || !strings.Contains(prompt, "wrap errors") ||
+		strings.Contains(prompt, "unused catalog text") {
 		t.Fatalf("prompt did not include loaded skill: %q", prompt)
+	}
+	synthesis := BuildReviewSynthesisPrompt(ReviewPromptContext{
+		Catalog:      "unused catalog text",
+		SkillContent: "full skill",
+		Memories:     "unused memory text",
+		Evidence:     `{"checks":{"syntax_check":"not_run"}}`,
+	}, `[{"file":"a.go","line":1}]`)
+	if strings.Contains(synthesis, "full skill") || strings.Contains(synthesis, "unused catalog text") ||
+		strings.Contains(synthesis, "unused memory text") || !strings.Contains(synthesis, "syntax_check") {
+		t.Fatalf("synthesis prompt contains redundant context or loses evidence: %q", synthesis)
 	}
 }
 

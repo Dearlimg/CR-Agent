@@ -9,11 +9,35 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+type terminalSnapshotStore struct {
+	dao.Store
+	mu      sync.Mutex
+	invalid bool
+}
+
+func (s *terminalSnapshotStore) Save(job *model.ReviewJob) error {
+	if reviewTerminal(job.Status) {
+		s.mu.Lock()
+		if job.FinishedAt == nil || !job.UpdatedAt.Equal(*job.FinishedAt) || len(job.Trace) == 0 {
+			s.invalid = true
+		}
+		s.mu.Unlock()
+	}
+	return s.Store.Save(job)
+}
+
+func (s *terminalSnapshotStore) sawInvalidTerminalSave() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.invalid
+}
 
 func TestReviewHTTPCompletesWithLocalModelAndHarness(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -22,7 +46,8 @@ func TestReviewHTTPCompletesWithLocalModelAndHarness(t *testing.T) {
 	}))
 	defer provider.Close()
 	root := t.TempDir()
-	svc := logic.NewService(dao.NewJobStore(filepath.Join(root, "jobs")), logic.Config{
+	store := &terminalSnapshotStore{Store: dao.NewJobStore(filepath.Join(root, "jobs"))}
+	svc := logic.NewService(store, logic.Config{
 		SkillsDir: "../../skills", MemoryDir: filepath.Join(root, "memory"), TasksDir: filepath.Join(root, "tasks"),
 		BackgroundTasksDir: filepath.Join(root, "background"), TeamMailboxDir: filepath.Join(root, "team"),
 		CronFile: filepath.Join(root, "cron.json"), DeepSeekAPIKey: "test-only", DeepSeekBaseURL: provider.URL,
@@ -82,9 +107,60 @@ func TestReviewHTTPCompletesWithLocalModelAndHarness(t *testing.T) {
 					t.Fatalf("invalid trace duration: %#v", event)
 				}
 			}
+			if store.sawInvalidTerminalSave() {
+				t.Fatal("terminal status was saved before final timestamps and trace")
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("review did not complete")
+}
+
+type sequencedReviewStore struct {
+	snapshots []*model.ReviewJob
+	reads     int
+}
+
+func (s *sequencedReviewStore) Save(*model.ReviewJob) error { return nil }
+
+func (s *sequencedReviewStore) Get(string) (*model.ReviewJob, bool) {
+	index := s.reads
+	s.reads++
+	if index >= len(s.snapshots) {
+		index = len(s.snapshots) - 1
+	}
+	return s.snapshots[index], true
+}
+
+func (s *sequencedReviewStore) RecordToolCall(string, string, string, string, string, string, string, int64) error {
+	return nil
+}
+
+func TestReviewEventsWaitForFinalSnapshot(t *testing.T) {
+	started := time.Now().UTC().Add(-time.Second)
+	finished := time.Now().UTC()
+	store := &sequencedReviewStore{snapshots: []*model.ReviewJob{
+		{ID: "review-1", Status: "completed", StartedAt: started},
+		{
+			ID: "review-1", Status: "completed", StartedAt: started,
+			FinishedAt: &finished, UpdatedAt: finished,
+			Trace: []model.TraceEvent{{ID: "final-trace", Tool: "task_complete"}},
+		},
+	}}
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/reviews/review-1/events", nil)
+	context.Params = gin.Params{{Key: "id", Value: "review-1"}}
+	(&ReviewController{Service: &logic.Service{Store: store}}).events(context)
+
+	if store.reads != 2 {
+		t.Fatalf("read count = %d, want 2", store.reads)
+	}
+	if got := strings.Count(response.Body.String(), "data:"); got != 1 {
+		t.Fatalf("SSE events = %d, want 1: %s", got, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"finished_at"`) || !strings.Contains(response.Body.String(), "final-trace") {
+		t.Fatalf("SSE did not contain the final snapshot: %s", response.Body.String())
+	}
 }

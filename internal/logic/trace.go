@@ -11,15 +11,20 @@ type traceRecorderKey struct{}
 type traceParentKey struct{}
 
 type TraceResult struct {
-	Status      string
-	Output      string
-	ModelReply  string
-	Err         error
-	Origin      string
-	CacheHit    bool
-	ToolCallID  string
-	ToolVersion string
-	InputDigest string
+	Status       string
+	Output       string
+	ModelReply   string
+	Err          error
+	Round        int
+	RetryCount   int
+	InputTokens  int
+	OutputTokens int
+	FinishReason string
+	Origin       string
+	CacheHit     bool
+	ToolCallID   string
+	ToolVersion  string
+	InputDigest  string
 }
 
 type TraceRecorder struct {
@@ -132,24 +137,29 @@ func (s *TraceSpan) endAt(ended time.Time, result TraceResult) int64 {
 			}
 		}
 		event := model.TraceEvent{
-			ID:          s.id,
-			ParentID:    s.parentID,
-			Kind:        s.kind,
-			Status:      status,
-			Origin:      result.Origin,
-			CacheHit:    result.CacheHit,
-			ToolCallID:  result.ToolCallID,
-			ToolVersion: result.ToolVersion,
-			InputDigest: result.InputDigest,
-			Tool:        s.name,
-			Input:       s.input,
-			Output:      output,
-			ModelReply:  result.ModelReply,
-			At:          ended,
-			StartedAt:   s.started,
-			EndedAt:     &ended,
-			DurationMs:  duration,
-			Phase:       s.phase,
+			ID:           s.id,
+			ParentID:     s.parentID,
+			Kind:         s.kind,
+			Status:       status,
+			Round:        result.Round,
+			RetryCount:   result.RetryCount,
+			InputTokens:  result.InputTokens,
+			OutputTokens: result.OutputTokens,
+			FinishReason: result.FinishReason,
+			Origin:       result.Origin,
+			CacheHit:     result.CacheHit,
+			ToolCallID:   result.ToolCallID,
+			ToolVersion:  result.ToolVersion,
+			InputDigest:  result.InputDigest,
+			Tool:         s.name,
+			Input:        s.input,
+			Output:       output,
+			ModelReply:   result.ModelReply,
+			At:           ended,
+			StartedAt:    s.started,
+			EndedAt:      &ended,
+			DurationMs:   duration,
+			Phase:        s.phase,
 		}
 		s.recorder.mu.Lock()
 		s.recorder.events = append(s.recorder.events, event)

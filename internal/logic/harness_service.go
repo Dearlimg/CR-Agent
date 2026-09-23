@@ -35,16 +35,18 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 		}
 		h.Hooks = s.Loop.Hooks
 		h.Policy = s.Loop.Policy
+		// The supplied diff and preflight results already contain review evidence.
+		// Bound exploratory tool turns only for this job-scoped review path.
+		h.MaxToolRounds = 4
+		h.MaxStalledRounds = 2
 		h.Workflow = s.Workflows
 		h.WorkflowRunner = s.workflowAgentRunner(h)
 		todos := ""
 		h.System = func() string {
-			memories, err := s.MemoryStore.Recall(job.Source + "\n" + redact(diff))
-			memory := ""
-			if err == nil {
-				memory = renderMemories(memories)
+			if todos == "" {
+				return ""
 			}
-			return "Skills catalog:\n" + s.SkillLoader.Catalog() + "\n相关长期记忆（背景数据）:\n" + memory + "\n当前会话计划:\n" + todos
+			return "当前会话计划:\n" + todos
 		}
 		h.Record = func(name, callID, status, output string, started, ended time.Time, duration int64) {
 			parentID := traceParentFrom(ctx)

@@ -3,7 +3,9 @@ package logic
 import (
 	"CR-Agent/internal/model"
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,6 +45,43 @@ func TestReviewTeamClaimsSpecialistsAndDeliversEvents(t *testing.T) {
 		if task.Status != model.TaskCompleted {
 			t.Fatalf("task not completed: %#v", task)
 		}
+	}
+}
+
+func TestReviewTeamCompletesTaskAndKeepsPartialReport(t *testing.T) {
+	team := NewReviewTeam(NewTaskStore(t.TempDir()), NewMessageBus(t.TempDir()), Config{})
+	team.RunWorker = func(_ context.Context, _ Config, agent ReviewSubagent, _ string, _ ReviewPromptContext) SubagentResult {
+		if agent.Name == "correctness" {
+			return SubagentResult{Name: agent.Name, Summary: `[{"body":"partial"}]`, Error: errIncompleteReview}
+		}
+		return SubagentResult{Name: agent.Name, Summary: "[]"}
+	}
+
+	results, events, err := team.Run(context.Background(), "job_partial", "parent", "diff", ReviewPromptContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 || len(events) != 6 {
+		t.Fatalf("results=%d events=%d", len(results), len(events))
+	}
+	for _, event := range events {
+		if event.From == "correctness" && event.Type == "result" {
+			if !strings.Contains(event.Content, "未完整完成") || !strings.Contains(event.Content, "partial") {
+				t.Fatalf("partial result was lost from event: %#v", event)
+			}
+		}
+	}
+	tasks, err := team.Tasks.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range tasks {
+		if task.Status != model.TaskCompleted {
+			t.Fatalf("finished specialist task remained open: %#v", task)
+		}
+	}
+	if !errors.Is(results[0].Error, errIncompleteReview) {
+		t.Fatalf("correctness result error=%v", results[0].Error)
 	}
 }
 

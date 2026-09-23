@@ -5,9 +5,20 @@ import (
 	"fmt"
 	"github.com/joho/godotenv"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+var quotedCredentialValuePattern = regexp.MustCompile(
+	`(?i)((?:api[_-]?key|secret|password|token|authorization)["']?\s*(?::=|=|:)\s*)(["'])([^"'\r\n]+)(["'])`,
+)
+
+var bareCredentialValuePattern = regexp.MustCompile(
+	`(?i)((?:api[_-]?key|secret|password|token|authorization)["']?\s*)(:=|=|:)(\s*)([A-Za-z0-9_\-/+.][A-Za-z0-9_\-/+=.]*)`,
+)
+
+var bearerCredentialValuePattern = regexp.MustCompile(`(?i)(\bBearer\s+)([A-Za-z0-9._~+/-]+)`)
 
 type Config struct {
 	Port                 string
@@ -95,15 +106,50 @@ func intEnv(get func(string, string) string, key string, fallback int) int {
 	}
 	return value
 }
+func redactReviewInput(s string) string {
+	s = quotedCredentialValuePattern.ReplaceAllString(s, "${1}${2}[REDACTED]${4}")
+	s = bearerCredentialValuePattern.ReplaceAllString(s, "${1}[REDACTED]")
+	s = bareCredentialValuePattern.ReplaceAllStringFunc(s, func(match string) string {
+		parts := bareCredentialValuePattern.FindStringSubmatch(match)
+		if len(parts) != 5 {
+			return "[REDACTED]"
+		}
+		// Preserve Go identifiers and call expressions. Quoted literals are still
+		// masked above, and recognizable provider tokens are masked below.
+		if parts[2] == ":=" && simpleCodeExpression(parts[4]) {
+			return match
+		}
+		return parts[1] + parts[2] + parts[3] + "[REDACTED]"
+	})
+	return providerTokenPattern.ReplaceAllString(s, "[REDACTED]")
+}
+
 func redact(s string) string {
 	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		low := strings.ToLower(l)
-		if strings.Contains(low, "api_key") || strings.Contains(low, "api-key") || strings.Contains(low, "apikey") || strings.Contains(low, "password") || strings.Contains(low, "secret") || strings.Contains(low, "authorization") || strings.Contains(low, "token") || providerTokenPattern.MatchString(l) || credentialPattern.MatchString(l) {
-			lines[i] = "[REDACTED]"
+	for index, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "api_key") || strings.Contains(lower, "api-key") ||
+			strings.Contains(lower, "apikey") || strings.Contains(lower, "password") ||
+			strings.Contains(lower, "secret") || strings.Contains(lower, "authorization") ||
+			strings.Contains(lower, "token") || providerTokenPattern.MatchString(line) ||
+			credentialPattern.MatchString(line) {
+			lines[index] = "[REDACTED]"
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func simpleCodeExpression(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
+			char >= '0' && char <= '9' || char == '_' || char == '.') {
+			return false
+		}
+	}
+	return true
 }
 func jsonString(v any) string { b, _ := json.Marshal(v); return string(b) }
 func envExample()             { _ = fmt.Sprintf("") }

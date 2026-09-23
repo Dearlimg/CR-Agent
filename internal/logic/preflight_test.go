@@ -60,11 +60,11 @@ func TestRedactionPreservesPatchStructureAndModelJSON(t *testing.T) {
 		"@@ -0,0 +1 @@\n+api-key=definitely-fake-value-123\n"
 	sanitized := sanitizeDiff(diff)
 	if !strings.Contains(sanitized, "diff --git a/secret.go b/secret.go") ||
-		!strings.Contains(sanitized, "+[REDACTED]") ||
+		!strings.Contains(sanitized, "+api-key=[REDACTED]") ||
 		strings.Contains(sanitized, "definitely-fake-value-123") {
 		t.Fatalf("sanitized diff=%q", sanitized)
 	}
-	reply := `[{"file":"secret.go","line":1,"severity":"high","confidence":"low","body":"hardcoded api-key=definitely-fake-value-123","suggestion":"remove it"}]`
+	reply := `[{"file":"secret.go","line":1,"severity":"high","confidence":"low","body":"hardcoded api-key=definitely-fake-value-123","evidence":"api-key=definitely-fake-value-123","trigger":"the code runs","impact":"credential leaks","suggestion":"remove it"}]`
 	safe := sanitizeModelReply(reply)
 	if strings.Contains(safe, "definitely-fake-value-123") || len(parseFindings(safe)) != 1 {
 		t.Fatalf("sanitized reply=%q", safe)
@@ -97,6 +97,9 @@ func TestMalformedModelFindingsAreNotReportedAsNoIssues(t *testing.T) {
 	}
 	if findings, err := parseFindingsStrict("[]"); err != nil || len(findings) != 0 {
 		t.Fatalf("empty JSON array findings=%#v err=%v", findings, err)
+	}
+	if _, err := parseFindingsStrict(`[{"file":"a.go","line":1,"severity":"high","confidence":"high","body":"incomplete"}]`); err == nil {
+		t.Fatal("finding missing evidence and impact fields must be treated as incomplete")
 	}
 }
 
@@ -259,18 +262,73 @@ func TestReviewRoutingRetainsRiskAfterDiffRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(artifacts.SecretFindings) != 0 || !strings.Contains(artifacts.SanitizedDiff, "+[REDACTED]") {
+	if len(artifacts.SecretFindings) != 0 || !strings.Contains(artifacts.SanitizedDiff, "+token := value") {
 		t.Fatalf("unexpected redaction/scanner result: findings=%#v diff=%q", artifacts.SecretFindings, artifacts.SanitizedDiff)
 	}
 	if mode := chooseReviewMode(artifacts); mode != "specialists" {
-		t.Fatalf("redacted sensitive source routed to %q", mode)
+		t.Fatalf("sensitive source routed to %q", mode)
 	}
 }
 
-func TestSmallReviewUsesOneModelTurnAndSharedPreflight(t *testing.T) {
+func TestSpecialistCoverageDistinguishesEmptyResponsesFromMissingReviews(t *testing.T) {
+	scope := model.ReviewScope{Checks: []model.ReviewCheck{}}
+	updateSpecialistCoverageCheck(&scope, []SubagentResult{
+		{Name: "correctness", Summary: "[]"},
+		{Name: "security", Summary: `[{"file":"a.go","line":1,"severity":"high","confidence":"high","body":"issue","evidence":"line","trigger":"call","impact":"bad","suggestion":"fix"}]`},
+		{Name: "dependency", Summary: `[{"file":"b.go","line":2,"severity":"medium","confidence":"medium","body":"partial","evidence":"line","trigger":"call","impact":"bad","suggestion":"fix"}]`, Error: errIncompleteReview},
+	})
+	for _, check := range scope.Checks {
+		if check.Name != "specialist_coverage" {
+			continue
+		}
+		if check.Status != "incomplete" || !strings.Contains(check.Message, "有效响应=2/3") ||
+			!strings.Contains(check.Message, "无候选=1") || !strings.Contains(check.Message, "含候选=2") ||
+			!strings.Contains(check.Message, "不完整=1") {
+			t.Fatalf("unexpected specialist coverage check: %#v", check)
+		}
+		return
+	}
+	t.Fatal("specialist_coverage check was not recorded")
+}
+
+func TestReviewPromptRedactionKeepsPasswordLoggingCode(t *testing.T) {
+	const credential = "not-a-real-credential-123"
+	const bearer = "opaque-bearer-value-456"
+	diff := "diff --git a/internal/auth/login.go b/internal/auth/login.go\n" +
+		"--- a/internal/auth/login.go\n+++ b/internal/auth/login.go\n" +
+		"@@ -0,0 +1,4 @@\n" +
+		"+log.Printf(\"password=%s\", password)\n" +
+		"+password := \"" + credential + "\"\n" +
+		"+req.Header.Set(\"Authorization\", \"Bearer " + bearer + "\")\n" +
+		"+token := unknownValue\n"
+
+	forwarded := redactReviewInput(sanitizeDiff(diff))
+	if !strings.Contains(forwarded, `+log.Printf("password=%s", password)`) {
+		t.Fatalf("password logging code disappeared from review input: %q", forwarded)
+	}
+	for _, value := range []string{credential, bearer} {
+		if strings.Contains(forwarded, value) {
+			t.Fatalf("credential value remained in review input: %q", forwarded)
+		}
+	}
+	for _, code := range []string{
+		`+password := "[REDACTED]"`,
+		`+req.Header.Set("Authorization", "Bearer [REDACTED]")`,
+		`+token := unknownValue`,
+	} {
+		if !strings.Contains(forwarded, code) {
+			t.Fatalf("redaction lost code context %q: %q", code, forwarded)
+		}
+	}
+	if !strings.Contains(redact(`log.Printf("password=%s", password)`), "[REDACTED]") {
+		t.Fatal("durable redaction must continue to mask password-labelled log data")
+	}
+}
+
+func TestSmallReviewUsesReviewAndVerificationTurnsAndSharedPreflight(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+		call := calls.Add(1)
 		var request struct {
 			Tools []struct {
 				Function struct {
@@ -288,13 +346,17 @@ func TestSmallReviewUsesOneModelTurnAndSharedPreflight(t *testing.T) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
+		reply := `[ {"file":"main.go","line":2,"severity":"medium","confidence":"low","body":"示例问题","evidence":"func f() {}","trigger":"调用该函数","impact":"产生示例影响","suggestion":"修复"} ]`
+		if call > 1 {
+			reply = `{"is_real":true,"reason":"该候选符合测试场景"}`
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id": "test", "object": "chat.completion",
 			"choices": []any{map[string]any{
 				"index": 0,
 				"message": map[string]any{
 					"role":    "assistant",
-					"content": `[ {"file":"main.go","line":2,"severity":"medium","confidence":"low","body":"示例问题","suggestion":"修复"} ]`,
+					"content": reply,
 				},
 				"finish_reason": "stop",
 			}},
@@ -321,8 +383,8 @@ func TestSmallReviewUsesOneModelTurnAndSharedPreflight(t *testing.T) {
 	if job.Status != "completed" {
 		t.Fatalf("status=%q error=%q", job.Status, job.Error)
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("model calls=%d, want 1", calls.Load())
+	if calls.Load() != 2 {
+		t.Fatalf("model calls=%d, want 2", calls.Load())
 	}
 	if len(job.Comments) != 1 || job.Comments[0].File != "main.go" || job.Comments[0].Line != 2 {
 		t.Fatalf("comments=%#v", job.Comments)

@@ -427,10 +427,10 @@ func sanitizeDiff(diff string) string {
 			continue
 		}
 		if len(line) > 0 && (line[0] == '+' || line[0] == '-' || line[0] == ' ') {
-			lines[index] = line[:1] + redact(line[1:])
+			lines[index] = line[:1] + redactReviewInput(line[1:])
 			continue
 		}
-		lines[index] = redact(line)
+		lines[index] = redactReviewInput(line)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -500,7 +500,7 @@ func isSensitiveReviewPath(name string) bool {
 }
 
 var sensitiveAddedCodePattern = regexp.MustCompile(
-	`(?i)\b(?:authorization|authentication|password|credentials?|permissions?|jwt|csrf|transaction|rollback|execcontext|idempotency|lease)\b`,
+	`(?i)\b(?:authorization|authentication|password|credentials?|tokens?|permissions?|jwt|csrf|transaction|rollback|execcontext|idempotency|lease)\b`,
 )
 
 func hasSensitiveAddedCode(diff string) bool {

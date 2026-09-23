@@ -46,6 +46,12 @@ type ReviewHarness struct {
 	archives         map[string]string
 }
 
+type reviewPromptContextKey struct{}
+
+func withReviewPrompt(ctx context.Context) context.Context {
+	return context.WithValue(ctx, reviewPromptContextKey{}, true)
+}
+
 func newReviewHarness() *ReviewHarness {
 	mcp := NewMCPManager(DefaultMCPHostPolicy())
 	_ = mcp.RegisterServer("docs", newDocsMCPServer)
@@ -184,7 +190,11 @@ func (h *ReviewHarness) Run(ctx context.Context, prompt string) (string, error) 
 	}
 	h.Hooks.Emit(ctx, HookLoopStart, HookContext{Reason: "model tool loop"})
 	defer h.Hooks.Emit(ctx, HookLoopStop, HookContext{Reason: "model tool loop"})
-	submitted := h.Hooks.Emit(ctx, HookUserPromptSubmit, HookContext{Reason: redact(prompt)})
+	modelPrompt := redact(prompt)
+	if preserveCode, ok := ctx.Value(reviewPromptContextKey{}).(bool); ok && preserveCode {
+		modelPrompt = redactReviewInput(prompt)
+	}
+	submitted := h.Hooks.Emit(ctx, HookUserPromptSubmit, HookContext{Reason: modelPrompt})
 	if submitted.Error != nil {
 		return "", submitted.Error
 	}

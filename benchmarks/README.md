@@ -90,9 +90,8 @@ the live benchmark's resource guard.
 - No real PR history or full repository snapshot; only the provided diff is
   reviewed.
 - No external semantic judge or human adjudication of generated findings.
-- The password-in-log fixture also probes the current redaction tradeoff: whole
-  lines containing password-like labels are masked before model inference, so
-  the reviewer may be unable to report that exposure.
+- The password-in-log fixture checks that review redaction keeps password
+  logging code visible while masking credential values before inference.
 - No repeated runs, cross-language samples, latency target, or dollar-cost
   comparison yet.
 

@@ -62,9 +62,13 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		harness.tools = map[string]harnessTool{}
 	}
 	harness.Model = func(ctx context.Context, messages []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
-		bound, err := chat.WithTools(tools)
-		if err != nil {
-			return nil, err
+		var bound modeloptions.ToolCallingChatModel = chat
+		if len(tools) > 0 {
+			var err error
+			bound, err = chat.WithTools(tools)
+			if err != nil {
+				return nil, err
+			}
 		}
 		modelRound := nextRound()
 		retryCount := 0

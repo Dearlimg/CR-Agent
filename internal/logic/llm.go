@@ -51,10 +51,58 @@ func parseFindingsStrict(raw string) ([]ReviewFinding, error) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&fs); err == nil && fs != nil {
 		if err := decoder.Decode(&struct{}{}); err == io.EOF {
+			for index, finding := range fs {
+				if err := validateFindingShape(finding); err != nil {
+					return nil, fmt.Errorf("%w：finding %d %v", errIncompleteReview, index+1, err)
+				}
+			}
 			return fs, nil
 		}
 	}
 	return nil, fmt.Errorf("%w：模型输出不是有效 finding JSON 数组", errIncompleteReview)
+}
+
+func validateFindingShape(finding ReviewFinding) error {
+	missing := []string{}
+	if strings.TrimSpace(finding.File) == "" {
+		missing = append(missing, "file")
+	}
+	if finding.Line <= 0 {
+		missing = append(missing, "line")
+	}
+	if !validFindingLevel(finding.Severity) {
+		missing = append(missing, "severity")
+	}
+	if !validFindingLevel(finding.Confidence) {
+		missing = append(missing, "confidence")
+	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "body", value: finding.Body},
+		{name: "evidence", value: finding.Evidence},
+		{name: "trigger", value: finding.Trigger},
+		{name: "impact", value: finding.Impact},
+		{name: "suggestion", value: finding.Suggestion},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			missing = append(missing, field.name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("缺少必需字段：%s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func validFindingLevel(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "high", "medium", "low":
+		return true
+	default:
+		return false
+	}
 }
 
 // sanitizeModelReply keeps valid finding JSON parseable while removing values
@@ -62,7 +110,7 @@ func parseFindingsStrict(raw string) ([]ReviewFinding, error) {
 func sanitizeModelReply(raw string) string {
 	findings := parseFindings(raw)
 	if findings == nil {
-		return redact(raw)
+		return redactReviewInput(raw)
 	}
 	for index := range findings {
 		findings[index].File = redactFindingText(findings[index].File)
@@ -74,7 +122,7 @@ func sanitizeModelReply(raw string) string {
 	}
 	encoded, err := json.Marshal(findings)
 	if err != nil {
-		return redact(raw)
+		return redactReviewInput(raw)
 	}
 	return string(encoded)
 }

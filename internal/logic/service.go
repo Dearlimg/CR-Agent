@@ -224,7 +224,6 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	j.UpdatedAt = time.Now().UTC()
 	_ = s.Store.Save(j)
 	defer func() {
-		recorder.Flush()
 		if j.ReviewOutcome == "" {
 			if j.Status == "failed" {
 				j.ReviewOutcome = "failed"
@@ -235,6 +234,8 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		if j.ReviewOutcome == "incomplete" && j.Status == "completed" {
 			j.Status = "completed_with_warnings"
 		}
+		s.completeReviewTask(j, recorder)
+		recorder.Flush()
 		finished := time.Now().UTC()
 		j.FinishedAt = &finished
 		j.UpdatedAt = finished
@@ -376,6 +377,9 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		return
 	}
 	j.TeamEvents = append(j.TeamEvents, teamEvents...)
+	if reviewMode == "specialists" {
+		updateSpecialistCoverageCheck(&j.ReviewScope, subResults)
+	}
 	setTodoStatus(j, 1, "completed")
 	for index := range subResults {
 		for _, event := range teamEvents {
@@ -389,7 +393,7 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	for _, result := range subResults {
 		if result.Error != nil {
 			if isIncompleteReviewError(result.Error) {
-				incompleteReason = "专项审查输出无效或被截断，审查覆盖不完整。"
+				incompleteReason = fmt.Sprintf("专项审查 %s 覆盖不完整：%s", result.Name, redact(result.Error.Error()))
 			} else {
 				setReviewFailure(j, result.Error, "专项审查模型调用失败："+redact(result.Error.Error()))
 				updateReviewCheck(&j.ReviewScope, "finding_verification", "failed", "专项审查模型调用失败")
@@ -402,17 +406,21 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 			traceID = id(toolName + j.ID)
 		}
 		if result.Error != nil {
-			_ = s.Store.RecordToolCall(j.ID, traceID, toolName, "failed", "独立专项审查", "", result.Error.Error(), result.DurationMs)
+			_ = s.Store.RecordToolCall(j.ID, traceID, toolName, "failed", "独立专项审查", "", redact(result.Error.Error()), result.DurationMs)
 			if s.Loop.Hooks != nil {
 				s.Loop.Hooks.Emit(ctx, HookToolError, HookContext{JobID: j.ID, Tool: toolName, Permission: PermissionLLMInference, Reason: "委派专项审查", Error: result.Error, DurationMs: result.DurationMs})
 			}
+		} else {
+			_ = s.Store.RecordToolCall(j.ID, traceID, toolName, "succeeded", "独立专项审查", "子 Agent 审查完成", "", result.DurationMs)
+			if s.Loop.Hooks != nil {
+				s.Loop.Hooks.Emit(ctx, HookPostToolUse, HookContext{JobID: j.ID, Tool: toolName, Permission: PermissionLLMInference, Reason: "委派专项审查", Output: "子 Agent 审查完成", DurationMs: result.DurationMs})
+			}
+		}
+		if _, parseErr := parseFindingsStrict(result.Summary); parseErr != nil {
+			incompleteReason = "专项审查报告无法解析，审查覆盖不完整。"
 			continue
 		}
-		_ = s.Store.RecordToolCall(j.ID, traceID, toolName, "succeeded", "独立专项审查", "子 Agent 审查完成", "", result.DurationMs)
-		if s.Loop.Hooks != nil {
-			s.Loop.Hooks.Emit(ctx, HookPostToolUse, HookContext{JobID: j.ID, Tool: toolName, Permission: PermissionLLMInference, Reason: "委派专项审查", Output: "子 Agent 审查完成", DurationMs: result.DurationMs})
-		}
-		report := result.Name + "\n" + truncateSubagentReport(result.Summary, 8000)
+		report := result.Name + "\n" + result.Summary
 		contextMessages = append(contextMessages, ContextMessage{
 			Role:      ContextRoleToolResult,
 			ToolUseID: toolName,
@@ -451,7 +459,7 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		s.recordCompactionEvents(j, recorder, compacted.Events)
 		prompt := BuildReviewSynthesisPrompt(promptContext, renderContextMessages(compacted.Messages))
 		modelSpan := recorder.Start("model", "deepseek-review", "reasoning", "prompt diff summary", "")
-		modelCtx := withGoalCondition(reviewCtx, req.Goal)
+		modelCtx := withReviewPrompt(withGoalCondition(reviewCtx, req.Goal))
 		modelCtx = withTraceParent(modelCtx, modelSpan.ID())
 		reply, synthesisErr = EinoReviewAgent(modelCtx, s.Config, prompt)
 		reply = sanitizeModelReply(reply)
@@ -569,7 +577,6 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		return
 	}
 	s.extractReviewMemories(ctx, j, req)
-	s.completeReviewTask(j, recorder)
 	if j.ReviewOutcome == "incomplete" {
 		j.Status = "completed_with_warnings"
 	} else {
@@ -586,6 +593,45 @@ func updateReviewCheck(scope *model.ReviewScope, name, status, message string) {
 		}
 	}
 	scope.Checks = append(scope.Checks, model.ReviewCheck{Name: name, Status: status, Message: message})
+}
+
+func updateSpecialistCoverageCheck(scope *model.ReviewScope, results []SubagentResult) {
+	validReports := 0
+	emptyReports := 0
+	reportsWithCandidates := 0
+	incompleteReports := 0
+	for _, result := range results {
+		findings, err := parseFindingsStrict(result.Summary)
+		if err != nil {
+			incompleteReports++
+			continue
+		}
+		if result.Error != nil {
+			incompleteReports++
+			if len(findings) > 0 {
+				reportsWithCandidates++
+			}
+			continue
+		}
+		validReports++
+		if len(findings) == 0 {
+			emptyReports++
+		} else {
+			reportsWithCandidates++
+		}
+	}
+	if validReports != len(ReviewSpecialists()) {
+		incompleteReports += len(ReviewSpecialists()) - validReports - incompleteReports
+	}
+	status := "passed"
+	if incompleteReports > 0 {
+		status = "incomplete"
+	}
+	message := fmt.Sprintf(
+		"有效响应=%d/%d；无候选=%d；含候选=%d；不完整=%d",
+		validReports, len(ReviewSpecialists()), emptyReports, reportsWithCandidates, incompleteReports,
+	)
+	updateReviewCheck(scope, "specialist_coverage", status, message)
 }
 
 func preflightIncompleteReason(artifacts ReviewArtifacts) string {
@@ -692,7 +738,7 @@ func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJo
 	}
 	modelCtx := ctx
 	if span != nil {
-		modelCtx = withTraceParent(ctx, span.ID())
+		modelCtx = withTraceParent(modelCtx, span.ID())
 	}
 	reply, err := EinoReviewAgent(modelCtx, s.Config, prompt)
 	reply = redact(reply)
@@ -736,9 +782,9 @@ func (s *Service) summarizeReviewContext(ctx context.Context, activeRequest, his
 	if recorder != nil {
 		span = recorder.Start("model", "context_summary", "context", activeRequest, "")
 	}
-	modelCtx := ctx
+	modelCtx := withReviewPrompt(ctx)
 	if span != nil {
-		modelCtx = withTraceParent(ctx, span.ID())
+		modelCtx = withTraceParent(modelCtx, span.ID())
 	}
 	reply, err := EinoReviewAgent(modelCtx, s.Config, prompt)
 	reply = redact(reply)

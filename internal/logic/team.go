@@ -171,15 +171,16 @@ func (t *ReviewTeam) Run(ctx context.Context, jobID, parentTaskID, diff string, 
 			}
 			result := t.RunWorker(ctx, t.Cfg, a, diff, prompt)
 			results[i] = result
-			content := result.Summary
-			if result.Error != nil {
-				content = result.Error.Error()
-			} else if _, _, err := t.Tasks.Complete(taskID, taskOwner); err != nil {
+			if _, _, err := t.Tasks.Complete(taskID, taskOwner); err != nil {
 				errMu.Lock()
 				if firstErr == nil {
 					firstErr = err
 				}
 				errMu.Unlock()
+			}
+			content := result.Summary
+			if result.Error != nil {
+				content = "专项审查未完整完成：" + result.Error.Error() + "\n部分候选：\n" + result.Summary
 			}
 			if err := t.Bus.Send(model.TeamEvent{From: a.Name, To: "lead", Type: "result", TaskID: jobID, Content: content}); err != nil {
 				errMu.Lock()

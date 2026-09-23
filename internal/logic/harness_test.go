@@ -415,3 +415,30 @@ func TestHarnessCompactionKeepsMultiToolRoundAndLimitsArchiveAccess(t *testing.T
 		t.Fatal(result)
 	}
 }
+
+func TestReviewPromptContextPreservesCodeWhileMaskingCredentialValues(t *testing.T) {
+	const secret = "not-a-real-credential-123"
+	prompt := "+log.Printf(\"password=%s\", password)\n+password := \"" + secret + "\""
+	var received string
+	newHarness := func() *ReviewHarness {
+		harness := newReviewHarness()
+		harness.tools = map[string]harnessTool{}
+		harness.Model = func(_ context.Context, messages []*schema.Message, _ []*schema.ToolInfo) (*schema.Message, error) {
+			received = messages[len(messages)-1].Content
+			return &schema.Message{Role: schema.Assistant, Content: "done"}, nil
+		}
+		return harness
+	}
+	if _, err := newHarness().Run(withReviewPrompt(context.Background()), prompt); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(received, `+log.Printf("password=%s", password)`) || strings.Contains(received, secret) {
+		t.Fatalf("review prompt lost code or leaked a literal credential: %q", received)
+	}
+	if _, err := newHarness().Run(context.Background(), prompt); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(received, `+log.Printf("password=%s", password)`) {
+		t.Fatalf("non-review harness must retain conservative redaction: %q", received)
+	}
+}

@@ -98,7 +98,7 @@ func redact(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		low := strings.ToLower(l)
-		if strings.Contains(low, "api_key") || strings.Contains(low, "apikey") || strings.Contains(low, "password") || strings.Contains(low, "secret") || strings.Contains(low, "authorization") {
+		if strings.Contains(low, "api_key") || strings.Contains(low, "api-key") || strings.Contains(low, "apikey") || strings.Contains(low, "password") || strings.Contains(low, "secret") || strings.Contains(low, "authorization") || strings.Contains(low, "token") || providerTokenPattern.MatchString(l) || credentialPattern.MatchString(l) {
 			lines[i] = "[REDACTED]"
 		}
 	}

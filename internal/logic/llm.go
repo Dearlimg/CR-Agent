@@ -30,19 +30,51 @@ type ReviewFinding struct {
 }
 
 func parseFindings(raw string) []ReviewFinding {
+	findings, _ := parseFindingsStrict(raw)
+	return findings
+}
+
+func parseFindingsStrict(raw string) ([]ReviewFinding, error) {
 	clean := strings.TrimSpace(strings.Trim(raw, "`"))
-	if strings.Contains(clean, "NO_FINDINGS") {
-		return nil
+	if clean == "NO_FINDINGS" {
+		return []ReviewFinding{}, nil
 	}
 	var fs []ReviewFinding
-	if json.Unmarshal([]byte(clean), &fs) == nil {
-		return fs
+	if strings.HasPrefix(clean, "[") && json.Unmarshal([]byte(clean), &fs) == nil && fs != nil {
+		return fs, nil
 	}
 	start, end := strings.Index(clean, "["), strings.LastIndex(clean, "]")
 	if start >= 0 && end > start {
-		_ = json.Unmarshal([]byte(clean[start:end+1]), &fs)
+		if err := json.Unmarshal([]byte(clean[start:end+1]), &fs); err == nil && fs != nil {
+			return fs, nil
+		}
 	}
-	return fs
+	return nil, fmt.Errorf("模型输出不是有效 finding JSON 数组")
+}
+
+// sanitizeModelReply keeps valid finding JSON parseable while removing values
+// from every user-facing field before traces or team mailboxes persist it.
+func sanitizeModelReply(raw string) string {
+	findings := parseFindings(raw)
+	if findings == nil {
+		return redact(raw)
+	}
+	for index := range findings {
+		findings[index].File = redactFindingText(findings[index].File)
+		findings[index].Body = redactFindingText(findings[index].Body)
+		findings[index].Suggestion = redactFindingText(findings[index].Suggestion)
+	}
+	encoded, err := json.Marshal(findings)
+	if err != nil {
+		return redact(raw)
+	}
+	return string(encoded)
+}
+
+func redactFindingText(value string) string {
+	value = credentialPattern.ReplaceAllString(value, "[REDACTED]")
+	value = providerTokenPattern.ReplaceAllString(value, "[REDACTED]")
+	return value
 }
 
 func reviewWithDeepSeek(ctx context.Context, cfg Config, diff string) (string, int, error) {

@@ -23,20 +23,25 @@ type TodoItem struct {
 	Order   int    `json:"order"`
 }
 type TraceEvent struct {
-	ID         string     `json:"id"`
-	ParentID   string     `json:"parent_id,omitempty"`
-	Kind       string     `json:"kind,omitempty"`
-	Status     string     `json:"status,omitempty"`
-	Tool       string     `json:"tool"`
-	Input      string     `json:"input"`
-	Output     string     `json:"output"`
-	Prompt     string     `json:"prompt,omitempty"`
-	ModelReply string     `json:"model_reply,omitempty"`
-	At         time.Time  `json:"at"`
-	StartedAt  time.Time  `json:"started_at,omitempty"`
-	EndedAt    *time.Time `json:"ended_at,omitempty"`
-	DurationMs int64      `json:"duration_ms"`
-	Phase      string     `json:"phase,omitempty"`
+	ID          string     `json:"id"`
+	ParentID    string     `json:"parent_id,omitempty"`
+	Kind        string     `json:"kind,omitempty"`
+	Status      string     `json:"status,omitempty"`
+	Origin      string     `json:"origin,omitempty"`
+	CacheHit    bool       `json:"cache_hit,omitempty"`
+	ToolCallID  string     `json:"tool_call_id,omitempty"`
+	ToolVersion string     `json:"tool_version,omitempty"`
+	InputDigest string     `json:"input_digest,omitempty"`
+	Tool        string     `json:"tool"`
+	Input       string     `json:"input"`
+	Output      string     `json:"output"`
+	Prompt      string     `json:"prompt,omitempty"`
+	ModelReply  string     `json:"model_reply,omitempty"`
+	At          time.Time  `json:"at"`
+	StartedAt   time.Time  `json:"started_at,omitempty"`
+	EndedAt     *time.Time `json:"ended_at,omitempty"`
+	DurationMs  int64      `json:"duration_ms"`
+	Phase       string     `json:"phase,omitempty"`
 }
 type TeamEvent struct {
 	ID      string    `json:"id,omitempty"`

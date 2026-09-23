@@ -27,6 +27,7 @@ type Service struct {
 	Team             *ReviewTeam
 	Workflows        *WorkflowRuntime
 	MCP              *MCPManager
+	PreflightCache   *PreflightCache
 }
 
 func NewService(store dao.Store, cfg Config) *Service {
@@ -37,6 +38,7 @@ func NewServiceWithRuntime(store dao.Store, cfg Config, repositories RuntimeRepo
 	skillLoader := NewSkillLoader(cfg.SkillsDir)
 	skillErr := skillLoader.Scan()
 	registry := NewToolRegistry()
+	preflightCache := NewPreflightCache()
 	workflowRegistry := NewWorkflowRegistry()
 	if err := registerReviewWorkflow(workflowRegistry); err != nil {
 		panic(err)
@@ -45,27 +47,24 @@ func NewServiceWithRuntime(store dao.Store, cfg Config, repositories RuntimeRepo
 	_ = mcp.RegisterServer("docs", newDocsMCPServer)
 	_ = mcp.RegisterServer("deploy", newDeployMCPServer)
 	mcp.RegisterConnectTool(registry)
-	registry.RegisterWithPermission("todo_write", PermissionReadDiff, func(_ context.Context, in ToolInput) (ToolResult, error) {
-		return ToolResult{Output: renderTodos(in.Job.Todos)}, nil
-	})
-	registry.RegisterWithPermission("diff_reader", PermissionReadDiff, func(_ context.Context, in ToolInput) (ToolResult, error) {
-		return ToolResult{Output: fmt.Sprintf("读取并脱敏完成，diff_bytes=%d", len(in.Diff))}, nil
-	})
-	registry.RegisterWithPermission("static_check", PermissionStaticAnalysis, func(_ context.Context, in ToolInput) (ToolResult, error) {
-		hits := []string{}
-		if strings.Contains(in.Diff, "TODO") {
-			hits = append(hits, "TODO")
+	registry.RegisterWithPermission("preflight_analysis", PermissionStaticAnalysis, func(ctx context.Context, in ToolInput) (ToolResult, error) {
+		if in.Artifacts == nil {
+			return ToolResult{}, fmt.Errorf("preflight_analysis 缺少结果接收器")
 		}
-		if strings.Contains(in.Diff, "panic(") {
-			hits = append(hits, "panic")
+		artifacts, err := preflightCache.Run(ctx, in.Job.Source, in.Diff)
+		if err != nil {
+			return ToolResult{}, err
 		}
-		return ToolResult{Output: fmt.Sprintf("静态检查完成，命中=%v", hits)}, nil
+		*in.Artifacts = artifacts
+		return ToolResult{
+			Output: artifacts.TraceSummary(), CacheHit: artifacts.CacheHit,
+			ToolVersion: preflightVersion, InputDigest: artifacts.DiffDigest,
+		}, nil
 	})
-	registerReviewTools(registry)
 	record := func(jobID, traceID, tool, status, input, output, callErr string, durationMs int64) error {
 		return store.RecordToolCall(jobID, traceID, tool, status, input, output, callErr, durationMs)
 	}
-	plan := []LoopStep{{Tool: "todo_write", Reason: "创建并确认审查计划"}, {Tool: "diff_reader", Reason: "读取并脱敏 diff"}, {Tool: "parse_diff", Reason: "解析文件和变更范围"}, {Tool: "get_changed_lines", Reason: "提取新增行"}, {Tool: "static_check", Reason: "执行确定性规则检查"}, {Tool: "syntax_check", Reason: "前置语法和冲突检查"}, {Tool: "format_check", Reason: "前置格式检查"}, {Tool: "secret_scan", Reason: "扫描疑似敏感信息"}, {Tool: "dependency_diff", Reason: "检查依赖文件变更"}, {Tool: "get_file_context", Reason: "补充安全上下文"}, {Tool: "normalize_finding", Reason: "规范化审查输出"}}
+	plan := []LoopStep{{Tool: "preflight_analysis", Reason: "解析 diff、扫描密钥并执行一次确定性检查"}}
 	repositories = ensureRuntimeRepositories(cfg, repositories)
 	workflows := NewWorkflowRuntime(cfg.WorkflowDir, workflowRegistry)
 	if repositories.Workflow != nil {
@@ -82,6 +81,7 @@ func NewServiceWithRuntime(store dao.Store, cfg Config, repositories RuntimeRepo
 		TaskStore:        nil,
 		Background:       nil,
 		MCP:              mcp,
+		PreflightCache:   preflightCache,
 		Workflows:        workflows,
 	}
 	service.TaskStore = repositories.Tasks
@@ -148,9 +148,10 @@ func id(s string) string {
 }
 func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 	now := time.Now().UTC()
-	todos := []model.TodoItem{}
-	for order, step := range s.Loop.Plan {
-		todos = append(todos, model.TodoItem{Content: step.Reason, Status: "pending", Order: order})
+	todos := []model.TodoItem{
+		{Content: "扫描并解析代码变更", Status: "pending", Order: 0},
+		{Content: "按变更规模执行代码审查", Status: "pending", Order: 1},
+		{Content: "校验并去重审查发现", Status: "pending", Order: 2},
 	}
 	j := &model.ReviewJob{
 		ID:         id(req.Source + req.Diff),
@@ -229,7 +230,7 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		fetchSpan := recorder.Start("tool", "diff_fetcher", "action", req.Source, "")
 		if decision := s.Loop.Policy.Decide(PermissionNetworkFetch); decision != PermissionAllow {
 			err := permissionError("diff_fetcher", PermissionNetworkFetch, decision)
-			fetchSpan.End(TraceResult{Status: "denied", Err: err})
+			fetchSpan.End(TraceResult{Status: "denied", Err: err, Origin: "orchestrator"})
 			j.Status = "failed"
 			j.Error = err.Error()
 			_ = s.Store.Save(j)
@@ -239,7 +240,7 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		resolved, diff, err := fetchDiff(ctx, req.Source, s.Config)
 		fetchEnded := time.Now()
 		fetchDuration := fetchEnded.Sub(fetchStarted).Milliseconds()
-		fetchResult := TraceResult{Output: fmt.Sprintf("diff_bytes=%d", len(diff)), Err: err}
+		fetchResult := TraceResult{Output: fmt.Sprintf("diff_bytes=%d", len(diff)), Err: err, Origin: "orchestrator"}
 		if err != nil {
 			fetchResult.Output = ""
 		}
@@ -255,7 +256,8 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		_ = s.Store.RecordToolCall(j.ID, fetchTraceID, "diff_fetcher", "succeeded", req.Source, fmt.Sprintf("diff_bytes=%d", len(diff)), "", fetchDuration)
 		j.Source, req.Diff = resolved, diff
 	}
-	if err := s.Loop.Run(ctx, ToolInput{Job: j, Diff: req.Diff, Tracer: recorder}); err != nil {
+	artifacts := &ReviewArtifacts{}
+	if err := s.Loop.Run(ctx, ToolInput{Job: j, Diff: req.Diff, Tracer: recorder, Artifacts: artifacts}); err != nil {
 		j.Status = "failed"
 		j.Error = err.Error()
 		recorder.Flush()
@@ -306,18 +308,43 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	promptContext := ReviewPromptContext{
 		Catalog:      s.SkillLoader.Catalog(),
 		SkillContent: skill.Content,
-		Memories:     renderMemories(memories),
+		Memories:     redact(renderMemories(memories)),
+		Evidence:     artifacts.PromptSummary(),
 	}
 
-	// Each sub-agent starts with a fresh model conversation. The parent consumes
-	// only their final JSON reports, so the review focus does not inflate its context.
-	if s.Loop.Hooks != nil {
-		for _, name := range []string{"correctness", "security", "dependency"} {
-			s.Loop.Hooks.Emit(ctx, HookPreToolUse, HookContext{JobID: j.ID, Tool: "subagent_" + name, Permission: PermissionLLMInference, Reason: "委派专项审查"})
+	reviewMode := chooseReviewMode(*artifacts)
+	recorder.Record("input", "review_route", "planning", "按文件和新增行规模选择审查方式", "", TraceResult{
+		Output: reviewMode, Origin: "orchestrator",
+	})
+	reviewCtx, flushHarness := s.withReviewHarness(ctx, j, artifacts.SanitizedDiff, *artifacts)
+	subResults := []SubagentResult{}
+	teamEvents := []model.TeamEvent{}
+	var teamErr error
+	if reviewMode == "specialists" {
+		if s.Loop.Hooks != nil {
+			for _, name := range []string{"correctness", "security", "dependency"} {
+				s.Loop.Hooks.Emit(ctx, HookPreToolUse, HookContext{
+					JobID: j.ID, Tool: "subagent_" + name,
+					Permission: PermissionLLMInference, Reason: "委派专项审查",
+				})
+			}
 		}
+		subResults, teamEvents, teamErr = s.Team.Run(reviewCtx, j.ID, j.TaskID, artifacts.SanitizedDiff, promptContext)
+	} else {
+		general := ReviewSubagent{
+			Name:  "general",
+			Focus: "审查改动引入的正确性、安全、依赖兼容性和错误处理问题",
+		}
+		if s.Loop.Hooks != nil {
+			s.Loop.Hooks.Emit(ctx, HookPreToolUse, HookContext{
+				JobID: j.ID, Tool: "subagent_general",
+				Permission: PermissionLLMInference, Reason: "执行主审查",
+			})
+		}
+		subResults = append(subResults, RunReviewSpecialist(
+			reviewCtx, s.Config, general, artifacts.SanitizedDiff, promptContext,
+		))
 	}
-	reviewCtx, flushHarness := s.withReviewHarness(ctx, j, req.Diff)
-	subResults, teamEvents, teamErr := s.Team.Run(reviewCtx, j.ID, j.TaskID, req.Diff, promptContext)
 	flushHarness()
 	if teamErr != nil {
 		j.Status = "failed"
@@ -326,6 +353,7 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		return
 	}
 	j.TeamEvents = append(j.TeamEvents, teamEvents...)
+	setTodoStatus(j, 1, "completed")
 	for index := range subResults {
 		for _, event := range teamEvents {
 			if event.Type == "result" && event.From == subResults[index].Name && subResults[index].Error == nil {
@@ -362,68 +390,99 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 			Content:   report,
 		})
 	}
-	// Persist this checkpoint before the final synthesis, which also lets the SSE
-	// endpoint show completed child tasks when the final model call is slow.
+	// Specialists need a synthesis turn. A small review uses its single report
+	// directly and still passes through the same deterministic verification.
 	_ = s.Store.Save(j)
-	compactSpan := recorder.Start("input", "context_compact", "context", "汇总审查上下文", "")
-	compacted, err := s.ContextCompactor.Prepare(ctx, CompactRequest{
-		Messages:      contextMessages,
-		ActiveRequest: fmt.Sprintf("汇总对 %s 的代码审查子 Agent 报告", j.Source),
-		Summarize:     s.summarizeReviewContext,
-	})
-	if err != nil {
-		compactSpan.End(TraceResult{Err: err})
-		j.Status = "failed"
-		j.Error = fmt.Sprintf("压缩审查上下文失败：%v", err)
-		_ = s.Store.Save(j)
-		return
+	var reply string
+	var synthesisErr error
+	var modelTraceID string
+	if reviewMode == "single" {
+		if len(subResults) == 0 {
+			synthesisErr = fmt.Errorf("主审查 Agent 未返回结果")
+		} else {
+			reply = subResults[0].Summary
+			synthesisErr = subResults[0].Error
+			modelTraceID = subResults[0].TraceID
+		}
+	} else {
+		compactSpan := recorder.Start("input", "context_compact", "context", "汇总审查上下文", "")
+		compacted, compactErr := s.ContextCompactor.Prepare(ctx, CompactRequest{
+			Messages:      contextMessages,
+			ActiveRequest: fmt.Sprintf("汇总对 %s 的代码审查子 Agent 报告", j.Source),
+			Summarize:     s.summarizeReviewContext,
+		})
+		if compactErr != nil {
+			compactSpan.End(TraceResult{Err: compactErr, Origin: "orchestrator"})
+			j.Status = "failed"
+			j.Error = fmt.Sprintf("压缩审查上下文失败：%v", compactErr)
+			_ = s.Store.Save(j)
+			return
+		}
+		compactSpan.End(TraceResult{
+			Output: fmt.Sprintf("产生 %d 条压缩事件", len(compacted.Events)), Origin: "orchestrator",
+		})
+		s.recordCompactionEvents(j, recorder, compacted.Events)
+		prompt := BuildReviewSynthesisPrompt(promptContext, renderContextMessages(compacted.Messages))
+		modelSpan := recorder.Start("model", "deepseek-review", "reasoning", "prompt diff summary", "")
+		modelCtx := withGoalCondition(reviewCtx, req.Goal)
+		modelCtx = withTraceParent(modelCtx, modelSpan.ID())
+		reply, synthesisErr = EinoReviewAgent(modelCtx, s.Config, prompt)
+		reply = sanitizeModelReply(reply)
+		flushHarness()
+		modelResult := TraceResult{
+			Output: "DeepSeek 审查完成", ModelReply: reply,
+			Err: synthesisErr, Origin: "model",
+		}
+		if synthesisErr != nil {
+			modelResult.Output = ""
+		}
+		modelDuration := modelSpan.End(modelResult)
+		modelTraceID = modelSpan.ID()
+		if synthesisErr != nil {
+			_ = s.Store.RecordToolCall(j.ID, modelTraceID, "deepseek_review", "failed", "prompt diff summary", "", synthesisErr.Error(), modelDuration)
+		} else {
+			_ = s.Store.RecordToolCall(j.ID, modelTraceID, "deepseek_review", "succeeded", "prompt diff summary", "DeepSeek 审查完成", "", modelDuration)
+		}
 	}
-	compactSpan.End(TraceResult{Output: fmt.Sprintf("产生 %d 条压缩事件", len(compacted.Events))})
-	s.recordCompactionEvents(j, recorder, compacted.Events)
-	prompt := BuildReviewSynthesisPrompt(promptContext, renderContextMessages(compacted.Messages))
-	modelSpan := recorder.Start("model", "deepseek-review", "reasoning", "prompt diff summary", "")
-	modelCtx := withGoalCondition(reviewCtx, req.Goal)
-	modelCtx = withTraceParent(modelCtx, modelSpan.ID())
-	reply, err := EinoReviewAgent(modelCtx, s.Config, prompt)
-	flushHarness()
-	modelResult := TraceResult{Output: "DeepSeek 审查完成", ModelReply: reply, Err: err}
-	if err != nil {
-		modelResult.Output = ""
-	}
-	modelDuration := modelSpan.End(modelResult)
 	var goalStop *GoalStopError
-	if errors.As(err, &goalStop) {
+	if errors.As(synthesisErr, &goalStop) {
 		j.Status = "failed"
 		j.Error = goalStop.Error()
 		j.UpdatedAt = time.Now()
 		_ = s.Store.Save(j)
 		return
 	}
-	synthesisWarning := err != nil
-	modelTraceID := modelSpan.ID()
-	if err != nil {
-		_ = s.Store.RecordToolCall(j.ID, modelTraceID, "deepseek_review", "failed", "prompt diff summary", "", err.Error(), modelDuration)
+	synthesisWarning := synthesisErr != nil
+	if synthesisErr != nil {
+		j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "low", Body: "模型调用失败：" + redact(synthesisErr.Error()), TraceID: modelTraceID}}
 	} else {
-		_ = s.Store.RecordToolCall(j.ID, modelTraceID, "deepseek_review", "succeeded", "prompt diff summary", "DeepSeek 审查完成", "", modelDuration)
-	}
-	if err != nil {
-		j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "low", Body: "DeepSeek 调用失败：" + err.Error(), TraceID: modelTraceID}}
-	} else {
-		traceID := modelTraceID
 		j.SpentCents = 1
-		findings := parseFindings(reply)
-		j.Comments = []model.ReviewComment{}
-		for _, f := range findings {
-			body := f.Body
-			if f.Suggestion != "" {
-				body += "\n建议：" + f.Suggestion
+		findings, parseErr := parseFindingsStrict(reply)
+		if parseErr != nil {
+			teamWarnings = true
+			recorder.Record("input", "finding_verification", "verification", "模型 finding 与变更行核对", "", TraceResult{
+				Err: parseErr, Origin: "orchestrator",
+			})
+			j.Comments = []model.ReviewComment{{
+				File: "diff", Line: 1, Severity: "info", Confidence: "low",
+				Body: "模型输出不是有效的 finding 数组，审查结论不完整。", TraceID: modelTraceID,
+			}}
+		} else {
+			j.Comments = verifiedComments(findings, *artifacts, modelTraceID)
+			recorder.Record("input", "finding_verification", "verification", "模型 finding 与变更行核对", "", TraceResult{
+				Output: fmt.Sprintf("候选=%d 接受=%d", len(findings), len(j.Comments)), Origin: "orchestrator",
+			})
+			if len(j.Comments) == 0 {
+				message := "未发现需要评论的问题。"
+				if len(findings) > 0 {
+					message = "模型报告的问题未通过变更行校验，请查看审查轨迹。"
+					teamWarnings = true
+				}
+				j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "high", Body: message, TraceID: modelTraceID}}
 			}
-			j.Comments = append(j.Comments, model.ReviewComment{File: f.File, Line: f.Line, Severity: f.Severity, Confidence: f.Confidence, Body: body, TraceID: traceID})
-		}
-		if len(j.Comments) == 0 {
-			j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "high", Body: "未发现需要评论的问题。", TraceID: traceID}}
 		}
 	}
+	setTodoStatus(j, 2, "completed")
 	if err := ctx.Err(); err != nil {
 		j.Status = "failed"
 		j.Error = "后台审查已取消"
@@ -460,7 +519,7 @@ func (s *Service) completeReviewTask(job *model.ReviewJob, recorder *TraceRecord
 	traceID := id("task_complete" + job.TaskID)
 	if err != nil {
 		if span != nil {
-			span.End(TraceResult{Err: err})
+			span.End(TraceResult{Err: err, Origin: "orchestrator"})
 			traceID = span.ID()
 		}
 		_ = s.Store.RecordToolCall(job.ID, traceID, "task_complete", "failed", job.TaskID, "", err.Error(), span.DurationMs())
@@ -475,7 +534,7 @@ func (s *Service) completeReviewTask(job *model.ReviewJob, recorder *TraceRecord
 		output += "；解锁: " + strings.Join(subjects, ", ")
 	}
 	if span != nil {
-		span.End(TraceResult{Output: output})
+		span.End(TraceResult{Output: output, Origin: "orchestrator"})
 		traceID = span.ID()
 	}
 	_ = s.Store.RecordToolCall(job.ID, traceID, "task_complete", "succeeded", job.TaskID, output, "", span.DurationMs())
@@ -487,7 +546,7 @@ func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJo
 	}
 	confirmed := make([]model.ReviewComment, 0, len(job.Comments))
 	for _, comment := range job.Comments {
-		if comment.Confidence == "high" {
+		if comment.Confidence == "high" && comment.Severity != "info" {
 			confirmed = append(confirmed, comment)
 		}
 	}
@@ -511,10 +570,11 @@ func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJo
 		modelCtx = withTraceParent(ctx, span.ID())
 	}
 	reply, err := EinoReviewAgent(modelCtx, s.Config, prompt)
+	reply = redact(reply)
 	traceID := id("memory_extract" + job.ID)
 	if err != nil {
 		if span != nil {
-			span.End(TraceResult{Err: err})
+			span.End(TraceResult{Err: err, Origin: "model"})
 			traceID = span.ID()
 		}
 		_ = s.Store.RecordToolCall(job.ID, traceID, "memory_extract", "failed", "review findings", "", err.Error(), span.DurationMs())
@@ -530,7 +590,7 @@ func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJo
 	}
 	output := fmt.Sprintf("提取 %d 条候选，保存 %d 条持久记忆", len(candidates), stored)
 	if span != nil {
-		span.End(TraceResult{Output: output, ModelReply: reply})
+		span.End(TraceResult{Output: output, ModelReply: reply, Origin: "model"})
 		traceID = span.ID()
 	}
 	_ = s.Store.RecordToolCall(job.ID, traceID, "memory_extract", "succeeded", "review findings", output, "", span.DurationMs())
@@ -556,8 +616,9 @@ func (s *Service) summarizeReviewContext(ctx context.Context, activeRequest, his
 		modelCtx = withTraceParent(ctx, span.ID())
 	}
 	reply, err := EinoReviewAgent(modelCtx, s.Config, prompt)
+	reply = redact(reply)
 	if span != nil {
-		span.End(TraceResult{Output: "上下文摘要完成", ModelReply: reply, Err: err})
+		span.End(TraceResult{Output: "上下文摘要完成", ModelReply: reply, Err: err, Origin: "model"})
 	}
 	return reply, err
 }

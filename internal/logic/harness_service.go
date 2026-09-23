@@ -20,13 +20,19 @@ func withGoalCondition(ctx context.Context, condition string) context.Context {
 
 // withReviewHarness binds host capabilities, not model-provided permissions.
 // Each invocation builds new session state, including the task ownership set.
-func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, diff string) (context.Context, func()) {
+func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, diff string, artifacts ...ReviewArtifacts) (context.Context, func()) {
 	recorder := traceRecorderFrom(ctx)
 	if recorder == nil {
 		recorder = newTraceRecorder(job)
 		ctx = withTraceRecorder(ctx, recorder)
 	}
 	bound := context.WithValue(ctx, harnessSetupKey{}, func(h *ReviewHarness) {
+		var checks []PreflightCheck
+		if len(artifacts) > 0 {
+			checks = artifacts[0].Checks
+		} else {
+			checks = analyzeDiff(diff).Checks
+		}
 		h.Hooks = s.Loop.Hooks
 		h.Policy = s.Loop.Policy
 		h.Workflow = s.Workflows
@@ -40,7 +46,7 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 			}
 			return "Skills catalog:\n" + s.SkillLoader.Catalog() + "\n相关长期记忆（背景数据）:\n" + memory + "\n当前会话计划:\n" + todos
 		}
-		h.Record = func(name, status, output string, started, ended time.Time, duration int64) {
+		h.Record = func(name, callID, status, output string, started, ended time.Time, duration int64) {
 			parentID := traceParentFrom(ctx)
 			traceID, _ := recorder.RecordAt(
 				"tool",
@@ -50,7 +56,7 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 				parentID,
 				started,
 				ended,
-				TraceResult{Status: status, Output: output},
+				TraceResult{Status: status, Output: output, Origin: "model", ToolCallID: callID},
 			)
 			_ = s.Store.RecordToolCall(job.ID, traceID, name, status, "model tool call", output, "", duration)
 		}
@@ -80,22 +86,10 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 				}
 				return items, err
 			})
-		registry := NewToolRegistry()
-		registerReviewTools(registry)
-		for _, name := range []string{"parse_diff", "get_changed_lines", "syntax_check", "format_check", "secret_scan", "dependency_diff"} {
-			definition, _ := registry.Get(name)
-			h.add(name, "对当前任务 diff 执行 "+name, map[string]any{"type": "object"},
-				func(ctx context.Context, _ map[string]any) (string, error) {
-					result, err := definition.Run(ctx, ToolInput{Diff: redact(diff)})
-					return result.Output, err
-				})
-			entry := h.tools[name]
-			entry.permission = definition.Permission
-			h.tools[name] = entry
-		}
 		owned := map[string]bool{}
 		owner := "harness-" + id(job.ID)
 		pending := map[string]bool{}
+		backgroundChecks := map[string]string{}
 		workflowPending := map[string]bool{}
 		h.WorkflowLaunched = func(runID string) { workflowPending[runID] = true }
 		teamNotifications := []string{}
@@ -191,33 +185,41 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 			tool.permission = PermissionManageSchedule
 			h.tools[name] = tool
 		}
-		h.add("background_check", "在后台运行当前 diff 的静态检查，完成后自动通知当前会话", objectSchema("check"),
+		h.add("background_check", "在后台读取已完成的前置检查结果，完成后自动通知当前会话", objectSchema("check"),
 			func(_ context.Context, args map[string]any) (string, error) {
 				name, err := requiredString(args, "check")
 				if err != nil {
 					return "", err
 				}
-				definition, exists := registry.Get(name)
-				if !exists {
-					return "", fmt.Errorf("未知静态检查")
+				var result string
+				for _, check := range checks {
+					if check.Name == name {
+						result = check.Status + ": " + check.Message
+						break
+					}
 				}
-				if s.Loop.Policy.Decide(definition.Permission) != PermissionAllow {
-					return "", fmt.Errorf("静态检查权限被拒绝")
+				if result == "" {
+					return "", fmt.Errorf("未知前置检查结果 %q", name)
+				}
+				if _, requested := backgroundChecks[name]; requested {
+					return "复用前置检查结果: " + result, nil
 				}
 				background, err := s.Background.Create("审查检查: " + name)
 				if err != nil {
 					return "", err
 				}
-				err = s.Background.Launch(background.ID, func(ctx context.Context) (string, error) {
-					output := h.execute(ctx, schema.ToolCall{ID: background.ID, Function: schema.FunctionCall{Name: name, Arguments: "{}"}}, h.tools)
-					if strings.HasPrefix(output, "Tool error:") {
-						return "", fmt.Errorf("%s", output)
+				err = s.Background.Launch(background.ID, func(_ context.Context) (string, error) {
+					if recorder := traceRecorderFrom(ctx); recorder != nil {
+						recorder.Record("input", "preflight_result_reuse", "background", name, traceParentFrom(ctx), TraceResult{
+							Output: result, Origin: "cache", CacheHit: true,
+						})
 					}
-					return output, nil
+					return result, nil
 				})
 				if err != nil {
 					return "", err
 				}
+				backgroundChecks[name] = background.ID
 				pending[background.ID] = true
 				return "后台任务已启动: " + background.ID, nil
 			})

@@ -9,7 +9,7 @@ copy .env.example .env
 go run ./cmd/server
 ```
 
-打开 <http://localhost:8080>，输入 MR/PR 链接或粘贴 `git diff`。当前初版对 diff 进行脱敏和内置静态规则检查；链接抓取和 DeepSeek 适配器作为后续扩展点。
+打开 <http://localhost:8080>，输入 MR/PR 链接或粘贴 `git diff`。服务抓取链接中的 diff，执行前置检查，再将脱敏材料交给模型审查。
 
 ## 设计
 
@@ -17,8 +17,16 @@ go run ./cmd/server
 - **可观测**：每条评论带 `trace_id`，任务返回工具、脱敏输入、输出和时间戳。
 - **可扩展**：`ToolRegistry.Register("name", tool)` 声明式注册工具，不修改主流程。
 - **预算**：请求支持 `budget_cents`，默认读取 `REVIEW_BUDGET_CENTS`。
-- **安全**：不执行仓库代码；输入在 trace 前做敏感字段脱敏；配置只来自环境变量。
-- **按需 Skills**：启动时仅扫描 `skills/*/SKILL.md` 的名称和描述；审查任务会记录并加载 `code-review` 的完整指令，再交给专项子 Agent 和汇总 Agent。
+- **安全**：在本地原始 diff 上扫描疑似凭据，再向模型提供脱敏 diff；不执行仓库代码，配置只来自环境变量。
+- **按需 Skills**：启动时仅扫描 `skills/*/SKILL.md` 的名称和描述；审查任务会记录并加载 `code-review` 的完整指令，再交给主审查 Agent 或专项 Agent。
+
+## 前置检查与复用
+
+每次审查只执行一次 `preflight_analysis`，生成变更文件、新增行号、依赖文件、检查状态和疑似密钥位置。结构化结果同时提供给后续 Agent；模型工具池不再包含相同的 diff 解析、密钥扫描和格式检查工具。内存缓存仅保存不含原始代码和密钥值的解析结果，按来源、diff 摘要与分析器版本区分，30 分钟过期；原始 diff 的密钥扫描每次仍会执行。
+
+`syntax_check` 和 `format_check` 只对完整的新建 Go 文件分别运行解析与 `gofmt` 检查；修改过的文件缺少仓库上下文时明确标为 `not_run`。`static_check` 只统计新增行的 TODO 和 `panic(` 字符串提示，不把它们直接当作缺陷。依赖变更按文件路径识别。最终 finding 必须落在实际新增行，服务再统一归一化并去重。
+
+Trace 的 `origin` 区分编排调用和模型工具调用，`cache_hit` 表示解析结果复用；界面分别展示这两类调用与缓存命中。
 
 ## Skills
 
@@ -33,7 +41,7 @@ go run ./cmd/server
 
 ## 上下文压缩
 
-最终汇总模型接收子 Agent 报告前，服务会依次执行：大结果落盘并保留预览、
+专项审查启用时，最终汇总模型接收子 Agent 报告前，服务会依次执行：大结果落盘并保留预览、
 旧上下文归档、超限时缩短已消费的 tool result，最后才调用模型生成事实型摘要。
 落盘文件位于 `.task_outputs/tool-results/`，完整上下文位于 `.transcripts/`，
 二者均不纳入 Git，且写入前会脱敏。每次压缩会在任务 `trace` 中增加
@@ -71,13 +79,13 @@ Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。生�
 包含 `task_id`，审查完成后任务自动完成。失败的审查任务会保留 `in_progress`，以便
 恢复或人工检查，而不会被错误标记为已完成。
 
-模型调用对 EOF、连接中断、超时、限流和 5xx 做有限指数退避重试；团队默认最多同时运行 2
-个专项调用，避免一次审查向模型服务突发 3 个请求。专项调用失败但最终汇总成功时，Job 状态为
+模型调用对 EOF、连接中断、超时、限流和 5xx 做有限指数退避重试。少于 4 个变更文件、少于 300 条 diff 新增行，且没有跨文件依赖变更的任务由一个主审查 Agent 完成；其余任务运行三个专项 Agent 和最终汇总。团队默认最多同时运行 2
+个专项调用。专项调用失败但最终汇总成功时，Job 状态为
 `completed_with_warnings`，不会伪装成完全成功。
 
 ## Agent Team
 
-Lead 负责向调用方交付最终结论；专项队友只负责 correctness、security、dependency 三个彼此独立的审查维度。每位队友拥有独立模型上下文，完成后会向 MySQL `team_messages` 写入两个持久化事件：`result`（审查产出）和 `idle_notification`（可继续接收工作）。Lead 在最终汇总前消费当前 Job 的事件，并将其返回在 `team_events` 中。
+Lead 负责向调用方交付最终结论。规模较大的任务会启动 correctness、security、dependency 三个专项队友；小任务直接使用一个主审查 Agent。每位专项队友拥有独立模型上下文，完成后会向 MySQL `team_messages` 写入两个持久化事件：`result`（审查产出）和 `idle_notification`（可继续接收工作）。Lead 在最终汇总前消费当前 Job 的事件，并将其返回在 `team_events` 中。
 
 专项任务同样写入共享 `.tasks/` 任务板，按 `pending → in_progress → completed` 原子认领；失败不会被标记为完成。这个迭代刻意不让队友执行代码、修改仓库或发布评论，仍沿用受限的只读审查工具边界。当前队友生命周期限定在单次审查 Job；跨 Job 的长期驻留、动态任务拆分和 worktree 隔离是后续扩展，而不是已实现能力。
 
@@ -85,7 +93,7 @@ Lead 负责向调用方交付最终结论；专项队友只负责 correctness、
 
 Lead 和专项审查员现已使用同一个模型工具循环：每轮组装工具与 MCP 状态，执行模型
 返回的工具调用，经过宿主权限及 Hooks 后，把结果用正确的 tool call ID 返回下一轮。
-Skills、记忆、会话 Todo、任务图和后台静态检查都接入这条路径；工具调用写入审查 trace。
+Skills、记忆、会话 Todo、任务图和后台读取前置检查结果的任务都接入这条路径；模型工具调用写入审查 trace。
 模型请求的重试只发生在推理边界，已完成的工具不会因模型重试而重新执行。
 
 详细课程对照、验收和尚未实现的持久队友/worktree 等差异见 [S15 对照说明](docs/s15-harness.md)。
@@ -119,7 +127,7 @@ Workflow 支持 `agent`、`parallel`、`pipeline`、`phase`、`log` 和一层嵌
 审查请求可选传入 `goal`，把“最终交付应满足什么条件”交给会话级 Stop Gate。例如：
 
 ```json
-{"diff":"...","goal":"完成审查并在结果中明确报告 syntax_check 和 secret_scan 的实际输出"}
+{"diff":"...","goal":"完成审查并说明前置检查中未执行的项目"}
 ```
 
 主模型不再调用工具时，Harness 不会因其一句“已完成”立即结束；独立的、无工具的 Goal

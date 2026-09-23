@@ -9,16 +9,20 @@ import (
 )
 
 type ToolInput struct {
-	Job    *model.ReviewJob
-	Diff   string
-	Args   map[string]any
-	Tracer *TraceRecorder
+	Job       *model.ReviewJob
+	Diff      string
+	Args      map[string]any
+	Tracer    *TraceRecorder
+	Artifacts *ReviewArtifacts
 }
 type ToolResult struct {
-	Output   string
-	Diff     string
-	Done     bool
-	Comments []model.ReviewComment
+	Output      string
+	Diff        string
+	Done        bool
+	CacheHit    bool
+	ToolVersion string
+	InputDigest string
+	Comments    []model.ReviewComment
 }
 type Tool func(context.Context, ToolInput) (ToolResult, error)
 type ToolDefinition struct {
@@ -69,7 +73,6 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 		a.Hooks.Emit(ctx, HookLoopStart, HookContext{JobID: input.Job.ID})
 		defer a.Hooks.Emit(ctx, HookLoopStop, HookContext{JobID: input.Job.ID})
 	}
-	roundsSinceTodo := 0
 	for i, step := range a.Plan {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -91,7 +94,7 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 			err := permissionError(step.Tool, tool.Permission, decision)
 			traceID := id(step.Tool + err.Error())
 			if span != nil {
-				span.End(TraceResult{Status: "denied", Err: err})
+				span.End(TraceResult{Status: "denied", Err: err, Origin: "orchestrator"})
 				traceID = span.ID()
 			} else {
 				input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: err.Error(), At: time.Now(), Phase: "permission"})
@@ -120,7 +123,7 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 		if err != nil {
 			duration := time.Since(started).Milliseconds()
 			if span != nil {
-				span.End(TraceResult{Err: err})
+				span.End(TraceResult{Err: err, Origin: "orchestrator"})
 				traceID = span.ID()
 			} else {
 				input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: err.Error(), At: time.Now(), DurationMs: duration, Phase: "action"})
@@ -136,26 +139,16 @@ func (a *AgentLoop) Run(ctx context.Context, input ToolInput) error {
 		setTodoStatus(input.Job, i, "completed")
 		duration := time.Since(started).Milliseconds()
 		if span != nil {
-			span.End(TraceResult{Output: result.Output})
+			span.End(TraceResult{
+				Output: result.Output, Origin: "orchestrator", CacheHit: result.CacheHit,
+				ToolVersion: result.ToolVersion, InputDigest: result.InputDigest,
+			})
 			traceID = span.ID()
 		} else {
 			input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: traceID, Tool: step.Tool, Input: step.Reason, Output: result.Output, At: time.Now(), DurationMs: duration, Phase: "action"})
 		}
 		if a.Record != nil {
 			_ = a.Record(input.Job.ID, traceID, step.Tool, "succeeded", step.Reason, result.Output, "", duration)
-		}
-		if step.Tool == "todo_write" {
-			roundsSinceTodo = 0
-		} else {
-			roundsSinceTodo++
-		}
-		if roundsSinceTodo >= 3 {
-			if input.Tracer != nil {
-				input.Tracer.Record("input", "todo_reminder", "planning", "任务计划提醒", "", TraceResult{Output: "连续三个工具步骤未更新 Todo，请确认剩余计划和当前目标。"})
-			} else {
-				input.Job.Trace = append(input.Job.Trace, model.TraceEvent{ID: id("todo_reminder" + input.Job.ID), Tool: "todo_reminder", Input: "任务计划提醒", Output: "连续三个工具步骤未更新 Todo，请确认剩余计划和当前目标。", At: time.Now(), Phase: "planning"})
-			}
-			roundsSinceTodo = 0
 		}
 		if a.Hooks != nil {
 			a.Hooks.Emit(ctx, HookPostToolUse, HookContext{JobID: input.Job.ID, Tool: step.Tool, Permission: tool.Permission, Reason: step.Reason, Output: result.Output, DurationMs: duration})

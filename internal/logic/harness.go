@@ -127,6 +127,9 @@ func (h *ReviewHarness) add(name, description string, input map[string]any, run 
 func (h *ReviewHarness) pool() ([]*schema.ToolInfo, map[string]harnessTool, error) {
 	tools := make(map[string]harnessTool, len(h.tools))
 	for name, tool := range h.tools {
+		if name == "read_archive" && len(h.archives) == 0 {
+			continue
+		}
 		tools[name] = tool
 	}
 	pool, err := h.MCP.AssembleToolPool()
@@ -255,6 +258,9 @@ func (h *ReviewHarness) Run(ctx context.Context, prompt string) (string, error) 
 			return "", fmt.Errorf("模型返回空响应")
 		}
 		if len(reply.ToolCalls) == 0 {
+			if strings.TrimSpace(reply.Content) == "" {
+				return "", fmt.Errorf("模型回复为空，不能作为最终答复")
+			}
 			messages = append(messages, reply)
 			if h.Await != nil {
 				pending, err := h.Await(ctx)

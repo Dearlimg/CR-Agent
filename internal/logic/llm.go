@@ -45,7 +45,8 @@ func parseFindingsStrict(raw string) ([]ReviewFinding, error) {
 	}
 	start, end := strings.Index(clean, "["), strings.LastIndex(clean, "]")
 	if start >= 0 && end > start {
-		if err := json.Unmarshal([]byte(clean[start:end+1]), &fs); err == nil && fs != nil {
+		// Keep recovering wrapped findings, but don't let embedded [] certify a no-findings result.
+		if err := json.Unmarshal([]byte(clean[start:end+1]), &fs); err == nil && fs != nil && len(fs) > 0 {
 			return fs, nil
 		}
 	}

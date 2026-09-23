@@ -65,12 +65,27 @@ func RunReviewSpecialist(ctx context.Context, cfg Config, agent ReviewSubagent, 
 	})
 }
 
+func RunReviewAgent(ctx context.Context, cfg Config, diff string, promptContext ReviewPromptContext) SubagentResult {
+	return RunReviewSpecialist(ctx, cfg, ReviewSubagent{
+		Name:  "review_agent",
+		Focus: "审查改动引入的正确性、安全、兼容性和错误处理问题",
+	}, diff, promptContext)
+}
+
 func runReviewSpecialist(ctx context.Context, request specialistRunRequest) SubagentResult {
 	started := time.Now()
 	recorder := traceRecorderFrom(ctx)
 	var span *TraceSpan
 	if recorder != nil {
-		span = recorder.Start("model", "subagent_"+request.Agent.Name, "subagent", "独立专项审查", "")
+		traceName := "subagent_" + request.Agent.Name
+		tracePhase := "subagent"
+		traceInput := "独立专项审查"
+		if request.Agent.Name == "review_agent" {
+			traceName = "review_agent"
+			tracePhase = "review"
+			traceInput = "单 Agent 代码审查"
+		}
+		span = recorder.Start("model", traceName, tracePhase, traceInput, "")
 	}
 	modelCtx := ctx
 	if span != nil {
@@ -85,7 +100,7 @@ func runReviewSpecialist(ctx context.Context, request specialistRunRequest) Suba
 		chunkErrors = append(chunkErrors, chunkErr.Error())
 	} else {
 		for index, diffChunk := range chunks {
-			chunkFindings, err := reviewSpecialistChunk(modelCtx, request, diffChunk, index+1, len(chunks))
+			chunkFindings, err := reviewChunk(modelCtx, request, diffChunk, index+1, len(chunks))
 			if err != nil {
 				chunkErrors = append(chunkErrors, err.Error())
 				continue
@@ -96,7 +111,7 @@ func runReviewSpecialist(ctx context.Context, request specialistRunRequest) Suba
 
 	summaryBytes, marshalErr := json.Marshal(findings)
 	if marshalErr != nil {
-		chunkErrors = append(chunkErrors, "编码专项审查结果失败")
+		chunkErrors = append(chunkErrors, "编码审查结果失败")
 	}
 	summary := string(summaryBytes)
 	if marshalErr != nil {
@@ -108,28 +123,28 @@ func runReviewSpecialist(ctx context.Context, request specialistRunRequest) Suba
 		if totalChunks == 0 {
 			totalChunks = 1
 		}
-		err = fmt.Errorf("%w：%d/%d 个专项审查分片未完成：%s", errIncompleteReview, len(chunkErrors), totalChunks, strings.Join(chunkErrors, "；"))
+		err = fmt.Errorf("%w：%d/%d 个审查分片未完成：%s", errIncompleteReview, len(chunkErrors), totalChunks, strings.Join(chunkErrors, "；"))
 	}
 	duration := time.Since(started).Milliseconds()
 	traceID := ""
 	if span != nil {
 		traceID = span.ID()
-		traceOutput := "子 Agent 审查完成"
+		traceOutput := "审查完成"
 		if err == nil && summary == "[]" {
-			traceOutput = "子 Agent 已完成，没有报告候选问题"
+			traceOutput = "审查完成，没有报告候选问题"
 		}
 		traceResult := TraceResult{Output: traceOutput, ModelReply: summary, Err: err, Origin: "model"}
 		if err != nil {
-			traceResult.Output = "子 Agent 审查未完整完成"
+			traceResult.Output = "审查未完整完成"
 		}
 		duration = span.End(traceResult)
 	}
 	return SubagentResult{Name: request.Agent.Name, Summary: summary, Error: err, TraceID: traceID, DurationMs: duration}
 }
 
-func reviewSpecialistChunk(ctx context.Context, request specialistRunRequest, diff string, index, total int) ([]ReviewFinding, error) {
+func reviewChunk(ctx context.Context, request specialistRunRequest, diff string, index, total int) ([]ReviewFinding, error) {
 	promptContext := request.PromptContext
-	promptContext.Evidence += fmt.Sprintf("\n当前审查分片：%d/%d。只根据此分片报告候选；其他分片会独立审查。", index, total)
+	promptContext.Evidence += fmt.Sprintf("\n当前审查分片：%d/%d。只根据此分片报告候选，其余分片由同一个审查 Agent 依次处理。", index, total)
 	prompt := BuildReviewSubagentPrompt(request.Agent.Focus, promptContext, diff)
 	reply, err := request.Infer(ctx, request.Config, prompt)
 	if err != nil {

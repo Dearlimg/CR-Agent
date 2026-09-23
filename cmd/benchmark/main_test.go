@@ -12,21 +12,21 @@ import (
 	"time"
 )
 
-func TestValidateReviewRoute(t *testing.T) {
+func TestValidateRecordedRoute(t *testing.T) {
 	for _, route := range []string{"auto", "single", "specialists"} {
-		if err := validateReviewRoute(route); err != nil {
-			t.Errorf("validateReviewRoute(%q): %v", route, err)
+		if err := validateRecordedRoute(route); err != nil {
+			t.Errorf("validateRecordedRoute(%q): %v", route, err)
 		}
 	}
-	if err := validateReviewRoute("unknown"); err == nil {
-		t.Fatal("unknown route should be rejected")
+	if err := validateRecordedRoute("unknown"); err == nil {
+		t.Fatal("unknown recorded route should be rejected")
 	}
 }
 
 func TestRenderMarkdownIncludesPerCaseUsage(t *testing.T) {
 	report := runReport{
 		Version:   "code-review-v1",
-		Route:     "specialists",
+		Route:     "single",
 		StartedAt: time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC),
 		Results: []caseResult{{
 			ID: "nil-dereference", Status: "completed", TruePositives: 1,
@@ -35,7 +35,7 @@ func TestRenderMarkdownIncludesPerCaseUsage(t *testing.T) {
 	}
 	markdown := renderMarkdown(report)
 	for _, want := range []string{
-		"- Route: `specialists`",
+		"- Route: `single`",
 		"| Model requests | Reported tokens |",
 		"| `nil-dereference` |",
 		"1234 ms | 3 | unknown (3 responses)",
@@ -47,14 +47,14 @@ func TestRenderMarkdownIncludesPerCaseUsage(t *testing.T) {
 }
 
 func TestIsolatedCaseConfigSeparatesMemoryAndState(t *testing.T) {
-	base := logic.Config{MemoryDir: "shared", ReviewModeOverride: "specialists"}
+	base := logic.Config{MemoryDir: "shared"}
 	first := isolatedCaseConfig(base, "case-1")
 	second := isolatedCaseConfig(base, "case-2")
 	if first.MemoryDir == second.MemoryDir || first.TasksDir == second.TasksDir || first.TeamMailboxDir == second.TeamMailboxDir {
 		t.Fatal("benchmark cases share persistent state")
 	}
-	if base.MemoryDir != "shared" || first.ReviewModeOverride != "specialists" || second.ReviewModeOverride != "specialists" {
-		t.Fatal("case isolation changed the base configuration or route")
+	if base.MemoryDir != "shared" {
+		t.Fatal("case isolation changed the base configuration")
 	}
 }
 

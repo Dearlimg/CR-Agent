@@ -110,7 +110,6 @@ type benchmarkOptions struct {
 	MaxOutputTokens int
 	CaseTimeout     time.Duration
 	CaseIDs         string
-	Route           string
 }
 
 func main() {
@@ -119,14 +118,9 @@ func main() {
 	maxCalls := flag.Int("max-calls", 48, "hard cap on requests forwarded to the configured model endpoint")
 	maxTokens := flag.Int("max-output-tokens", 1024, "maximum output tokens allowed per model request")
 	caseTimeout := flag.Duration("case-timeout", 2*time.Minute, "time allowed for one review case")
-	route := flag.String("route", "auto", "review route: auto, single, or specialists")
 	validateOnly := flag.Bool("validate-only", false, "validate the local fixture and scoring labels without calling a model")
 	scorePath := flag.String("score-report", "", "re-score a saved run against the current labels without calling a model")
 	flag.Parse()
-	if err := validateReviewRoute(*route); err != nil {
-		fmt.Fprintln(os.Stderr, "benchmark:", err)
-		os.Exit(1)
-	}
 
 	if *scorePath != "" {
 		if err := rescoreReport(*scorePath); err != nil {
@@ -158,19 +152,19 @@ func main() {
 		MaxOutputTokens: *maxTokens,
 		CaseTimeout:     *caseTimeout,
 		CaseIDs:         *caseIDs,
-		Route:           *route,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "benchmark:", err)
 		os.Exit(1)
 	}
 }
 
-func validateReviewRoute(route string) error {
+// validateRecordedRoute keeps reports from earlier benchmark runs readable.
+func validateRecordedRoute(route string) error {
 	switch route {
 	case "auto", "single", "specialists":
 		return nil
 	default:
-		return fmt.Errorf("--route 必须是 auto、single 或 specialists，得到 %q", route)
+		return fmt.Errorf("benchmark 记录中的审查路线无效: %q", route)
 	}
 }
 
@@ -178,14 +172,7 @@ func run(options benchmarkOptions) error {
 	if options.Limit <= 0 || options.MaxCalls <= 0 || options.MaxOutputTokens <= 0 || options.CaseTimeout <= 0 {
 		return errors.New("limit, max-calls, max-output-tokens 和 case-timeout 必须大于 0")
 	}
-	if err := validateReviewRoute(options.Route); err != nil {
-		return err
-	}
-
 	cfg := logic.LoadConfig()
-	if options.Route != "auto" {
-		cfg.ReviewModeOverride = options.Route
-	}
 	if strings.TrimSpace(cfg.DeepSeekAPIKey) == "" {
 		return errors.New("未配置 DEEPSEEK_API_KEY；benchmark 不会自动读取或输出密钥")
 	}
@@ -242,7 +229,7 @@ func run(options benchmarkOptions) error {
 
 	report := runReport{
 		Version:           "code-review-v1",
-		Route:             options.Route,
+		Route:             "single",
 		StartedAt:         time.Now().UTC(),
 		Model:             "deepseek-chat via configured endpoint",
 		CasesRequested:    len(cases),
@@ -361,7 +348,7 @@ func rescoreReport(path string) error {
 		return fmt.Errorf("解析已有 benchmark 结果: %w", err)
 	}
 	if report.Route != "" {
-		if err := validateReviewRoute(report.Route); err != nil {
+		if err := validateRecordedRoute(report.Route); err != nil {
 			return fmt.Errorf("已有 benchmark 结果的路线无效: %w", err)
 		}
 	}
@@ -580,7 +567,8 @@ var (
 
 func modelReplyValid(events []model.TraceEvent) bool {
 	for _, event := range events {
-		if event.Tool != "deepseek-review" || strings.TrimSpace(event.ModelReply) == "" {
+		isReviewOutput := event.Tool == "review_agent" || event.Tool == "deepseek-review"
+		if !isReviewOutput || strings.TrimSpace(event.ModelReply) == "" {
 			continue
 		}
 		content := strings.TrimSpace(event.ModelReply)
@@ -732,7 +720,7 @@ func reportFileStem(report runReport) string {
 
 func reportRoute(report runReport) string {
 	if report.Route == "" {
-		return "auto"
+		return "single"
 	}
 	return report.Route
 }

@@ -158,17 +158,7 @@ func TestPreflightRunsAsOneOrchestratorTool(t *testing.T) {
 	}
 }
 
-func TestReviewRoutingAndFindingVerification(t *testing.T) {
-	artifacts, err := NewPreflightCache().Run(context.Background(), "repo/pr/1", reviewFixture)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if chooseReviewMode(artifacts) != "specialists" {
-		t.Fatal("dependency plus source change should use specialists")
-	}
-	if chooseReviewMode(ReviewArtifacts{Files: []ChangedFile{{Path: "main.go"}}}) != "single" {
-		t.Fatal("small source change should use one agent")
-	}
+func TestVerifiedCommentsDeduplicateAndFilterUnchangedLines(t *testing.T) {
 	findings := []ReviewFinding{
 		{File: "main.go", Line: 3, Severity: "HIGH", Confidence: "HIGH", Body: "具体问题"},
 		{File: "main.go", Line: 3, Severity: "HIGH", Confidence: "HIGH", Body: "具体问题"},
@@ -179,116 +169,6 @@ func TestReviewRoutingAndFindingVerification(t *testing.T) {
 	if len(comments) != 1 || comments[0].Line != 3 || comments[0].Severity != "high" {
 		t.Fatalf("verified comments=%#v", comments)
 	}
-}
-
-func TestReviewRoutingUsesRiskRatherThanLineCount(t *testing.T) {
-	cases := []struct {
-		name      string
-		artifacts ReviewArtifacts
-		want      string
-	}{
-		{
-			name: "large ordinary file",
-			artifacts: ReviewArtifacts{
-				Files:      []ChangedFile{{Path: "compose/field_mapping.go"}, {Path: "compose/field_mapping_test.go"}},
-				AddedLines: 323,
-			},
-			want: "single",
-		},
-		{
-			name:      "many documentation files",
-			artifacts: ReviewArtifacts{Files: []ChangedFile{{Path: "docs/a.md"}, {Path: "docs/b.md"}, {Path: "docs/c.md"}, {Path: "docs/d.md"}}},
-			want:      "single",
-		},
-		{
-			name:      "authentication boundary",
-			artifacts: ReviewArtifacts{Files: []ChangedFile{{Path: "internal/auth/session.go"}}},
-			want:      "specialists",
-		},
-		{
-			name: "sensitive changed code",
-			artifacts: ReviewArtifacts{
-				Files:         []ChangedFile{{Path: "main.go"}},
-				SanitizedDiff: "diff --git a/main.go b/main.go\n@@ -1 +1 @@\n+if Authorization == \"\" { return err }\n",
-			},
-			want: "specialists",
-		},
-		{
-			name: "sensitive test line only",
-			artifacts: ReviewArtifacts{
-				Files: []ChangedFile{{Path: "main.go"}, {Path: "main_test.go"}},
-				SanitizedDiff: "diff --git a/main.go b/main.go\n@@ -1 +1 @@\n+func f() {}\n" +
-					"diff --git a/main_test.go b/main_test.go\n@@ -1 +1 @@\n+Authorization := \"test\"\n",
-			},
-			want: "single",
-		},
-		{
-			name:      "dependency and production code",
-			artifacts: ReviewArtifacts{Files: []ChangedFile{{Path: "go.mod"}, {Path: "main.go"}}, DependencyFiles: []string{"go.mod"}},
-			want:      "specialists",
-		},
-		{
-			name:      "dependency and docs",
-			artifacts: ReviewArtifacts{Files: []ChangedFile{{Path: "go.mod"}, {Path: "README.md"}}, DependencyFiles: []string{"go.mod"}},
-			want:      "single",
-		},
-		{
-			name: "manifest and lockfile",
-			artifacts: ReviewArtifacts{
-				Files:           []ChangedFile{{Path: "go.mod"}, {Path: "go.sum"}},
-				DependencyFiles: []string{"go.mod", "go.sum"},
-			},
-			want: "specialists",
-		},
-		{
-			name:      "broad cross directory change",
-			artifacts: ReviewArtifacts{Files: []ChangedFile{{Path: "api/a.go"}, {Path: "api/b.go"}, {Path: "worker/c.go"}, {Path: "worker/d.go"}}},
-			want:      "specialists",
-		},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			if got := chooseReviewMode(test.artifacts); got != test.want {
-				t.Fatalf("route=%q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
-func TestReviewRoutingRetainsRiskAfterDiffRedaction(t *testing.T) {
-	diff := "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n" +
-		"@@ -1 +1 @@\n+token := value\n"
-	artifacts, err := NewPreflightCache().Run(context.Background(), "inline", diff)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(artifacts.SecretFindings) != 0 || !strings.Contains(artifacts.SanitizedDiff, "+token := value") {
-		t.Fatalf("unexpected redaction/scanner result: findings=%#v diff=%q", artifacts.SecretFindings, artifacts.SanitizedDiff)
-	}
-	if mode := chooseReviewMode(artifacts); mode != "specialists" {
-		t.Fatalf("sensitive source routed to %q", mode)
-	}
-}
-
-func TestSpecialistCoverageDistinguishesEmptyResponsesFromMissingReviews(t *testing.T) {
-	scope := model.ReviewScope{Checks: []model.ReviewCheck{}}
-	updateSpecialistCoverageCheck(&scope, []SubagentResult{
-		{Name: "correctness", Summary: "[]"},
-		{Name: "security", Summary: `[{"file":"a.go","line":1,"severity":"high","confidence":"high","body":"issue","evidence":"line","trigger":"call","impact":"bad","suggestion":"fix"}]`},
-		{Name: "dependency", Summary: `[{"file":"b.go","line":2,"severity":"medium","confidence":"medium","body":"partial","evidence":"line","trigger":"call","impact":"bad","suggestion":"fix"}]`, Error: errIncompleteReview},
-	})
-	for _, check := range scope.Checks {
-		if check.Name != "specialist_coverage" {
-			continue
-		}
-		if check.Status != "incomplete" || !strings.Contains(check.Message, "有效响应=2/3") ||
-			!strings.Contains(check.Message, "无候选=1") || !strings.Contains(check.Message, "含候选=2") ||
-			!strings.Contains(check.Message, "不完整=1") {
-			t.Fatalf("unexpected specialist coverage check: %#v", check)
-		}
-		return
-	}
-	t.Fatal("specialist_coverage check was not recorded")
 }
 
 func TestReviewPromptRedactionKeepsPasswordLoggingCode(t *testing.T) {
@@ -400,7 +280,7 @@ func TestSmallReviewUsesReviewAndVerificationTurnsAndSharedPreflight(t *testing.
 	}
 }
 
-func TestHighRiskReviewUsesSpecialistsAndOneSynthesis(t *testing.T) {
+func TestHighRiskReviewUsesSingleAgent(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
@@ -432,17 +312,21 @@ func TestHighRiskReviewUsesSpecialistsAndOneSynthesis(t *testing.T) {
 	diff := "diff --git a/internal/auth/session.go b/internal/auth/session.go\n" +
 		"--- a/internal/auth/session.go\n+++ b/internal/auth/session.go\n@@ -1 +1 @@\n+func canAccess() bool { return true }\n"
 	service.run(context.Background(), job, model.ReviewRequest{Diff: diff})
-	if job.Status != "completed" || calls.Load() != 4 {
+	if job.Status != "completed" || calls.Load() != 1 {
 		t.Fatalf("status=%q model calls=%d error=%q", job.Status, calls.Load(), job.Error)
 	}
 	preflightCalls := 0
+	reviewAgentCalls := 0
 	for _, event := range job.Trace {
 		if event.Tool == "preflight_analysis" {
 			preflightCalls++
 		}
+		if event.Tool == "review_agent" {
+			reviewAgentCalls++
+		}
 	}
-	if preflightCalls != 1 || len(job.TeamEvents) != 6 {
-		t.Fatalf("preflight calls=%d team events=%d", preflightCalls, len(job.TeamEvents))
+	if preflightCalls != 1 || reviewAgentCalls != 1 || len(job.TeamEvents) != 0 {
+		t.Fatalf("preflight calls=%d review agent calls=%d team events=%d", preflightCalls, reviewAgentCalls, len(job.TeamEvents))
 	}
 }
 

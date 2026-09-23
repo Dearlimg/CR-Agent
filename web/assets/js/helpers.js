@@ -1,8 +1,8 @@
 function kind(e) {
   if (e.kind === "model_request") return "model";
   if (["input", "model", "tool"].includes(e.kind)) return e.kind;
-  return ["subagent", "reasoning"].includes(e.phase) ||
-    /deepseek|llm|subagent/.test(e.tool)
+  return ["review", "subagent", "reasoning"].includes(e.phase) ||
+    /deepseek|llm|subagent|review_agent/.test(e.tool)
     ? "model"
     : ["task", "background", "planning", "memory", "context", "skill"].includes(
           e.phase,

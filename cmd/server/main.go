@@ -30,14 +30,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	mailbox, err := dao.NewMySQLTeamMailbox(mysqlStore.DB())
-	if err != nil {
-		panic(err)
-	}
 	svc := logic.NewServiceWithRuntime(mysqlStore, cfg, logic.RuntimeRepositories{
 		Tasks:      dao.NewMySQLTaskRepository(mysqlStore.DB()),
 		Background: background,
-		Mailbox:    mailbox,
 		Workflow:   logic.NewMySQLWorkflowPersistence(mysqlStore.DB()),
 	})
 	if err := svc.Start(); err != nil {

@@ -14,16 +14,12 @@ function sample() {
       920,
       "解析 3 个文件、323 条 diff 新增行；密钥命中 0",
     ],
-    ["review_route", "planning", 3300, 10, "specialists"],
-    ["subagent_correctness", "subagent", 15700, 11800, "完成正确性审查"],
-    ["subagent_security", "subagent", 17000, 12100, "完成安全审查"],
-    ["subagent_dependency", "subagent", 18100, 11500, "完成依赖审查"],
-    ["deepseek-review", "reasoning", 23400, 5300, "汇总专项审查发现"],
+    ["review_agent", "review", 21000, 17000, "单 Agent 审查完成"],
     [
       "finding_verification",
       "verification",
-      24100,
-      100,
+      23000,
+      1200,
       "核对代码证据并进行第二轮复核",
     ],
     ["task_complete", "task", 24300, 0, "审查已完成"],
@@ -58,10 +54,10 @@ function sample() {
       id: "demo-" + i,
       tool,
       phase,
-      origin: ["subagent", "reasoning"].includes(phase)
+      origin: phase === "review"
         ? "model"
         : "orchestrator",
-      kind: ["subagent", "reasoning"].includes(phase)
+      kind: phase === "review"
         ? "model"
         : phase === "action"
           ? "tool"
@@ -71,13 +67,13 @@ function sample() {
       input: "示例审查",
       output,
       model_reply:
-        phase === "reasoning"
+        phase === "review"
           ? "发现一处错误处理问题：数据库写入失败时应返回错误，避免调用方误判为成功。"
           : "",
     })),
     todos: [
       "扫描并解析代码变更",
-      "按变更规模执行代码审查",
+      "执行单 Agent 代码审查",
       "校验并去重审查发现",
     ].map((content) => ({ content, status: "completed" })),
     comments: [
@@ -93,7 +89,7 @@ function sample() {
         suggestion: "返回写入错误并阻止后续成功响应。",
         verification_status: "second_pass_review_passed",
         verification_reason: "证据行与 diff 一致，错误分支会掩盖写入失败。",
-        trace_id: "demo-7",
+        trace_id: "demo-4",
       },
     ],
   };

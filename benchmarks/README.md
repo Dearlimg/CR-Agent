@@ -40,25 +40,19 @@ Validate labels and added-line locations without making any model calls:
 go run ./cmd/benchmark --validate-only
 ```
 
-`--validate-only` also validates the selected `--route` without calling a model.
-The route choices are `auto` (production routing), `single`, and `specialists`.
-For a paired A/B run, use the same model endpoint and limits with each forced
-route. The two commands below each evaluate all 21 cases in manifest order:
+The benchmark uses the application's single-agent review flow. The command
+below evaluates all 21 cases in manifest order:
 
 ```powershell
-go run ./cmd/benchmark --route single --limit 21 --max-calls 400 --max-output-tokens 1024
-go run ./cmd/benchmark --route specialists --limit 21 --max-calls 400 --max-output-tokens 1024
+go run ./cmd/benchmark --limit 21 --max-calls 400 --max-output-tokens 1024
 ```
 
-Each JSON and Markdown report records its route. The Markdown and console output
-show TP/FP/FN, wall time, forwarded model requests, and reported tokens for each
-case. If the endpoint omits usage, token counts are marked unknown rather than
-treated as zero. Failed cases count missing expected issues as false negatives;
-compare completion rate alongside precision and recall. Run each route more
-than once before drawing a latency conclusion. The fixture
-set contains small single-file diffs, so `auto` currently selects `single` for
-every case. A forced specialists run measures that route's overhead on the same
-inputs, not the effect of the production routing threshold.
+Each JSON and Markdown report records the route as `single`. The Markdown and
+console output show TP/FP/FN, wall time, forwarded model requests, and reported
+tokens for each case. If the endpoint omits usage, token counts are marked
+unknown rather than treated as zero. Failed cases count missing expected issues
+as false negatives; compare completion rate alongside precision and recall.
+Run the benchmark more than once before drawing a latency conclusion.
 
 Run a balanced six-case slice through the current asynchronous review service
 (three positive cases and three negative controls):

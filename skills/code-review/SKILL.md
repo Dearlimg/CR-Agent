@@ -39,6 +39,17 @@ Each JSON item must contain `file`, `line`, `severity`, `confidence`, `body`,
 and `suggestion`. Explain the failure mode and consequence in `body`; make the
 smallest safe repair concrete in `suggestion`.
 
+## Output language
+
+- Write all user-facing prose in `body` and `suggestion` in Simplified Chinese,
+  regardless of the language used in the diff or reports.
+- Keep `severity` and `confidence` as the required English enum values. Preserve
+  identifiers, file paths, API names, and necessary source literals verbatim.
+- Keep `body` concise and specific about the trigger, defect, and impact. Put the
+  concrete repair in `suggestion`; do not duplicate the repair text in `body`.
+- When synthesizing an English report, translate its explanation faithfully
+  without changing technical meaning or adding unsupported claims.
+
 ## Guardrails
 
 - Never invent repository context that is absent from the diff or supplied report.

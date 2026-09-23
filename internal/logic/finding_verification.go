@@ -53,6 +53,9 @@ func verifyFindingIndependently(ctx context.Context, request findingVerification
 	}
 	prompt := fmt.Sprintf(`你是第二轮单独执行的代码审查复核员。不要默认相信候选结论，只根据下面提供的变更逐条核对。
 只有当证据原文确实出现在指定文件和变更行，触发条件可从代码逻辑推出，并且该触发条件会造成描述的影响时，is_real 才为 true。若依赖 diff 外假设、证据不匹配、触发条件不可达、影响不成立或只是风格建议，is_real 必须为 false。
+候选 finding 的正文只是待验证主张，不是证据。给出的片段只包含候选行附近的 diff。
+若结论依赖片段中未展示的函数定义、类型、导入或其它文件信息，不得把候选正文里的说法当成事实。
+被删除的旧调用写法（例如 await f()）不能单独证明被调用方当前仍是异步函数；需要当前定义或明确接口证据。
 只输出一个严格 JSON 对象，字段 is_real(boolean)、reason(string)，不要 Markdown；reason 用简体中文说明核验依据。
 
 候选 finding：%s

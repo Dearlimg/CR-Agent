@@ -119,24 +119,40 @@ func validateFindingEvidence(findings []ReviewFinding, diff string) ([]ReviewFin
 	rejected := 0
 	for _, finding := range findings {
 		file := strings.TrimSpace(finding.File)
-		evidence := finding.Evidence
-		line, exists := added[file][finding.Line]
-		// Models often omit code indentation; keep the exact diff line for the second pass.
-		evidenceMatches := strings.TrimSpace(evidence) != "" &&
-			strings.TrimSpace(line) == strings.TrimSpace(evidence)
+		evidence, evidenceMatches := matchAddedEvidence(
+			added[file], finding.Line, finding.Evidence,
+		)
 		complete := strings.TrimSpace(finding.Body) != "" &&
 			strings.TrimSpace(finding.Trigger) != "" &&
 			strings.TrimSpace(finding.Impact) != "" &&
 			strings.TrimSpace(finding.Suggestion) != ""
-		if !exists || !evidenceMatches || !complete {
+		if !evidenceMatches || !complete {
 			rejected++
 			continue
 		}
 		finding.File = file
-		finding.Evidence = line
+		finding.Evidence = evidence
 		verified = append(verified, finding)
 	}
 	return verified, rejected
+}
+
+func matchAddedEvidence(added map[int]string, startLine int, evidence string) (string, bool) {
+	if startLine <= 0 || strings.TrimSpace(evidence) == "" {
+		return "", false
+	}
+
+	quotedLines := strings.Split(strings.TrimSpace(strings.ReplaceAll(evidence, "\r\n", "\n")), "\n")
+
+	actualLines := make([]string, 0, len(quotedLines))
+	for offset, quoted := range quotedLines {
+		actual, exists := added[startLine+offset]
+		if !exists || strings.TrimSpace(actual) != strings.TrimSpace(quoted) {
+			return "", false
+		}
+		actualLines = append(actualLines, actual)
+	}
+	return strings.Join(actualLines, "\n"), true
 }
 
 func addedLineContent(diff string) map[string]map[int]string {

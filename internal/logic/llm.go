@@ -46,20 +46,191 @@ func parseFindings(raw string) []ReviewFinding {
 
 func parseFindingsStrict(raw string) ([]ReviewFinding, error) {
 	clean := strings.TrimSpace(raw)
-	var fs []ReviewFinding
-	decoder := json.NewDecoder(strings.NewReader(clean))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&fs); err == nil && fs != nil {
-		if err := decoder.Decode(&struct{}{}); err == io.EOF {
-			for index, finding := range fs {
-				if err := validateFindingShape(finding); err != nil {
-					return nil, fmt.Errorf("%w：finding %d %v", errIncompleteReview, index+1, err)
-				}
-			}
-			return fs, nil
+	findings, err := decodeFindingsArray(clean)
+	if err == nil {
+		return findings, nil
+	}
+	if unwrapped, ok := unwrapJSONCodeFence(clean); ok {
+		findings, err = decodeFindingsArray(unwrapped)
+		if err == nil {
+			return findings, nil
+		}
+	}
+
+	for _, candidate := range extractJSONArrays(clean) {
+		findings, err = decodeFindingsArray(candidate)
+		if err == nil && len(findings) > 0 {
+			return findings, nil
+		}
+		findings, err = decodeFindingArrayMembers(candidate)
+		if err == nil && len(findings) > 0 {
+			return findings, nil
 		}
 	}
 	return nil, fmt.Errorf("%w：模型输出不是有效 finding JSON 数组", errIncompleteReview)
+}
+
+func unwrapJSONCodeFence(raw string) (string, bool) {
+	if !strings.HasPrefix(raw, "```") {
+		return "", false
+	}
+	lineEnd := strings.IndexByte(raw, '\n')
+	if lineEnd < 0 || !strings.HasSuffix(raw, "```") {
+		return "", false
+	}
+	language := strings.TrimSpace(strings.TrimPrefix(raw[:lineEnd], "```"))
+	if language != "" && !strings.EqualFold(language, "json") {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimSuffix(raw[lineEnd+1:], "```")), true
+}
+
+func decodeFindingsArray(raw string) ([]ReviewFinding, error) {
+	var findings []ReviewFinding
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&findings); err != nil || findings == nil {
+		return nil, errors.New("invalid finding array")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, errors.New("trailing data after finding array")
+	}
+	for index, finding := range findings {
+		if err := validateFindingShape(finding); err != nil {
+			return nil, fmt.Errorf("%w：finding %d %v", errIncompleteReview, index+1, err)
+		}
+	}
+	return findings, nil
+}
+
+// extractJSONArrays finds complete arrays embedded in common model wrappers,
+// such as Markdown fences or a short preamble. Brackets inside strings are
+// ignored so finding evidence cannot terminate extraction early.
+func extractJSONArrays(raw string) []string {
+	arrays := []string{}
+	inString := false
+	escaped := false
+	start := -1
+	depth := 0
+	for index, char := range raw {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+				continue
+			}
+			if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		if char == '"' {
+			inString = true
+			continue
+		}
+		switch char {
+		case '[':
+			if depth == 0 {
+				start = index
+			}
+			depth++
+		case ']':
+			if depth == 0 {
+				continue
+			}
+			depth--
+			if depth == 0 && start >= 0 {
+				arrays = append(arrays, raw[start:index+1])
+				start = -1
+			}
+		}
+	}
+	return arrays
+}
+
+// decodeFindingArrayMembers tolerates separator mistakes such as a trailing
+// comma while still requiring a closed array of complete, schema-valid objects.
+func decodeFindingArrayMembers(raw string) ([]ReviewFinding, error) {
+	if len(raw) < 2 || raw[0] != '[' || raw[len(raw)-1] != ']' {
+		return nil, errors.New("incomplete finding array")
+	}
+	content := raw[1 : len(raw)-1]
+	members := []string{}
+	start := 0
+	objectDepth := 0
+	arrayDepth := 0
+	inString := false
+	escaped := false
+	for index, char := range content {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+				continue
+			}
+			if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '{':
+			objectDepth++
+		case '}':
+			objectDepth--
+			if objectDepth < 0 {
+				return nil, errors.New("unexpected object close")
+			}
+		case '[':
+			arrayDepth++
+		case ']':
+			arrayDepth--
+			if arrayDepth < 0 {
+				return nil, errors.New("unexpected array close")
+			}
+		case ',':
+			if objectDepth == 0 && arrayDepth == 0 {
+				members = append(members, strings.TrimSpace(content[start:index]))
+				start = index + 1
+			}
+		}
+	}
+	if inString || objectDepth != 0 || arrayDepth != 0 {
+		return nil, errors.New("incomplete finding object")
+	}
+	last := strings.TrimSpace(content[start:])
+	if last != "" {
+		members = append(members, last)
+	}
+	if len(members) == 0 {
+		return nil, errors.New("empty finding array")
+	}
+
+	findings := make([]ReviewFinding, 0, len(members))
+	for index, member := range members {
+		var finding ReviewFinding
+		decoder := json.NewDecoder(strings.NewReader(member))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&finding); err != nil {
+			return nil, fmt.Errorf("invalid finding %d: %w", index+1, err)
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			return nil, fmt.Errorf("trailing data in finding %d", index+1)
+		}
+		if err := validateFindingShape(finding); err != nil {
+			return nil, fmt.Errorf("%w：finding %d %v", errIncompleteReview, index+1, err)
+		}
+		findings = append(findings, finding)
+	}
+	return findings, nil
 }
 
 func validateFindingShape(finding ReviewFinding) error {

@@ -14,6 +14,8 @@ type DBReviewJob struct {
 	SourceURL        string            `gorm:"type:text"`
 	InputHash        string            `gorm:"size:64;not null;index"`
 	Status           string            `gorm:"size:24;not null;index"`
+	ReviewOutcome    string            `gorm:"size:32;index"`
+	ReviewScopeJSON  string            `gorm:"type:longtext"`
 	BudgetCents      int               `gorm:"not null;default:1000"`
 	SpentCents       int               `gorm:"not null;default:0"`
 	ErrorMessage     string            `gorm:"type:text"`
@@ -31,17 +33,23 @@ type DBReviewJob struct {
 func (DBReviewJob) TableName() string { return "review_jobs" }
 
 type DBReviewComment struct {
-	ID          uint      `gorm:"primaryKey"`
-	JobID       uint      `gorm:"not null;index:idx_review_comment_job_created;index:idx_review_comment_fingerprint"`
-	TraceID     string    `gorm:"size:32;not null;index"`
-	Fingerprint string    `gorm:"size:64;not null;index:idx_review_comment_fingerprint"`
-	File        string    `gorm:"size:512;not null"`
-	Line        int       `gorm:"not null;default:1"`
-	Severity    string    `gorm:"size:16;not null;index"`
-	Confidence  string    `gorm:"size:16;not null;index"`
-	Body        string    `gorm:"type:text;not null"`
-	Status      string    `gorm:"size:16;not null;default:'open';index"`
-	CreatedAt   time.Time `gorm:"not null;index:idx_review_comment_job_created"`
+	ID                 uint      `gorm:"primaryKey"`
+	JobID              uint      `gorm:"not null;index:idx_review_comment_job_created;index:idx_review_comment_fingerprint"`
+	TraceID            string    `gorm:"size:32;not null;index"`
+	Fingerprint        string    `gorm:"size:64;not null;index:idx_review_comment_fingerprint"`
+	File               string    `gorm:"size:512;not null"`
+	Line               int       `gorm:"not null;default:1"`
+	Severity           string    `gorm:"size:16;not null;index"`
+	Confidence         string    `gorm:"size:16;not null;index"`
+	Body               string    `gorm:"type:text;not null"`
+	Evidence           string    `gorm:"type:longtext"`
+	Trigger            string    `gorm:"type:longtext"`
+	Impact             string    `gorm:"type:longtext"`
+	Suggestion         string    `gorm:"type:longtext"`
+	VerificationStatus string    `gorm:"size:40;index"`
+	VerificationReason string    `gorm:"type:text"`
+	Status             string    `gorm:"size:16;not null;default:'open';index"`
+	CreatedAt          time.Time `gorm:"not null;index:idx_review_comment_job_created"`
 }
 
 func (DBReviewComment) TableName() string { return "review_comments" }

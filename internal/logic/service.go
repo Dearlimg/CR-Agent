@@ -151,18 +151,19 @@ func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 	todos := []model.TodoItem{
 		{Content: "扫描并解析代码变更", Status: "pending", Order: 0},
 		{Content: "按变更规模执行代码审查", Status: "pending", Order: 1},
-		{Content: "校验并去重审查发现", Status: "pending", Order: 2},
+		{Content: "核对代码证据、第二轮复核并去重审查发现", Status: "pending", Order: 2},
 	}
 	j := &model.ReviewJob{
-		ID:         id(req.Source + req.Diff),
-		Status:     "queued",
-		Source:     req.Source,
-		StartedAt:  now,
-		UpdatedAt:  now,
-		Comments:   []model.ReviewComment{},
-		Trace:      []model.TraceEvent{},
-		Todos:      todos,
-		TeamEvents: []model.TeamEvent{},
+		ID:          id(req.Source + req.Diff),
+		Status:      "queued",
+		Source:      req.Source,
+		StartedAt:   now,
+		UpdatedAt:   now,
+		Comments:    []model.ReviewComment{},
+		ReviewScope: model.ReviewScope{Checks: []model.ReviewCheck{}},
+		Trace:       []model.TraceEvent{},
+		Todos:       todos,
+		TeamEvents:  []model.TeamEvent{},
 	}
 	recorder := newTraceRecorder(j)
 	taskSpan := recorder.Start("input", "task_create", "task", reviewTaskSubject(req), "")
@@ -197,6 +198,7 @@ func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 	}); err != nil {
 		finished := time.Now().UTC()
 		j.Status = "failed"
+		j.ReviewOutcome = "failed"
 		j.Error = fmt.Sprintf("启动后台审查失败：%v", err)
 		j.FinishedAt = &finished
 		j.UpdatedAt = finished
@@ -218,10 +220,21 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		j.StartedAt = time.Now().UTC()
 	}
 	j.Status = "running"
+	j.ReviewOutcome = ""
 	j.UpdatedAt = time.Now().UTC()
 	_ = s.Store.Save(j)
 	defer func() {
 		recorder.Flush()
+		if j.ReviewOutcome == "" {
+			if j.Status == "failed" {
+				j.ReviewOutcome = "failed"
+			} else {
+				j.ReviewOutcome = "incomplete"
+			}
+		}
+		if j.ReviewOutcome == "incomplete" && j.Status == "completed" {
+			j.Status = "completed_with_warnings"
+		}
 		finished := time.Now().UTC()
 		j.FinishedAt = &finished
 		j.UpdatedAt = finished
@@ -249,8 +262,7 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		fetchTraceID := fetchSpan.ID()
 		if err != nil {
 			_ = s.Store.RecordToolCall(j.ID, fetchTraceID, "diff_fetcher", "failed", req.Source, "", err.Error(), fetchDuration)
-			j.Status = "failed"
-			j.Error = err.Error()
+			setReviewFailure(j, err, err.Error())
 			return
 		}
 		_ = s.Store.RecordToolCall(j.ID, fetchTraceID, "diff_fetcher", "succeeded", req.Source, fmt.Sprintf("diff_bytes=%d", len(diff)), "", fetchDuration)
@@ -258,18 +270,31 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	}
 	artifacts := &ReviewArtifacts{}
 	if err := s.Loop.Run(ctx, ToolInput{Job: j, Diff: req.Diff, Tracer: recorder, Artifacts: artifacts}); err != nil {
-		j.Status = "failed"
-		j.Error = err.Error()
+		setReviewFailure(j, err, err.Error())
 		recorder.Flush()
 		return
 	}
+	j.ReviewScope = model.ReviewScope{
+		FilesReviewed: len(artifacts.Files),
+		AddedLines:    artifacts.AddedLines,
+		TestsRan:      false,
+		Checks:        make([]model.ReviewCheck, 0, len(artifacts.Checks)+2),
+	}
+	for _, check := range artifacts.Checks {
+		j.ReviewScope.Checks = append(j.ReviewScope.Checks, model.ReviewCheck{
+			Name: check.Name, Status: check.Status, Message: check.Message,
+		})
+	}
+	j.ReviewScope.Checks = append(j.ReviewScope.Checks, model.ReviewCheck{
+		Name: "automated_tests", Status: "not_run", Message: "本次审查流程未运行自动化测试",
+	})
 	recorder.Flush()
 	if decision := s.Loop.Policy.Decide(PermissionLLMInference); decision != PermissionAllow {
 		j.Status = "failed"
 		j.Error = permissionError("subagent_review", PermissionLLMInference, decision).Error()
 		return
 	}
-	teamWarnings := false
+	incompleteReason := preflightIncompleteReason(*artifacts)
 	if s.SkillError != nil {
 		j.Status = "failed"
 		j.Error = fmt.Sprintf("加载 Agent skills 失败：%v", s.SkillError)
@@ -346,8 +371,8 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	}
 	flushHarness()
 	if teamErr != nil {
-		j.Status = "failed"
-		j.Error = fmt.Sprintf("团队专项审查失败：%v", teamErr)
+		setReviewFailure(j, teamErr, fmt.Sprintf("团队专项审查失败：%v", teamErr))
+		updateReviewCheck(&j.ReviewScope, "finding_verification", "failed", "团队专项审查服务失败")
 		return
 	}
 	j.TeamEvents = append(j.TeamEvents, teamEvents...)
@@ -363,7 +388,13 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	contextMessages := make([]ContextMessage, 0, len(subResults))
 	for _, result := range subResults {
 		if result.Error != nil {
-			teamWarnings = true
+			if isIncompleteReviewError(result.Error) {
+				incompleteReason = "专项审查输出无效或被截断，审查覆盖不完整。"
+			} else {
+				setReviewFailure(j, result.Error, "专项审查模型调用失败："+redact(result.Error.Error()))
+				updateReviewCheck(&j.ReviewScope, "finding_verification", "failed", "专项审查模型调用失败")
+				return
+			}
 		}
 		toolName := "subagent_" + result.Name
 		traceID := result.TraceID
@@ -396,7 +427,7 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	var modelTraceID string
 	if reviewMode == "single" {
 		if len(subResults) == 0 {
-			synthesisErr = fmt.Errorf("主审查 Agent 未返回结果")
+			synthesisErr = fmt.Errorf("%w：主审查 Agent 未返回结果", errIncompleteReview)
 		} else {
 			reply = subResults[0].Summary
 			synthesisErr = subResults[0].Error
@@ -411,8 +442,7 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		})
 		if compactErr != nil {
 			compactSpan.End(TraceResult{Err: compactErr, Origin: "orchestrator"})
-			j.Status = "failed"
-			j.Error = fmt.Sprintf("压缩审查上下文失败：%v", compactErr)
+			setReviewFailure(j, compactErr, fmt.Sprintf("压缩审查上下文失败：%v", compactErr))
 			return
 		}
 		compactSpan.End(TraceResult{
@@ -443,53 +473,156 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	}
 	var goalStop *GoalStopError
 	if errors.As(synthesisErr, &goalStop) {
-		j.Status = "failed"
+		j.Status = "completed_with_warnings"
+		j.ReviewOutcome = "incomplete"
 		j.Error = goalStop.Error()
+		updateReviewCheck(&j.ReviewScope, "finding_verification", "incomplete", "最终审查步骤未能生成完整结论")
 		return
 	}
-	synthesisWarning := synthesisErr != nil
 	if synthesisErr != nil {
-		j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "low", Body: "模型调用失败：" + redact(synthesisErr.Error()), TraceID: modelTraceID}}
-	} else {
-		j.SpentCents = 1
-		findings, parseErr := parseFindingsStrict(reply)
-		if parseErr != nil {
-			teamWarnings = true
-			recorder.Record("input", "finding_verification", "verification", "模型 finding 与变更行核对", "", TraceResult{
-				Err: parseErr, Origin: "orchestrator",
-			})
-			j.Comments = []model.ReviewComment{{
-				File: "diff", Line: 1, Severity: "info", Confidence: "low",
-				Body: "模型输出不是有效的 finding 数组，审查结论不完整。", TraceID: modelTraceID,
-			}}
-		} else {
-			j.Comments = verifiedComments(findings, *artifacts, modelTraceID)
-			recorder.Record("input", "finding_verification", "verification", "模型 finding 与变更行核对", "", TraceResult{
-				Output: fmt.Sprintf("候选=%d 接受=%d", len(findings), len(j.Comments)), Origin: "orchestrator",
-			})
-			if len(j.Comments) == 0 {
-				message := "未发现需要评论的问题。"
-				if len(findings) > 0 {
-					message = "模型报告的问题未通过变更行校验，请查看审查轨迹。"
-					teamWarnings = true
-				}
-				j.Comments = []model.ReviewComment{{File: "diff", Line: 1, Severity: "info", Confidence: "high", Body: message, TraceID: modelTraceID}}
-			}
+		if isIncompleteReviewError(synthesisErr) {
+			setReviewFailure(j, synthesisErr, "审查未完成："+redact(synthesisErr.Error()))
+			updateReviewCheck(&j.ReviewScope, "finding_verification", "incomplete", "最终审查步骤超时、被截断或未返回可解析内容")
+			return
 		}
+		setReviewFailure(j, synthesisErr, "模型调用失败："+redact(synthesisErr.Error()))
+		updateReviewCheck(&j.ReviewScope, "finding_verification", "failed", "最终审查模型调用失败")
+		return
+	}
+	j.SpentCents = 1
+	findings, parseErr := parseFindingsStrict(reply)
+	if parseErr != nil {
+		recorder.Record("input", "finding_verification", "verification", "解析模型 finding", "", TraceResult{
+			Err: parseErr, Origin: "orchestrator",
+		})
+		j.Status = "completed_with_warnings"
+		j.ReviewOutcome = "incomplete"
+		j.Error = "审查未完成：模型输出不是有效的 finding JSON 数组。"
+		updateReviewCheck(&j.ReviewScope, "finding_verification", "incomplete", "模型输出格式无效，未能完成 finding 核验")
+		return
+	}
+	withEvidence, rejectedEvidence := validateFindingEvidence(findings, artifacts.SanitizedDiff)
+	confirmed := make([]ReviewFinding, 0, len(withEvidence))
+	rejectedByVerifier := 0
+	incompleteVerifications := 0
+	for _, finding := range withEvidence {
+		isReal, reason, verifyTraceID, verifyErr := verifyFindingIndependently(ctx, findingVerificationRequest{
+			Config: s.Config, Diff: artifacts.SanitizedDiff, Finding: finding, Recorder: recorder,
+		})
+		if verifyErr != nil {
+			if isIncompleteReviewError(verifyErr) {
+				incompleteVerifications++
+				if incompleteReason == "" {
+					incompleteReason = "部分问题的第二轮复核没有完成。"
+				}
+				continue
+			}
+			j.Comments = verifiedComments(confirmed, *artifacts, modelTraceID)
+			setReviewFailure(j, verifyErr, "第二轮复核模型调用失败："+redact(verifyErr.Error()))
+			updateReviewCheck(&j.ReviewScope, "finding_verification", "failed", "第二轮复核模型调用失败")
+			return
+		}
+		if !isReal {
+			rejectedByVerifier++
+			continue
+		}
+		finding.VerificationStatus = "second_pass_review_passed"
+		finding.VerificationReason = reason
+		finding.VerificationTraceID = verifyTraceID
+		confirmed = append(confirmed, finding)
+	}
+	j.Comments = verifiedComments(confirmed, *artifacts, modelTraceID)
+	verificationStatus := "passed"
+	verificationMessage := fmt.Sprintf(
+		"候选=%d；证据匹配=%d；第二轮复核确认=%d；第二轮复核排除=%d",
+		len(findings), len(withEvidence), len(j.Comments), rejectedByVerifier,
+	)
+	if len(findings) == 0 && incompleteReason == "" {
+		verificationStatus = "not_needed"
+		verificationMessage = "模型未报告候选问题，无需逐条复核"
+	} else if incompleteReason != "" || rejectedEvidence > 0 {
+		verificationStatus = "incomplete"
+		verificationMessage += fmt.Sprintf("；证据不足=%d；复核未完成=%d", rejectedEvidence, incompleteVerifications)
+		if incompleteReason != "" {
+			verificationMessage += "；" + incompleteReason
+		}
+	}
+	updateReviewCheck(&j.ReviewScope, "finding_verification", verificationStatus, verificationMessage)
+	recorder.Record("input", "finding_verification", "verification", "代码证据与第二轮复核", "", TraceResult{
+		Output: verificationMessage, Origin: "orchestrator",
+	})
+	if rejectedEvidence > 0 && incompleteReason == "" {
+		incompleteReason = "有候选问题缺少与变更行完全匹配的代码证据，审查未能完整核验。"
+	}
+	if incompleteReason != "" {
+		j.Status = "completed_with_warnings"
+		j.ReviewOutcome = "incomplete"
+		j.Error = incompleteReason
+	} else if len(j.Comments) > 0 {
+		j.ReviewOutcome = "completed_with_findings"
+	} else {
+		j.ReviewOutcome = "completed_no_findings"
 	}
 	setTodoStatus(j, 2, "completed")
 	if err := ctx.Err(); err != nil {
-		j.Status = "failed"
-		j.Error = "后台审查已取消"
+		setReviewFailure(j, err, "后台审查已取消")
 		return
 	}
 	s.extractReviewMemories(ctx, j, req)
 	s.completeReviewTask(j, recorder)
-	if teamWarnings || synthesisWarning {
+	if j.ReviewOutcome == "incomplete" {
 		j.Status = "completed_with_warnings"
 	} else {
 		j.Status = "completed"
 	}
+}
+
+func updateReviewCheck(scope *model.ReviewScope, name, status, message string) {
+	for index := range scope.Checks {
+		if scope.Checks[index].Name == name {
+			scope.Checks[index].Status = status
+			scope.Checks[index].Message = message
+			return
+		}
+	}
+	scope.Checks = append(scope.Checks, model.ReviewCheck{Name: name, Status: status, Message: message})
+}
+
+func preflightIncompleteReason(artifacts ReviewArtifacts) string {
+	failedChecks := 0
+	for _, check := range artifacts.Checks {
+		if check.Status == "failed" {
+			failedChecks++
+		}
+	}
+	if failedChecks > 0 || len(artifacts.SecretFindings) > 0 {
+		return fmt.Sprintf("前置检查发现 %d 项失败、%d 个疑似敏感信息命中，需人工确认。", failedChecks, len(artifacts.SecretFindings))
+	}
+	return ""
+}
+
+func setReviewFailure(job *model.ReviewJob, err error, message string) {
+	job.Error = message
+	if isIncompleteReviewError(err) {
+		job.Status = "completed_with_warnings"
+		job.ReviewOutcome = "incomplete"
+		return
+	}
+	job.Status = "failed"
+	job.ReviewOutcome = "failed"
+}
+
+func isIncompleteReviewError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, errIncompleteReview) ||
+		isTruncatedReviewError(err) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, context.Canceled) ||
+		strings.Contains(err.Error(), "空响应") ||
+		strings.Contains(strings.ToLower(err.Error()), "timeout") ||
+		strings.Contains(strings.ToLower(err.Error()), "timed out")
 }
 
 func reviewTaskSubject(req model.ReviewRequest) string {

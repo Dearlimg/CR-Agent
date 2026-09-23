@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -119,6 +120,7 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 		TaskID:           row.TaskID,
 		BackgroundTaskID: row.BackgroundTaskID,
 		Status:           row.Status,
+		ReviewOutcome:    row.ReviewOutcome,
 		Source:           row.SourceURL,
 		SpentCents:       row.SpentCents,
 		StartedAt:        *startedAt,
@@ -130,14 +132,23 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 		Todos:            []model.TodoItem{},
 		TeamEvents:       []model.TeamEvent{},
 	}
+	if row.ReviewScopeJSON != "" {
+		_ = json.Unmarshal([]byte(row.ReviewScopeJSON), &job.ReviewScope)
+	}
 	for _, comment := range row.Comments {
 		job.Comments = append(job.Comments, model.ReviewComment{
-			File:       comment.File,
-			Line:       comment.Line,
-			Severity:   comment.Severity,
-			Confidence: comment.Confidence,
-			Body:       comment.Body,
-			TraceID:    comment.TraceID,
+			File:               comment.File,
+			Line:               comment.Line,
+			Severity:           comment.Severity,
+			Confidence:         comment.Confidence,
+			Body:               comment.Body,
+			Evidence:           comment.Evidence,
+			Trigger:            comment.Trigger,
+			Impact:             comment.Impact,
+			Suggestion:         comment.Suggestion,
+			VerificationStatus: comment.VerificationStatus,
+			VerificationReason: comment.VerificationReason,
+			TraceID:            comment.TraceID,
 		})
 	}
 	for _, trace := range row.Traces {
@@ -246,6 +257,12 @@ func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.D
 	row.BackgroundTaskID = job.BackgroundTaskID
 	row.SourceURL = job.Source
 	row.Status = job.Status
+	row.ReviewOutcome = job.ReviewOutcome
+	reviewScope, err := json.Marshal(job.ReviewScope)
+	if err != nil {
+		return model.DBReviewJob{}, fmt.Errorf("编码审查范围: %w", err)
+	}
+	row.ReviewScopeJSON = string(reviewScope)
 	row.SpentCents = job.SpentCents
 	row.ErrorMessage = job.Error
 	if !job.StartedAt.IsZero() {
@@ -276,6 +293,8 @@ func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.D
 		"background_task_id": row.BackgroundTaskID,
 		"source_url":         row.SourceURL,
 		"status":             row.Status,
+		"review_outcome":     row.ReviewOutcome,
+		"review_scope_json":  row.ReviewScopeJSON,
 		"spent_cents":        row.SpentCents,
 		"error_message":      row.ErrorMessage,
 		"started_at":         row.StartedAt,
@@ -295,16 +314,22 @@ func (s *MySQLStore) saveComments(tx *gorm.DB, jobID uint, job *model.ReviewJob)
 		err := tx.Where("job_id = ? AND fingerprint = ?", jobID, fingerprint).First(&row).Error
 		if err == gorm.ErrRecordNotFound {
 			row = model.DBReviewComment{
-				JobID:       jobID,
-				TraceID:     comment.TraceID,
-				Fingerprint: fingerprint,
-				File:        comment.File,
-				Line:        comment.Line,
-				Severity:    comment.Severity,
-				Confidence:  comment.Confidence,
-				Body:        comment.Body,
-				Status:      "open",
-				CreatedAt:   time.Now().UTC(),
+				JobID:              jobID,
+				TraceID:            comment.TraceID,
+				Fingerprint:        fingerprint,
+				File:               comment.File,
+				Line:               comment.Line,
+				Severity:           comment.Severity,
+				Confidence:         comment.Confidence,
+				Body:               comment.Body,
+				Evidence:           comment.Evidence,
+				Trigger:            comment.Trigger,
+				Impact:             comment.Impact,
+				Suggestion:         comment.Suggestion,
+				VerificationStatus: comment.VerificationStatus,
+				VerificationReason: comment.VerificationReason,
+				Status:             "open",
+				CreatedAt:          time.Now().UTC(),
 			}
 			if err := tx.Create(&row).Error; err != nil {
 				return fmt.Errorf("保存 review comment: %w", err)
@@ -315,10 +340,17 @@ func (s *MySQLStore) saveComments(tx *gorm.DB, jobID uint, job *model.ReviewJob)
 			return err
 		}
 		if err := tx.Model(&row).Updates(map[string]any{
-			"trace_id":   comment.TraceID,
-			"severity":   comment.Severity,
-			"confidence": comment.Confidence,
-			"status":     "open",
+			"trace_id":            comment.TraceID,
+			"severity":            comment.Severity,
+			"confidence":          comment.Confidence,
+			"body":                comment.Body,
+			"evidence":            comment.Evidence,
+			"trigger":             comment.Trigger,
+			"impact":              comment.Impact,
+			"suggestion":          comment.Suggestion,
+			"verification_status": comment.VerificationStatus,
+			"verification_reason": comment.VerificationReason,
+			"status":              "open",
 		}).Error; err != nil {
 			return fmt.Errorf("更新 review comment: %w", err)
 		}

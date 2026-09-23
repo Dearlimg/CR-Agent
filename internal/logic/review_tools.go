@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -89,9 +90,20 @@ func verifiedComments(findings []ReviewFinding, artifacts ReviewArtifacts, trace
 		if confidence != "high" && confidence != "medium" && confidence != "low" {
 			confidence = "low"
 		}
+		commentTraceID := finding.VerificationTraceID
+		if commentTraceID == "" {
+			commentTraceID = traceID
+		}
 		out = append(out, model.ReviewComment{
 			File: file, Line: finding.Line, Severity: severity,
-			Confidence: confidence, Body: body, TraceID: traceID,
+			Confidence: confidence, Body: redactFindingText(strings.TrimSpace(finding.Body)),
+			Evidence:           redactFindingText(strings.TrimSpace(finding.Evidence)),
+			Trigger:            redactFindingText(strings.TrimSpace(finding.Trigger)),
+			Impact:             redactFindingText(strings.TrimSpace(finding.Impact)),
+			Suggestion:         redactFindingText(strings.TrimSpace(finding.Suggestion)),
+			VerificationStatus: finding.VerificationStatus,
+			VerificationReason: redactFindingText(strings.TrimSpace(finding.VerificationReason)),
+			TraceID:            commentTraceID,
 		})
 	}
 	priority := map[string]int{"high": 0, "medium": 1, "low": 2}
@@ -99,4 +111,65 @@ func verifiedComments(findings []ReviewFinding, artifacts ReviewArtifacts, trace
 		return priority[out[i].Severity] < priority[out[j].Severity]
 	})
 	return out
+}
+
+func validateFindingEvidence(findings []ReviewFinding, diff string) ([]ReviewFinding, int) {
+	added := addedLineContent(diff)
+	verified := make([]ReviewFinding, 0, len(findings))
+	rejected := 0
+	for _, finding := range findings {
+		file := strings.TrimSpace(finding.File)
+		evidence := finding.Evidence
+		line, exists := added[file][finding.Line]
+		complete := strings.TrimSpace(finding.Body) != "" &&
+			strings.TrimSpace(finding.Trigger) != "" &&
+			strings.TrimSpace(finding.Impact) != "" &&
+			strings.TrimSpace(finding.Suggestion) != ""
+		if !exists || evidence == "" || line != evidence || !complete {
+			rejected++
+			continue
+		}
+		finding.File = file
+		finding.Evidence = evidence
+		verified = append(verified, finding)
+	}
+	return verified, rejected
+}
+
+func addedLineContent(diff string) map[string]map[int]string {
+	added := map[string]map[int]string{}
+	file := ""
+	lineNumber := 0
+	if !strings.Contains(diff, "diff --git ") {
+		file = "diff"
+		lineNumber = 1
+		added[file] = map[int]string{}
+	}
+	for _, line := range strings.Split(diff, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(line, "diff --git ") {
+			file = diffFilePath(line)
+			lineNumber = 0
+			if added[file] == nil {
+				added[file] = map[int]string{}
+			}
+			continue
+		}
+		if match := hunkPattern.FindStringSubmatch(line); len(match) == 2 {
+			lineNumber, _ = strconv.Atoi(match[1])
+			continue
+		}
+		if lineNumber == 0 {
+			continue
+		}
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			added[file][lineNumber] = strings.TrimPrefix(line, "+")
+			lineNumber++
+			continue
+		}
+		if strings.HasPrefix(line, " ") {
+			lineNumber++
+		}
+	}
+	return added
 }

@@ -10,12 +10,31 @@ type ReviewRequest struct {
 	BudgetCents int    `json:"budget_cents"`
 }
 type ReviewComment struct {
-	File       string `json:"file"`
-	Line       int    `json:"line"`
-	Severity   string `json:"severity"`
-	Confidence string `json:"confidence"`
-	Body       string `json:"body"`
-	TraceID    string `json:"trace_id"`
+	File               string `json:"file"`
+	Line               int    `json:"line"`
+	Severity           string `json:"severity"`
+	Confidence         string `json:"confidence"`
+	Body               string `json:"body"`
+	Evidence           string `json:"evidence"`
+	Trigger            string `json:"trigger"`
+	Impact             string `json:"impact"`
+	Suggestion         string `json:"suggestion"`
+	VerificationStatus string `json:"verification_status"`
+	VerificationReason string `json:"verification_reason"`
+	TraceID            string `json:"trace_id"`
+}
+
+type ReviewCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+type ReviewScope struct {
+	FilesReviewed int           `json:"files_reviewed"`
+	AddedLines    int           `json:"added_lines"`
+	TestsRan      bool          `json:"tests_ran"`
+	Checks        []ReviewCheck `json:"checks"`
 }
 type TodoItem struct {
 	Content string `json:"content"`
@@ -62,6 +81,8 @@ type ReviewJob struct {
 	TaskID           string          `json:"task_id"`
 	BackgroundTaskID string          `json:"background_task_id"`
 	Status           string          `json:"status"`
+	ReviewOutcome    string          `json:"review_outcome,omitempty"`
+	ReviewScope      ReviewScope     `json:"review_scope"`
 	Source           string          `json:"source"`
 	Comments         []ReviewComment `json:"comments"`
 	Todos            []TodoItem      `json:"todos"`

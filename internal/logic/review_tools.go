@@ -121,16 +121,19 @@ func validateFindingEvidence(findings []ReviewFinding, diff string) ([]ReviewFin
 		file := strings.TrimSpace(finding.File)
 		evidence := finding.Evidence
 		line, exists := added[file][finding.Line]
+		// Models often omit code indentation; keep the exact diff line for the second pass.
+		evidenceMatches := strings.TrimSpace(evidence) != "" &&
+			strings.TrimSpace(line) == strings.TrimSpace(evidence)
 		complete := strings.TrimSpace(finding.Body) != "" &&
 			strings.TrimSpace(finding.Trigger) != "" &&
 			strings.TrimSpace(finding.Impact) != "" &&
 			strings.TrimSpace(finding.Suggestion) != ""
-		if !exists || evidence == "" || line != evidence || !complete {
+		if !exists || !evidenceMatches || !complete {
 			rejected++
 			continue
 		}
 		finding.File = file
-		finding.Evidence = evidence
+		finding.Evidence = line
 		verified = append(verified, finding)
 	}
 	return verified, rejected

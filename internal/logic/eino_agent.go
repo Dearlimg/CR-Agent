@@ -26,6 +26,10 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 	}
 	harness := newReviewHarness()
 	harness.Compactor = NewContextCompactor(cfg)
+	outputBudget := cfg.ModelMaxOutputTokens
+	if outputBudget <= 0 {
+		outputBudget = 8192
+	}
 	round := 0
 	nextRound := func() int {
 		round++
@@ -72,7 +76,7 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		}
 		modelRound := nextRound()
 		retryCount := 0
-		return generateWithinLengthBudget(messages, 4096, func(input []*schema.Message, budget int) (*schema.Message, error) {
+		return generateWithinLengthBudget(messages, outputBudget, func(input []*schema.Message, budget int) (*schema.Message, error) {
 			return retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
 				attempt := retryCount
 				retryCount++

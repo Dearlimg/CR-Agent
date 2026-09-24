@@ -31,6 +31,7 @@ type Config struct {
 	TeamMailboxDir       string
 	TeamMaxConcurrency   int
 	ModelMaxRetries      int
+	ModelMaxOutputTokens int
 	ModelRetryBaseMs     int
 	CronPollIntervalMs   int
 	MemoryMaxRecall      int
@@ -74,12 +75,13 @@ func LoadConfig() Config {
 		TeamMailboxDir:       b("AGENT_TEAM_MAILBOX_DIR", ".team-mailboxes"),
 		TeamMaxConcurrency:   intEnv(b, "AGENT_TEAM_MAX_CONCURRENCY", 2),
 		ModelMaxRetries:      intEnv(b, "MODEL_MAX_RETRIES", 2),
+		ModelMaxOutputTokens: intEnv(b, "MODEL_MAX_OUTPUT_TOKENS", 8192),
 		ModelRetryBaseMs:     intEnv(b, "MODEL_RETRY_BASE_MS", 500),
 		CronPollIntervalMs:   intEnv(b, "CRON_POLL_INTERVAL_MS", 1000),
 		MemoryMaxRecall:      intEnv(b, "MEMORY_MAX_RECALL", 5),
 		MemoryMaxChars:       intEnv(b, "MEMORY_MAX_CHARS", 6000),
 		MemoryConsolidateAt:  intEnv(b, "MEMORY_CONSOLIDATE_AT", 10),
-		ContextCharLimit:     intEnv(b, "CONTEXT_CHAR_LIMIT", 50000),
+		ContextCharLimit:     intEnv(b, "CONTEXT_CHAR_LIMIT", 250000),
 		ToolResultBudget:     intEnv(b, "TOOL_RESULT_BUDGET", 200000),
 		LargeResultCharLimit: intEnv(b, "LARGE_RESULT_CHAR_LIMIT", 30000),
 		ContextMaxMessages:   intEnv(b, "CONTEXT_MAX_MESSAGES", 50),

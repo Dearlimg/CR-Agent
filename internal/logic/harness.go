@@ -248,6 +248,9 @@ func (h *ReviewHarness) Run(ctx context.Context, prompt string) (string, error) 
 		input := append([]*schema.Message{{Role: schema.System, Content: system}}, messages...)
 		reply, err := h.Model(ctx, input, infos)
 		if err != nil && h.Compactor != nil && isContextOverflow(err) {
+			if len(messages) == 1 {
+				return "", fmt.Errorf("当前输入超过模型单次上下文容量，无法完整提交：%w", err)
+			}
 			reduced := *h.Compactor
 			reduced.MaxMessages = 1
 			original := h.Compactor
@@ -427,7 +430,7 @@ func (h *ReviewHarness) compact(ctx context.Context, messages []*schema.Message)
 		}
 	}
 	if cut <= 1 {
-		return nil, fmt.Errorf("当前请求或单轮工具结果超过上下文预算")
+		return nil, fmt.Errorf("当前请求或单轮工具结果超过 CONTEXT_CHAR_LIMIT，无法完整提交给模型")
 	}
 	archive, err := h.Compactor.saveTranscript([]ContextMessage{{Role: ContextRoleAssistant, Content: string(encoded)}})
 	if err != nil {

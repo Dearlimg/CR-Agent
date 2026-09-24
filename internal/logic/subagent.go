@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 )
@@ -93,37 +92,20 @@ func runReviewSpecialist(ctx context.Context, request specialistRunRequest) Suba
 	}
 	modelCtx = withReviewPrompt(modelCtx)
 	safeDiff := sanitizeDiff(request.Diff)
-	chunks, chunkErr := splitReviewDiff(safeDiff, reviewDiffChunkCharLimit)
-	findings := []ReviewFinding{}
-	chunkErrors := []string{}
-	if chunkErr != nil {
-		chunkErrors = append(chunkErrors, chunkErr.Error())
-	} else {
-		for index, diffChunk := range chunks {
-			chunkFindings, err := reviewChunk(modelCtx, request, diffChunk, index+1, len(chunks))
-			if err != nil {
-				chunkErrors = append(chunkErrors, err.Error())
-				continue
-			}
-			findings = append(findings, chunkFindings...)
-		}
+	findings, reviewErr := reviewOnce(modelCtx, request, safeDiff)
+	if reviewErr != nil {
+		findings = []ReviewFinding{}
 	}
-
 	summaryBytes, marshalErr := json.Marshal(findings)
-	if marshalErr != nil {
-		chunkErrors = append(chunkErrors, "编码审查结果失败")
-	}
 	summary := string(summaryBytes)
 	if marshalErr != nil {
 		summary = "[]"
 	}
 	var err error
-	if len(chunkErrors) > 0 {
-		totalChunks := len(chunks)
-		if totalChunks == 0 {
-			totalChunks = 1
-		}
-		err = fmt.Errorf("%w：%d/%d 个审查分片未完成：%s", errIncompleteReview, len(chunkErrors), totalChunks, strings.Join(chunkErrors, "；"))
+	if reviewErr != nil {
+		err = fmt.Errorf("%w：%v", errIncompleteReview, reviewErr)
+	} else if marshalErr != nil {
+		err = fmt.Errorf("%w：编码审查结果失败：%v", errIncompleteReview, marshalErr)
 	}
 	duration := time.Since(started).Milliseconds()
 	traceID := ""
@@ -142,13 +124,11 @@ func runReviewSpecialist(ctx context.Context, request specialistRunRequest) Suba
 	return SubagentResult{Name: request.Agent.Name, Summary: summary, Error: err, TraceID: traceID, DurationMs: duration}
 }
 
-func reviewChunk(ctx context.Context, request specialistRunRequest, diff string, index, total int) ([]ReviewFinding, error) {
-	promptContext := request.PromptContext
-	promptContext.Evidence += fmt.Sprintf("\n当前审查分片：%d/%d。只根据此分片报告候选，其余分片由同一个审查 Agent 依次处理。", index, total)
-	prompt := BuildReviewSubagentPrompt(request.Agent.Focus, promptContext, diff)
+func reviewOnce(ctx context.Context, request specialistRunRequest, diff string) ([]ReviewFinding, error) {
+	prompt := BuildReviewSubagentPrompt(request.Agent.Focus, request.PromptContext, diff)
 	reply, err := request.Infer(ctx, request.Config, prompt)
 	if err != nil {
-		return nil, fmt.Errorf("分片 %d/%d 模型调用失败：%v", index, total, redact(err.Error()))
+		return nil, fmt.Errorf("完整 diff 审查模型调用失败：%v", redact(err.Error()))
 	}
 
 	reply = sanitizeModelReply(reply)
@@ -173,7 +153,7 @@ func reviewChunk(ctx context.Context, request specialistRunRequest, diff string,
 			return repairedFindings, nil
 		}
 	}
-	return nil, fmt.Errorf("分片 %d/%d 输出格式无效，格式修复未能保留有效候选", index, total)
+	return nil, fmt.Errorf("审查输出格式无效，格式修复未能保留有效候选")
 }
 
 func buildSpecialistRepairPrompt(raw string) string {

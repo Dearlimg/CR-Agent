@@ -141,8 +141,8 @@ func TestEinoAgentRecordsWireUsageAcrossLengthRetry(t *testing.T) {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if request.MaxTokens != 4096 {
-			t.Errorf("max_tokens=%d, want 4096", request.MaxTokens)
+		if request.MaxTokens != 16384 {
+			t.Errorf("max_tokens=%d, want 16384", request.MaxTokens)
 		}
 		if calls == 2 && !strings.Contains(request.Messages[len(request.Messages)-1].Content, "精简") {
 			t.Error("length retry did not request concise re-answer")
@@ -173,7 +173,11 @@ func TestEinoAgentRecordsWireUsageAcrossLengthRetry(t *testing.T) {
 	recorder := newTraceRecorder(job)
 	ctx := withTraceParent(withTraceRecorder(context.Background(), recorder), "review-parent")
 	ctx = context.WithValue(ctx, harnessSetupKey{}, func(*ReviewHarness) {})
-	answer, err := EinoReviewAgent(ctx, Config{DeepSeekAPIKey: "test-only", DeepSeekBaseURL: server.URL}, "review")
+	answer, err := EinoReviewAgent(ctx, Config{
+		DeepSeekAPIKey:       "test-only",
+		DeepSeekBaseURL:      server.URL,
+		ModelMaxOutputTokens: 16384,
+	}, "review")
 	if err != nil || answer != "[]" || calls != 2 {
 		t.Fatalf("answer=%q calls=%d err=%v", answer, calls, err)
 	}

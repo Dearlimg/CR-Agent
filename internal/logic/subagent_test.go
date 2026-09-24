@@ -124,7 +124,7 @@ func TestReviewSpecialistAcceptsEmptyValidReportWithoutRepair(t *testing.T) {
 	}
 }
 
-func TestReviewSpecialistReviewsAllLargeDiffChunks(t *testing.T) {
+func TestReviewSpecialistSubmitsCompleteLargeDiffOnce(t *testing.T) {
 	diff := strings.Builder{}
 	writeFile := func(name, marker string) {
 		diff.WriteString("diff --git a/" + name + " b/" + name + "\n")
@@ -144,18 +144,16 @@ func TestReviewSpecialistReviewsAllLargeDiffChunks(t *testing.T) {
 		Diff:  diff.String(),
 		Infer: func(_ context.Context, _ Config, prompt string) (string, error) {
 			calls++
-			if strings.Contains(prompt, "FIRST_FILE_MARKER") {
-				return `[ {"file":"a.go","line":1,"severity":"high","confidence":"high","body":"issue","evidence":"FIRST_FILE_MARKER","trigger":"call","impact":"bad","suggestion":"fix"} ]`, nil
+			if !strings.Contains(prompt, "FIRST_FILE_MARKER") ||
+				!strings.Contains(prompt, "SECOND_FILE_MARKER") ||
+				!strings.Contains(prompt, diff.String()) {
+				t.Fatal("完整 diff 未在同一次审查请求中提交")
 			}
-			if strings.Contains(prompt, "SECOND_FILE_MARKER") {
-				return "[]", nil
-			}
-			t.Fatalf("chunk %d contained neither file marker", calls)
-			return "[]", nil
+			return `[ {"file":"a.go","line":1,"severity":"high","confidence":"high","body":"issue","evidence":"FIRST_FILE_MARKER","trigger":"call","impact":"bad","suggestion":"fix"} ]`, nil
 		},
 	})
 	findings, err := parseFindingsStrict(result.Summary)
-	if result.Error != nil || err != nil || len(findings) != 1 || calls != 2 {
+	if result.Error != nil || err != nil || len(findings) != 1 || calls != 1 {
 		t.Fatalf("result=%#v findings=%#v parseErr=%v calls=%d", result, findings, err, calls)
 	}
 	if findings[0].File != "a.go" || findings[0].Evidence != "FIRST_FILE_MARKER" {

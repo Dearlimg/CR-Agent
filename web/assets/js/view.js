@@ -67,22 +67,7 @@ function metrics() {
   $("footer-time").textContent = job ? "总耗时 " + wallLabel() : "等待新任务";
 }
 function eventDetails(e) {
-  const request =
-    e.kind === "model_request"
-      ? "模型请求\n轮次 " +
-        (e.round || "未知") +
-        " · 重试 " +
-        (e.retry_count || 0) +
-        "\n输入 token " +
-        (e.input_tokens ?? "未知") +
-        " · 输出 token " +
-        (e.output_tokens ?? "未知") +
-        "\n结束原因 " +
-        (e.finish_reason || "未知") +
-        "\n\n"
-      : "";
   return (
-    request +
     "输入\n" +
     (e.input || "—") +
     "\n\n输出\n" +
@@ -92,9 +77,11 @@ function eventDetails(e) {
 }
 function renderTrace() {
   const all = job?.trace || [],
+    visible = all
+      .map((e, i) => ({ ...e, index: i }))
+      .filter((e) => e.kind !== "model_request"),
     q = $("search").value.toLowerCase();
-  let trace = all
-    .map((e, i) => ({ ...e, index: i }))
+  let trace = visible
     .filter((e) =>
       [e.tool, e.input, e.output, e.model_reply]
         .join(" ")
@@ -108,8 +95,8 @@ function renderTrace() {
       (e) => e.dataset.index,
     ),
   );
-  $("event-count").textContent = trace.length + " / " + all.length + " EVENTS";
-  $("footer-events").textContent = all.length + " 个执行事件";
+  $("event-count").textContent = trace.length + " / " + visible.length + " EVENTS";
+  $("footer-events").textContent = visible.length + " 个执行事件";
   markup("events").html =
     trace
       .map(
@@ -144,8 +131,8 @@ function renderTrace() {
       "</b>" +
       (q ? "尝试其他关键词" : "发送审查需求，或查看示例轨迹") +
       "</div>";
-  const starts = all.map(at).filter(Boolean),
-    ends = all.map(endAt),
+  const starts = visible.map(at).filter(Boolean),
+    ends = visible.map(endAt),
     timelineStart = starts.length
       ? Math.min(start || Infinity, ...starts)
       : start || Date.now(),

@@ -80,7 +80,7 @@ func NewContextCompactor(cfg Config) *ContextCompactor {
 	}
 	contextCharLimit := cfg.ContextCharLimit
 	if contextCharLimit <= 0 {
-		contextCharLimit = 50000
+		contextCharLimit = 250000
 	}
 	maxMessages := cfg.ContextMaxMessages
 	if maxMessages <= 0 {

@@ -12,7 +12,10 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const defaultModelMaxOutputTokens = 32768
+const (
+	defaultModelMaxOutputTokens  = 32768
+	defaultReviewMaxOutputTokens = 8192
+)
 
 var quotedCredentialValuePattern = regexp.MustCompile(
 	`(?i)((?:api[_-]?key|secret|password|token|authorization)["']?\s*(?::=|=|:)\s*)(["'])([^"'\r\n]+)(["'])`,
@@ -36,6 +39,7 @@ type Config struct {
 	TeamMaxConcurrency        int
 	ModelMaxRetries           int
 	ModelMaxOutputTokens      int
+	ReviewMaxOutputTokens     int
 	ModelRetryBaseMs          int
 	CronPollIntervalMs        int
 	MemoryMaxRecall           int
@@ -88,6 +92,7 @@ func LoadConfig() Config {
 		TeamMaxConcurrency:        intEnv(b, "AGENT_TEAM_MAX_CONCURRENCY", 2),
 		ModelMaxRetries:           intEnv(b, "MODEL_MAX_RETRIES", 2),
 		ModelMaxOutputTokens:      intEnv(b, "MODEL_MAX_OUTPUT_TOKENS", defaultModelMaxOutputTokens),
+		ReviewMaxOutputTokens:     intEnv(b, "REVIEW_MAX_OUTPUT_TOKENS", defaultReviewMaxOutputTokens),
 		ModelRetryBaseMs:          intEnv(b, "MODEL_RETRY_BASE_MS", 500),
 		CronPollIntervalMs:        intEnv(b, "CRON_POLL_INTERVAL_MS", 1000),
 		MemoryMaxRecall:           intEnv(b, "MEMORY_MAX_RECALL", 5),

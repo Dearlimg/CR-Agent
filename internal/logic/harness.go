@@ -52,6 +52,11 @@ func withReviewPrompt(ctx context.Context) context.Context {
 	return context.WithValue(ctx, reviewPromptContextKey{}, true)
 }
 
+func isReviewPrompt(ctx context.Context) bool {
+	active, _ := ctx.Value(reviewPromptContextKey{}).(bool)
+	return active
+}
+
 func newReviewHarness() *ReviewHarness {
 	mcp := NewMCPManager(DefaultMCPHostPolicy())
 	_ = mcp.RegisterServer("docs", newDocsMCPServer)

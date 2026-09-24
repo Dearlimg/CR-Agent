@@ -32,6 +32,15 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 	if outputBudget <= 0 {
 		outputBudget = defaultModelMaxOutputTokens
 	}
+	if isReviewPrompt(ctx) {
+		reviewBudget := cfg.ReviewMaxOutputTokens
+		if reviewBudget <= 0 {
+			reviewBudget = defaultReviewMaxOutputTokens
+		}
+		if outputBudget > reviewBudget {
+			outputBudget = reviewBudget
+		}
+	}
 	round := 0
 	nextRound := func() int {
 		round++
@@ -83,12 +92,22 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 				attempt := retryCount
 				retryCount++
 				return observedBudgetedModelRequest(ctx, "deepseek_flash", modelRound, attempt, budget, estimateModelInputTokens(input, tools), func(allowedTokens int) (*schema.Message, error) {
-					return bound.Generate(ctx, input, modeloptions.WithMaxTokens(allowedTokens))
+					return bound.Generate(ctx, input, modelRequestOptions(ctx, allowedTokens)...)
 				})
 			})
 		})
 	}
 	return harness.Run(ctx, prompt)
+}
+
+func modelRequestOptions(ctx context.Context, maxTokens int) []modeloptions.Option {
+	options := []modeloptions.Option{modeloptions.WithMaxTokens(maxTokens)}
+	if isReviewPrompt(ctx) {
+		options = append(options, openai.WithExtraFields(map[string]any{
+			"thinking": map[string]string{"type": "disabled"},
+		}))
+	}
+	return options
 }
 
 // A length-truncated tool call is never sent to the harness for execution.

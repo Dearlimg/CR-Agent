@@ -430,6 +430,7 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	}
 	withEvidence, rejectedEvidence := validateFindingEvidence(findings, artifacts.SanitizedDiff)
 	sourceFiles := map[string]string{}
+	var sourceSnapshot *reviewSourceSnapshot
 	sourceContextError := ""
 	if len(withEvidence) > 0 {
 		paths := make([]string, 0, len(artifacts.Files))
@@ -459,13 +460,16 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 					Status: "denied", Err: errors.New(sourceContextError), Origin: "orchestrator",
 				})
 			} else {
-				loaded, loadErr := loadReviewSourceSnapshotWithFindings(ctx, reviewSourceSnapshotRequest{
+				snapshot, loadErr := loadReviewSourceReaderWithFindings(ctx, reviewSourceSnapshotRequest{
 					Source:   j.Source,
 					Config:   s.Config,
 					Paths:    paths,
 					Findings: withEvidence,
 				})
-				sourceFiles = loaded
+				sourceSnapshot = snapshot
+				if snapshot != nil {
+					sourceFiles = snapshot.files
+				}
 				if loadErr != nil {
 					sourceContextError = redactFindingText(loadErr.Error())
 					recorder.Record("tool", "source_context_fetch", "verification", "读取 PR 固定提交源码", "", TraceResult{
@@ -492,6 +496,40 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		verdict, reason, verifyTraceID, verifyErr := verifyFindingIndependently(ctx, findingVerificationRequest{
 			Config: s.Config, Diff: artifacts.SanitizedDiff, Finding: finding,
 			SourceExcerpt: sourceExcerpt, SourceContextError: findingContextError,
+			SourceSnapshot: sourceSnapshot, Policy: s.Loop.Policy,
+			RecordTool: func(
+				toolCtx context.Context,
+				name string,
+				callID string,
+				status string,
+				output string,
+				started time.Time,
+				ended time.Time,
+				duration int64,
+			) {
+				traceID, _ := recorder.RecordAt(
+					"tool",
+					name,
+					"verification",
+					"复核 Agent 按需读取固定提交源码",
+					traceParentFrom(toolCtx),
+					started,
+					ended,
+					TraceResult{
+						Status: status, Output: output, Origin: "model", ToolCallID: callID,
+					},
+				)
+				_ = s.Store.RecordToolCall(
+					j.ID,
+					traceID,
+					name,
+					status,
+					"复核 Agent 按需读取固定提交源码",
+					output,
+					"",
+					duration,
+				)
+			},
 			Recorder: recorder,
 		})
 		if verifyErr != nil {

@@ -75,19 +75,7 @@ func newReviewHarness() *ReviewHarness {
 			}
 			return h.MCP.Connect(ctx, name)
 		})
-	h.add("read_archive", "按引用 ID 恢复当前会话归档的工具结果或历史", objectSchema("reference"),
-		func(_ context.Context, args map[string]any) (string, error) {
-			reference, err := requiredString(args, "reference")
-			if err != nil {
-				return "", err
-			}
-			path, ok := h.archives[reference]
-			if !ok {
-				return "", fmt.Errorf("未知或其他会话的归档引用")
-			}
-			data, err := os.ReadFile(path)
-			return string(data), err
-		})
+	h.addArchiveTool()
 	h.add("Workflow", "运行宿主注册的可恢复 workflow；只接受名称、参数和续跑 ID", map[string]any{
 		"type": "object", "additionalProperties": false,
 		"properties": map[string]any{
@@ -120,7 +108,33 @@ func newReviewHarness() *ReviewHarness {
 	return h
 }
 
+func (h *ReviewHarness) addArchiveTool() {
+	h.add("read_archive", "按引用 ID 恢复当前会话归档的工具结果或历史", objectSchema("reference"),
+		func(_ context.Context, args map[string]any) (string, error) {
+			reference, err := requiredString(args, "reference")
+			if err != nil {
+				return "", err
+			}
+			path, ok := h.archives[reference]
+			if !ok {
+				return "", fmt.Errorf("未知或其他会话的归档引用")
+			}
+			data, err := os.ReadFile(path)
+			return string(data), err
+		})
+}
+
 func (h *ReviewHarness) add(name, description string, input map[string]any, run MCPHandler) {
+	h.addWithPermission(name, description, input, PermissionReadDiff, run)
+}
+
+func (h *ReviewHarness) addWithPermission(
+	name string,
+	description string,
+	input map[string]any,
+	permission Permission,
+	run MCPHandler,
+) {
 	encoded, err := json.Marshal(input)
 	if err != nil {
 		panic(err)
@@ -131,7 +145,7 @@ func (h *ReviewHarness) add(name, description string, input map[string]any, run 
 	}
 	h.tools[name] = harnessTool{
 		info:       &schema.ToolInfo{Name: name, Desc: description, ParamsOneOf: schema.NewParamsOneOfByJSONSchema(&params)},
-		permission: PermissionReadDiff, run: run,
+		permission: permission, run: run,
 	}
 }
 

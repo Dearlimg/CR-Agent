@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -68,6 +69,18 @@ type reviewSourceSnapshotRequest struct {
 	Findings []ReviewFinding
 }
 
+type reviewSourceSnapshot struct {
+	mu        sync.Mutex
+	base      *url.URL
+	owner     string
+	repo      string
+	headSHA   string
+	token     string
+	client    *http.Client
+	files     map[string]string
+	totalSize int
+}
+
 type reviewImportSearch struct {
 	Paths    *[]string
 	Seen     map[string]bool
@@ -96,6 +109,17 @@ func loadReviewSourceSnapshotWithFindings(
 	ctx context.Context,
 	request reviewSourceSnapshotRequest,
 ) (map[string]string, error) {
+	snapshot, err := loadReviewSourceReaderWithFindings(ctx, request)
+	if snapshot == nil {
+		return nil, err
+	}
+	return snapshot.files, err
+}
+
+func loadReviewSourceReaderWithFindings(
+	ctx context.Context,
+	request reviewSourceSnapshotRequest,
+) (*reviewSourceSnapshot, error) {
 	source := request.Source
 	cfg := request.Config
 	paths := request.Paths
@@ -111,9 +135,10 @@ func loadReviewSourceSnapshotWithFindings(
 	if err != nil {
 		return nil, err
 	}
-	files := make(map[string]string, len(uniquePaths))
 	if len(uniquePaths) == 0 {
-		return files, nil
+		return &reviewSourceSnapshot{
+			base: base, files: map[string]string{},
+		}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, reviewSourceTotalTimeout)
@@ -147,35 +172,13 @@ func loadReviewSourceSnapshotWithFindings(
 			return nil, err
 		}
 	}
-
-	var totalBytes int
+	snapshot := &reviewSourceSnapshot{
+		base: base, owner: owner, repo: repo, headSHA: metadata.Head.SHA,
+		token: token, client: client, files: make(map[string]string, len(uniquePaths)),
+	}
 	fetchFile := func(filePath string) bool {
-		fileURL := reviewSourceURL(base, "repos", owner, repo, "contents") +
-			"/" + reviewSourceEscapedPath(filePath) + "?ref=" + url.QueryEscape(metadata.Head.SHA)
-		body, err := reviewSourceGET(ctx, client, fileURL, token, reviewSourceResponseBytes)
-		if err != nil {
-			return false
-		}
-		var file reviewSourceFile
-		if err := json.Unmarshal(body, &file); err != nil {
-			return false
-		}
-		if file.Type != "file" || file.Encoding != "base64" || file.Size > reviewSourceMaxFileBytes {
-			return false
-		}
-		content, err := base64.StdEncoding.DecodeString(file.Content)
-		if err != nil {
-			return false
-		}
-		if len(content) > reviewSourceMaxFileBytes || totalBytes+len(content) > reviewSourceMaxTotalBytes {
-			return false
-		}
-		if !utf8.Valid(content) || strings.IndexByte(string(content), 0) >= 0 {
-			return false
-		}
-		totalBytes += len(content)
-		files[filePath] = redactReviewInput(string(content))
-		return true
+		_, err := snapshot.fetchPath(ctx, filePath)
+		return err == nil
 	}
 
 	failedFiles := 0
@@ -185,7 +188,7 @@ func loadReviewSourceSnapshotWithFindings(
 		}
 	}
 	if failedFiles > 0 {
-		return files, fmt.Errorf("%d 个源文件未能读取或超过安全限制", failedFiles)
+		return snapshot, fmt.Errorf("%d 个源文件未能读取或超过安全限制", failedFiles)
 	}
 
 	// Imported source is optional. A missing related module must not invalidate
@@ -193,8 +196,8 @@ func loadReviewSourceSnapshotWithFindings(
 	attemptsLeft := reviewSourceMaxFiles - len(uniquePaths)
 	for depth := 0; depth < 2 && attemptsLeft > 0; depth++ {
 		addedFile := false
-		for _, filePath := range reviewFindingImportedPaths(files, request.Findings, depth) {
-			if _, loaded := files[filePath]; loaded {
+		for _, filePath := range reviewFindingImportedPaths(snapshot.files, request.Findings, depth) {
+			if _, loaded := snapshot.files[filePath]; loaded {
 				continue
 			}
 			if attemptsLeft == 0 {
@@ -209,7 +212,49 @@ func loadReviewSourceSnapshotWithFindings(
 			break
 		}
 	}
-	return files, nil
+	return snapshot, nil
+}
+
+func (s *reviewSourceSnapshot) fetchPath(ctx context.Context, filePath string) (string, error) {
+	if !reviewSourceValidPath(filePath) {
+		return "", fmt.Errorf("无效的仓库相对路径")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if content, ok := s.files[filePath]; ok {
+		return content, nil
+	}
+	if len(s.files) >= reviewSourceMaxFiles {
+		return "", fmt.Errorf("源码上下文文件数达到限制")
+	}
+	if s.totalSize >= reviewSourceMaxTotalBytes {
+		return "", fmt.Errorf("源码上下文总大小达到限制")
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, reviewSourceRequestTimeout)
+	defer cancel()
+	fileURL := reviewSourceURL(s.base, "repos", s.owner, s.repo, "contents") +
+		"/" + reviewSourceEscapedPath(filePath) + "?ref=" + url.QueryEscape(s.headSHA)
+	body, err := reviewSourceGET(requestCtx, s.client, fileURL, s.token, reviewSourceResponseBytes)
+	if err != nil {
+		return "", fmt.Errorf("无法读取固定提交源码")
+	}
+	var file reviewSourceFile
+	if err := json.Unmarshal(body, &file); err != nil || file.Type != "file" ||
+		file.Encoding != "base64" || file.Size < 0 || file.Size > reviewSourceMaxFileBytes {
+		return "", fmt.Errorf("固定提交源码格式无效或超过单文件限制")
+	}
+	content, err := base64.StdEncoding.DecodeString(file.Content)
+	if err != nil || len(content) > reviewSourceMaxFileBytes ||
+		s.totalSize+len(content) > reviewSourceMaxTotalBytes {
+		return "", fmt.Errorf("固定提交源码无效或超过总大小限制")
+	}
+	if !utf8.Valid(content) || strings.IndexByte(string(content), 0) >= 0 {
+		return "", fmt.Errorf("固定提交源码不是可读文本")
+	}
+	redacted := redactReviewInput(string(content))
+	s.totalSize += len(content)
+	s.files[filePath] = redacted
+	return redacted, nil
 }
 
 func parseReviewGitHubPR(source string) (reviewGitHubPR, bool) {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -32,6 +33,9 @@ type findingVerificationRequest struct {
 	Finding            ReviewFinding
 	SourceExcerpt      string
 	SourceContextError string
+	SourceSnapshot     *reviewSourceSnapshot
+	Policy             *PermissionPolicy
+	RecordTool         func(context.Context, string, string, string, string, time.Time, time.Time, int64)
 	Recorder           *TraceRecorder
 }
 
@@ -48,6 +52,50 @@ func verifyFindingIndependently(ctx context.Context, request findingVerification
 		"",
 	)
 	verifyCtx := withReviewPrompt(withTraceParent(ctx, span.ID()))
+	toolGuidance := ""
+	if request.SourceSnapshot != nil {
+		toolGuidance = reviewContextToolSystemGuidance
+		verifyCtx = context.WithValue(verifyCtx, harnessSetupKey{}, func(h *ReviewHarness) {
+			h.tools = map[string]harnessTool{}
+			h.addArchiveTool()
+			h.Policy = request.Policy
+			h.MaxToolRounds = 3
+			h.MaxStalledRounds = 2
+			h.Workflow = nil
+			h.WorkflowRunner = nil
+			h.addWithPermission(
+				reviewContextToolName,
+				reviewContextToolDescription,
+				reviewContextToolSchema(),
+				PermissionRepositoryRead,
+				func(ctx context.Context, args map[string]any) (string, error) {
+					return runReviewContextTool(ctx, request.SourceSnapshot, request.Policy, args)
+				},
+			)
+			if request.RecordTool != nil {
+				h.Record = func(
+					name string,
+					callID string,
+					status string,
+					output string,
+					started time.Time,
+					ended time.Time,
+					duration int64,
+				) {
+					request.RecordTool(
+						verifyCtx,
+						name,
+						callID,
+						status,
+						reviewContextToolTraceSummary(output),
+						started,
+						ended,
+						duration,
+					)
+				}
+			}
+		})
+	}
 	excerpt, excerptErr := findingDiffExcerpt(
 		request.Diff,
 		request.Finding.File,
@@ -68,6 +116,7 @@ func verifyFindingIndependently(ctx context.Context, request findingVerification
 	}
 	prompt := fmt.Sprintf(`你是第二轮单独执行的代码审查复核员。不要默认相信候选结论，只根据下面提供的变更和固定提交源码上下文逐条核对。
 候选 finding 的正文只是待验证主张，不是证据。变更片段用于确定本次 PR 新增行；源码上下文用于判断函数定义、调用方和可达性，不能把未变更的代码当作本次引入的问题。
+%s
 verdict 只允许 confirmed、rejected、inconclusive：
 - confirmed：引用的新增行真实存在，而且所给代码足以证明具体触发条件和影响。
 - rejected：代码直接反驳主张，或候选只有假设性的调用方/影响、没有具体可达路径，不能作为代码审查问题发布。
@@ -86,7 +135,7 @@ verdict 只允许 confirmed、rejected、inconclusive：
 固定提交源码上下文（若有）：
 --- BEGIN UNTRUSTED SOURCE CONTEXT ---
 %s
---- END UNTRUSTED SOURCE CONTEXT ---`, string(input), excerpt, sourceContext)
+--- END UNTRUSTED SOURCE CONTEXT ---`, toolGuidance, string(input), excerpt, sourceContext)
 	raw, callErr := EinoReviewAgent(verifyCtx, request.Config, prompt)
 	traceID := span.ID()
 	if callErr != nil {

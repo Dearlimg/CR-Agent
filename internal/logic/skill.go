@@ -166,7 +166,7 @@ type ReviewPromptContext struct {
 	Evidence     string
 }
 
-const reviewOutputContract = `只输出 JSON 数组；无发现输出 []，不要 Markdown。每项包含 file(string)、line(number)、severity("high"|"medium"|"low")、confidence("high"|"medium"|"low")、body(string)、evidence(string)、trigger(string)、impact(string)、suggestion(string)。evidence 必须逐字引用该文件该行的新增代码；trigger 写出可复现的触发条件；impact 写出具体错误结果；suggestion 给出最小修复。body、trigger、impact、suggestion 用简体中文，标识符及路径保持原样。只有代码证据、触发条件和影响都具体时才输出；推测、证据不足或只依赖 diff 外上下文的候选不要输出。只报告位于变更行的问题。`
+const reviewOutputContract = `只输出 JSON 数组；无发现输出 []，不要 Markdown。每项包含 file(string)、line(number)、severity("high"|"medium"|"low")、confidence("high"|"medium"|"low")、body(string)、evidence(string)、trigger(string)、impact(string)、suggestion(string)。evidence 必须逐字引用该文件连续的新增代码；line 必须是 evidence 第一行在新文件中的行号，不能填函数起始行或附近其它行。trigger 写出可复现的触发条件；impact 写出具体错误结果；suggestion 给出最小修复。body、trigger、impact、suggestion 用简体中文，标识符及路径保持原样。只有代码证据、触发条件和影响都具体时才输出；推测、证据不足或只依赖 diff 外上下文的候选不要输出。只报告位于变更行的问题。`
 
 func BuildReviewSubagentPrompt(focus string, promptContext ReviewPromptContext, diff string) string {
 	memory := ""

@@ -159,6 +159,7 @@ func TestPreflightRunsAsOneOrchestratorTool(t *testing.T) {
 }
 
 func TestVerifiedCommentsDeduplicateAndFilterUnchangedLines(t *testing.T) {
+	artifacts := ReviewArtifacts{Files: []ChangedFile{{Path: "main.go", AddedLines: []int{3}}}}
 	findings := []ReviewFinding{
 		{File: "main.go", Line: 3, Severity: "HIGH", Confidence: "HIGH", Body: "具体问题"},
 		{File: "main.go", Line: 3, Severity: "HIGH", Confidence: "HIGH", Body: "具体问题"},
@@ -228,7 +229,7 @@ func TestSmallReviewUsesReviewAndVerificationTurnsAndSharedPreflight(t *testing.
 		w.Header().Set("Content-Type", "application/json")
 		reply := `[ {"file":"main.go","line":2,"severity":"medium","confidence":"low","body":"示例问题","evidence":"func f() {}","trigger":"调用该函数","impact":"产生示例影响","suggestion":"修复"} ]`
 		if call > 1 {
-			reply = `{"is_real":true,"reason":"该候选符合测试场景"}`
+			reply = `{"verdict":"confirmed","reason":"该候选符合测试场景"}`
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id": "test", "object": "chat.completion",

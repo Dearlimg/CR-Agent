@@ -398,12 +398,65 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		return
 	}
 	withEvidence, rejectedEvidence := validateFindingEvidence(findings, artifacts.SanitizedDiff)
+	sourceFiles := map[string]string{}
+	sourceContextError := ""
+	if len(withEvidence) > 0 {
+		paths := make([]string, 0, len(artifacts.Files))
+		seenPaths := map[string]bool{}
+		for _, finding := range withEvidence {
+			if !seenPaths[finding.File] {
+				paths = append(paths, finding.File)
+				seenPaths[finding.File] = true
+			}
+		}
+		for _, file := range artifacts.Files {
+			if !seenPaths[file.Path] {
+				paths = append(paths, file.Path)
+				seenPaths[file.Path] = true
+			}
+		}
+		if _, supported := parseReviewGitHubPR(j.Source); supported {
+			permission := PermissionRepositoryRead
+			decision := s.Loop.Policy.Decide(permission)
+			if decision == PermissionAllow {
+				permission = PermissionNetworkFetch
+				decision = s.Loop.Policy.Decide(permission)
+			}
+			if decision != PermissionAllow {
+				sourceContextError = permissionError("source_context_fetch", permission, decision).Error()
+				recorder.Record("tool", "source_context_fetch", "verification", "读取 PR 固定提交源码", "", TraceResult{
+					Status: "denied", Err: errors.New(sourceContextError), Origin: "orchestrator",
+				})
+			} else {
+				loaded, loadErr := loadReviewSourceSnapshot(ctx, j.Source, s.Config, paths)
+				sourceFiles = loaded
+				if loadErr != nil {
+					sourceContextError = redactFindingText(loadErr.Error())
+					recorder.Record("tool", "source_context_fetch", "verification", "读取 PR 固定提交源码", "", TraceResult{
+						Err: loadErr, Origin: "orchestrator",
+					})
+				} else {
+					recorder.Record("tool", "source_context_fetch", "verification", "读取 PR 固定提交源码", "", TraceResult{
+						Output: fmt.Sprintf("可用文件=%d", len(sourceFiles)), Origin: "orchestrator",
+					})
+				}
+			}
+		}
+	}
 	confirmed := make([]ReviewFinding, 0, len(withEvidence))
 	rejectedByVerifier := 0
+	inconclusiveVerifications := 0
 	incompleteVerifications := 0
 	for _, finding := range withEvidence {
-		isReal, reason, verifyTraceID, verifyErr := verifyFindingIndependently(ctx, findingVerificationRequest{
-			Config: s.Config, Diff: artifacts.SanitizedDiff, Finding: finding, Recorder: recorder,
+		sourceExcerpt := findingSourceExcerpt(sourceFiles, finding, 12000)
+		findingContextError := sourceContextError
+		if sourceExcerpt == "" && len(sourceFiles) > 0 {
+			findingContextError = "固定提交源码与审查 diff 行不一致，或对应文件未读取"
+		}
+		verdict, reason, verifyTraceID, verifyErr := verifyFindingIndependently(ctx, findingVerificationRequest{
+			Config: s.Config, Diff: artifacts.SanitizedDiff, Finding: finding,
+			SourceExcerpt: sourceExcerpt, SourceContextError: findingContextError,
+			Recorder: recorder,
 		})
 		if verifyErr != nil {
 			if isIncompleteReviewError(verifyErr) {
@@ -418,8 +471,12 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 			updateReviewCheck(&j.ReviewScope, "finding_verification", "failed", "第二轮复核模型调用失败")
 			return
 		}
-		if !isReal {
+		if verdict == findingRejected {
 			rejectedByVerifier++
+			continue
+		}
+		if verdict == findingInconclusive {
+			inconclusiveVerifications++
 			continue
 		}
 		finding.VerificationStatus = "second_pass_review_passed"
@@ -430,13 +487,13 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	j.Comments = verifiedComments(confirmed, *artifacts, modelTraceID)
 	verificationStatus := "passed"
 	verificationMessage := fmt.Sprintf(
-		"候选=%d；证据匹配=%d；第二轮复核确认=%d；第二轮复核排除=%d",
-		len(findings), len(withEvidence), len(j.Comments), rejectedByVerifier,
+		"候选=%d；证据匹配=%d；第二轮复核确认=%d；第二轮复核排除=%d；证据待定=%d",
+		len(findings), len(withEvidence), len(j.Comments), rejectedByVerifier, inconclusiveVerifications,
 	)
 	if len(findings) == 0 && incompleteReason == "" {
 		verificationStatus = "not_needed"
 		verificationMessage = "模型未报告候选问题，无需逐条复核"
-	} else if incompleteReason != "" || rejectedEvidence > 0 {
+	} else if incompleteReason != "" || rejectedEvidence > 0 || inconclusiveVerifications > 0 {
 		verificationStatus = "incomplete"
 		verificationMessage += fmt.Sprintf("；证据不足=%d；复核未完成=%d", rejectedEvidence, incompleteVerifications)
 		if incompleteReason != "" {
@@ -449,6 +506,9 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	})
 	if rejectedEvidence > 0 && incompleteReason == "" {
 		incompleteReason = "有候选问题缺少与变更行完全匹配的代码证据，审查未能完整核验。"
+	}
+	if inconclusiveVerifications > 0 && incompleteReason == "" {
+		incompleteReason = "部分候选问题缺少判定所需的代码上下文，审查未能完整核验。"
 	}
 	if incompleteReason != "" {
 		j.Status = "completed_with_warnings"

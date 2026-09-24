@@ -220,9 +220,9 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 
 ### 这个样例还有一处实际结论不一致
 
-`finding_second_pass_verification` 的 `model_reply` 结构化字段是 `"is_real": true`，但同一 JSON 的 `reason` 表示 callee 定义没有出现在 diff 中、旧调用形式不能证明它仍是异步，并且结尾写了 `is_real 为 false`。这两部分结论冲突。当前 `verifyFindingIndependently` 只解析 `is_real` 布尔值并返回它；服务随后据此把 finding 标为 `second_pass_review_passed`，没有校验 reason 是否支持该布尔值。于是这条评论进入最终结果，尽管复核理由实际说明证据不足。
+`finding_second_pass_verification` 的 `model_reply` 结构化字段是 `"is_real": true`，但同一 JSON 的 `reason` 表示 callee 定义没有出现在 diff 中、旧调用形式不能证明它仍是异步，并且结尾写了 `is_real 为 false`。这两部分结论冲突。当时的 `verifyFindingIndependently` 只解析 `is_real` 布尔值并返回它；服务随后据此把 finding 标为 `second_pass_review_passed`，没有校验 reason 是否支持该布尔值。于是这条评论进入最终结果，尽管复核理由实际说明证据不足。后续证据匹配与三态复核方案见[代码审查证据核验排障与方案](review-verification-research.md)。
 
-这不是 Trace 把模型的 `false` 改成了 `true`：JSON 的顶层布尔值原本就是 `true`。更准确地说，这是模型在结构化字段与自然语言理由之间自相矛盾，而当前应用只信任布尔字段。建议把复核输出改成离散判定（例如 `confirmed` / `rejected` / `insufficient_evidence`），在证据不完整时保守地不发布 finding；同时增加结构化字段与理由的一致性诊断，并在 Trace 中标明证据片段来源。不要只靠解析中文 reason 的关键词作为最终安全判断。
+这不是 Trace 把模型的 `false` 改成了 `true`：JSON 的顶层布尔值原本就是 `true`。更准确地说，这是模型在结构化字段与自然语言理由之间自相矛盾，而当时的应用只信任布尔字段。当前复核输出已改成 `confirmed` / `rejected` / `inconclusive`；理由与结构化字段的自动一致性诊断仍可作为后续改进，不应只靠解析中文关键词决定是否发布。
 
 ### 这次改动与后续建议
 

@@ -119,7 +119,7 @@ func validateFindingEvidence(findings []ReviewFinding, diff string) ([]ReviewFin
 	rejected := 0
 	for _, finding := range findings {
 		file := strings.TrimSpace(finding.File)
-		evidence, evidenceMatches := matchAddedEvidence(
+		line, evidence, evidenceMatches := locateAddedEvidence(
 			added[file], finding.Line, finding.Evidence,
 		)
 		complete := strings.TrimSpace(finding.Body) != "" &&
@@ -131,10 +131,37 @@ func validateFindingEvidence(findings []ReviewFinding, diff string) ([]ReviewFin
 			continue
 		}
 		finding.File = file
+		finding.Line = line
 		finding.Evidence = evidence
 		verified = append(verified, finding)
 	}
 	return verified, rejected
+}
+
+// locateAddedEvidence keeps a valid anchor, or relocates it only when the quoted
+// block has exactly one match among the same file's added lines.
+func locateAddedEvidence(added map[int]string, reportedLine int, evidence string) (int, string, bool) {
+	if actual, ok := matchAddedEvidence(added, reportedLine, evidence); ok {
+		return reportedLine, actual, true
+	}
+
+	var matchedLine int
+	var matchedEvidence string
+	for line := range added {
+		actual, ok := matchAddedEvidence(added, line, evidence)
+		if !ok {
+			continue
+		}
+		if matchedLine != 0 {
+			return 0, "", false
+		}
+		matchedLine = line
+		matchedEvidence = actual
+	}
+	if matchedLine == 0 {
+		return 0, "", false
+	}
+	return matchedLine, matchedEvidence, true
 }
 
 func matchAddedEvidence(added map[int]string, startLine int, evidence string) (string, bool) {

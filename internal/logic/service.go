@@ -362,7 +362,10 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		Evidence:     artifacts.PromptSummary(),
 	}
 
-	reviewCtx, flushHarness := s.withReviewHarness(ctx, j, artifacts.SanitizedDiff, *artifacts)
+	initialSourceSnapshot := s.prepareFirstPassReviewSource(ctx, j, recorder)
+	promptContext.SourceContextAvailable = initialSourceSnapshot != nil
+	reviewCtx := withReviewSourceSnapshot(ctx, initialSourceSnapshot)
+	reviewCtx, flushHarness := s.withReviewHarness(reviewCtx, j, artifacts.SanitizedDiff, *artifacts)
 	reviewCtx = withGoalCondition(reviewCtx, req.Goal)
 	if s.Loop.Hooks != nil {
 		s.Loop.Hooks.Emit(ctx, HookPreToolUse, HookContext{

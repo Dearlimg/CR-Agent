@@ -63,10 +63,11 @@ type reviewSourceFile struct {
 }
 
 type reviewSourceSnapshotRequest struct {
-	Source   string
-	Config   Config
-	Paths    []string
-	Findings []ReviewFinding
+	Source                 string
+	Config                 Config
+	Paths                  []string
+	Findings               []ReviewFinding
+	PrepareForOnDemandRead bool
 }
 
 type reviewSourceSnapshot struct {
@@ -135,12 +136,11 @@ func loadReviewSourceReaderWithFindings(
 	if err != nil {
 		return nil, err
 	}
-	if len(uniquePaths) == 0 {
+	if len(uniquePaths) == 0 && !request.PrepareForOnDemandRead {
 		return &reviewSourceSnapshot{
 			base: base, files: map[string]string{},
 		}, nil
 	}
-
 	ctx, cancel := context.WithTimeout(ctx, reviewSourceTotalTimeout)
 	defer cancel()
 	client := &http.Client{

@@ -91,7 +91,7 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 			return retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
 				attempt := retryCount
 				retryCount++
-				return observedBudgetedModelRequest(ctx, "deepseek_flash", modelRound, attempt, budget, estimateModelInputTokens(input, tools), func(allowedTokens int) (*schema.Message, error) {
+				return observedBudgetedModelRequest(ctx, "deepseek_model", modelRound, attempt, budget, estimateModelInputTokens(input, tools), func(allowedTokens int) (*schema.Message, error) {
 					return bound.Generate(ctx, input, modelRequestOptions(ctx, allowedTokens)...)
 				})
 			})
@@ -104,7 +104,8 @@ func modelRequestOptions(ctx context.Context, maxTokens int) []modeloptions.Opti
 	options := []modeloptions.Option{modeloptions.WithMaxTokens(maxTokens)}
 	if isReviewPrompt(ctx) {
 		options = append(options, openai.WithExtraFields(map[string]any{
-			"thinking": map[string]string{"type": "disabled"},
+			"thinking":         map[string]string{"type": "enabled"},
+			"reasoning_effort": "high",
 		}))
 	}
 	return options
@@ -283,7 +284,7 @@ func estimateModelInputTokens(messages []*schema.Message, tools []*schema.ToolIn
 
 func reviewModelName(cfg Config) string {
 	if strings.TrimSpace(cfg.DeepSeekModel) == "" {
-		return "deepseek-flash"
+		return "deepseek-v4-pro"
 	}
 	return cfg.DeepSeekModel
 }

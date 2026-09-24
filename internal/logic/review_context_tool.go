@@ -15,9 +15,10 @@ const (
 	reviewContextToolDefaultRadius  = 12
 	reviewContextToolMaxRadius      = 40
 	reviewContextToolMaxLine        = reviewSourceMaxFileBytes
-	reviewContextToolDescription    = "从本次 PR 固定 head 提交中检索验证所需源码；可按符号搜索，或读取指定文件行段。"
+	reviewContextToolDescription    = "从本次 PR 固定 head 提交中检索源码；指定文件路径可按需拉取并搜索符号或读取行段。"
 	reviewContextToolName           = "get_review_context"
 	reviewContextToolSystemGuidance = "若候选依赖未展示的定义、调用方、类型、循环控制或 API 用法，先调用 get_review_context 查证，再给出 verdict。只使用工具返回的固定提交源码；拿不到上下文时仍应返回 inconclusive，不可猜测。"
+	reviewAgentContextToolGuidance  = "首轮审查遇到需要确认的配置类型、函数定义、调用方、测试或 API 用法时，先调用 get_review_context 查证；首次读取文件时同时提供仓库相对 file 路径和 query，已读取文件可只给 query。不要仅因 diff 没展示上下文就跳过候选。只依据工具返回的本次 PR 固定 head 源码。"
 )
 
 func reviewContextToolSchema() map[string]any {
@@ -30,7 +31,7 @@ func reviewContextToolSchema() map[string]any {
 			},
 			"file": map[string]any{
 				"type":        "string",
-				"description": "可选的仓库相对路径；未缓存时仅从该 PR 固定 head SHA 拉取此文件。",
+				"description": "首次读取时提供仓库相对路径，工具仅从该 PR 固定 head SHA 拉取此文件。",
 			},
 			"start_line": map[string]any{
 				"type":        "integer",

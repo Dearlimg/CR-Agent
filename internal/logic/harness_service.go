@@ -13,9 +13,14 @@ import (
 
 type harnessSetupKey struct{}
 type goalConditionKey struct{}
+type reviewSourceSnapshotKey struct{}
 
 func withGoalCondition(ctx context.Context, condition string) context.Context {
 	return context.WithValue(ctx, goalConditionKey{}, condition)
+}
+
+func withReviewSourceSnapshot(ctx context.Context, snapshot *reviewSourceSnapshot) context.Context {
+	return context.WithValue(ctx, reviewSourceSnapshotKey{}, snapshot)
 }
 
 // withReviewHarness binds host capabilities, not model-provided permissions.
@@ -27,6 +32,7 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 		ctx = withTraceRecorder(ctx, recorder)
 	}
 	bound := context.WithValue(ctx, harnessSetupKey{}, func(h *ReviewHarness) {
+		sourceSnapshot, _ := ctx.Value(reviewSourceSnapshotKey{}).(*reviewSourceSnapshot)
 		var checks []PreflightCheck
 		if len(artifacts) > 0 {
 			checks = artifacts[0].Checks
@@ -43,10 +49,14 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 		h.WorkflowRunner = s.workflowAgentRunner(h)
 		todos := ""
 		h.System = func() string {
-			if todos == "" {
-				return ""
+			sections := []string{}
+			if sourceSnapshot != nil {
+				sections = append(sections, reviewAgentContextToolGuidance)
 			}
-			return "当前会话计划:\n" + todos
+			if todos != "" {
+				sections = append(sections, "当前会话计划:\n"+todos)
+			}
+			return strings.Join(sections, "\n")
 		}
 		h.Record = func(name, callID, status, output string, started, ended time.Time, duration int64) {
 			parentID := traceParentFrom(ctx)
@@ -80,6 +90,17 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 				records, err := s.MemoryStore.Recall(query)
 				return renderMemories(records), err
 			})
+		if sourceSnapshot != nil {
+			h.addWithPermission(
+				reviewContextToolName,
+				reviewContextToolDescription,
+				reviewContextToolSchema(),
+				PermissionRepositoryRead,
+				func(ctx context.Context, args map[string]any) (string, error) {
+					return runReviewContextTool(ctx, sourceSnapshot, h.Policy, args)
+				},
+			)
+		}
 		h.add("todo_write", "替换当前模型会话的审查计划，items 为文本清单", objectSchema("items"),
 			func(_ context.Context, args map[string]any) (string, error) {
 				items, err := requiredString(args, "items")
@@ -296,6 +317,67 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 			})
 	})
 	return bound, recorder.Flush
+}
+
+func (s *Service) prepareFirstPassReviewSource(
+	ctx context.Context,
+	job *model.ReviewJob,
+	recorder *TraceRecorder,
+) *reviewSourceSnapshot {
+	if _, supported := parseReviewGitHubPR(job.Source); !supported {
+		return nil
+	}
+
+	span := recorder.Start(
+		"tool",
+		"source_context_prepare",
+		"review",
+		"准备首轮按需读取 PR 源码",
+		"",
+	)
+	status := "succeeded"
+	output := ""
+	errorMessage := ""
+	var snapshot *reviewSourceSnapshot
+	var prepareErr error
+	if prepareErr = reviewSourcePermissionError(s.Loop.Policy, "source_context_prepare"); prepareErr == nil {
+		snapshot, prepareErr = loadReviewSourceReaderWithFindings(ctx, reviewSourceSnapshotRequest{
+			Source:                 job.Source,
+			Config:                 s.Config,
+			PrepareForOnDemandRead: true,
+		})
+	} else {
+		status = "denied"
+	}
+
+	if snapshot != nil {
+		output = "固定 head 源码工具已准备，可按需拉取文件"
+	}
+	if prepareErr != nil {
+		if status != "denied" {
+			status = "failed"
+		}
+		errorMessage = redact(prepareErr.Error())
+		if output == "" {
+			output = "固定 head 源码工具不可用"
+		} else {
+			output += "；部分文件读取失败"
+		}
+	}
+	duration := span.End(TraceResult{
+		Status: status, Output: output, Err: prepareErr, Origin: "orchestrator",
+	})
+	_ = s.Store.RecordToolCall(
+		job.ID,
+		span.ID(),
+		"source_context_prepare",
+		status,
+		"准备首轮按需读取 PR 源码",
+		output,
+		errorMessage,
+		duration,
+	)
+	return snapshot
 }
 
 func stringObject(names ...string) map[string]any {

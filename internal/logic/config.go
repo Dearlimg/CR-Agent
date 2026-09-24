@@ -108,15 +108,15 @@ func LoadConfig() Config {
 		GoalMaxBlocks:             intEnv(b, "GOAL_MAX_BLOCKS", 6),
 		DeepSeekAPIKey:            b("DEEPSEEK_API_KEY", ""),
 		DeepSeekBaseURL:           b("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-		DeepSeekModel:             b("DEEPSEEK_MODEL", "deepseek-flash"),
+		DeepSeekModel:             b("DEEPSEEK_MODEL", "deepseek-v4-pro"),
 		GitHubToken:               b("GITHUB_TOKEN", ""),
 		GitHubAPIBase:             b("GITHUB_API_BASE", "https://api.github.com"),
 		MySQLDSN:                  b("MYSQL_DSN", ""),
 		RedisAddr:                 b("REDIS_ADDR", "127.0.0.1:6379"),
 		RedisPassword:             b("REDIS_PASSWORD", ""),
 		ReviewBudgetYuan:          budgetYuan,
-		InputPriceYuanPerMillion:  floatEnv(b, "REVIEW_INPUT_PRICE_YUAN_PER_MILLION", 2),
-		OutputPriceYuanPerMillion: floatEnv(b, "REVIEW_OUTPUT_PRICE_YUAN_PER_MILLION", 8),
+		InputPriceYuanPerMillion:  floatEnv(b, "REVIEW_INPUT_PRICE_YUAN_PER_MILLION", 9),
+		OutputPriceYuanPerMillion: floatEnv(b, "REVIEW_OUTPUT_PRICE_YUAN_PER_MILLION", 27),
 	}
 }
 

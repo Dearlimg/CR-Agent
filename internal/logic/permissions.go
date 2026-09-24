@@ -48,6 +48,20 @@ func (p *PermissionPolicy) Decide(permission Permission) PermissionDecision {
 	}
 	return decision
 }
+
+func reviewSourcePermissionError(policy *PermissionPolicy, tool string) error {
+	if policy == nil {
+		return permissionError(tool, PermissionRepositoryRead, PermissionDeny)
+	}
+	for _, permission := range []Permission{PermissionRepositoryRead, PermissionNetworkFetch} {
+		decision := policy.Decide(permission)
+		if decision != PermissionAllow {
+			return permissionError(tool, permission, decision)
+		}
+	}
+	return nil
+}
+
 func permissionError(tool string, permission Permission, decision PermissionDecision) error {
 	return fmt.Errorf("权限策略阻止工具 %s：%s=%s", tool, permission, decision)
 }

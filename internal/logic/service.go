@@ -428,7 +428,12 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 					Status: "denied", Err: errors.New(sourceContextError), Origin: "orchestrator",
 				})
 			} else {
-				loaded, loadErr := loadReviewSourceSnapshot(ctx, j.Source, s.Config, paths)
+				loaded, loadErr := loadReviewSourceSnapshotWithFindings(ctx, reviewSourceSnapshotRequest{
+					Source:   j.Source,
+					Config:   s.Config,
+					Paths:    paths,
+					Findings: withEvidence,
+				})
 				sourceFiles = loaded
 				if loadErr != nil {
 					sourceContextError = redactFindingText(loadErr.Error())

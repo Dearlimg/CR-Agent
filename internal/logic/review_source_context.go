@@ -34,6 +34,7 @@ var (
 	reviewGitHubNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 	reviewGitHubSHAPattern  = regexp.MustCompile(`^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$`)
 	reviewSymbolCallPattern = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	reviewIdentifierPattern = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
 	reviewPythonDefinition  = regexp.MustCompile(`^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
 	reviewGoDefinition      = regexp.MustCompile(`^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
 )
@@ -60,6 +61,21 @@ type reviewSourceFile struct {
 	Size     int64  `json:"size"`
 }
 
+type reviewSourceSnapshotRequest struct {
+	Source   string
+	Config   Config
+	Paths    []string
+	Findings []ReviewFinding
+}
+
+type reviewImportSearch struct {
+	Paths    *[]string
+	Seen     map[string]bool
+	FilePath string
+	Content  string
+	Symbols  map[string]bool
+}
+
 // loadReviewSourceSnapshot retrieves bounded source files from the exact head
 // commit of a GitHub pull request. Other source kinds have no repository
 // snapshot and return nil, nil.
@@ -69,6 +85,20 @@ func loadReviewSourceSnapshot(
 	cfg Config,
 	paths []string,
 ) (map[string]string, error) {
+	return loadReviewSourceSnapshotWithFindings(ctx, reviewSourceSnapshotRequest{
+		Source: source,
+		Config: cfg,
+		Paths:  paths,
+	})
+}
+
+func loadReviewSourceSnapshotWithFindings(
+	ctx context.Context,
+	request reviewSourceSnapshotRequest,
+) (map[string]string, error) {
+	source := request.Source
+	cfg := request.Config
+	paths := request.Paths
 	pr, supported := parseReviewGitHubPR(source)
 	if !supported {
 		return nil, nil
@@ -119,42 +149,65 @@ func loadReviewSourceSnapshot(
 	}
 
 	var totalBytes int
-	failedFiles := 0
-	for _, filePath := range uniquePaths {
+	fetchFile := func(filePath string) bool {
 		fileURL := reviewSourceURL(base, "repos", owner, repo, "contents") +
 			"/" + reviewSourceEscapedPath(filePath) + "?ref=" + url.QueryEscape(metadata.Head.SHA)
 		body, err := reviewSourceGET(ctx, client, fileURL, token, reviewSourceResponseBytes)
 		if err != nil {
-			failedFiles++
-			continue
+			return false
 		}
 		var file reviewSourceFile
 		if err := json.Unmarshal(body, &file); err != nil {
-			failedFiles++
-			continue
+			return false
 		}
 		if file.Type != "file" || file.Encoding != "base64" || file.Size > reviewSourceMaxFileBytes {
-			failedFiles++
-			continue
+			return false
 		}
 		content, err := base64.StdEncoding.DecodeString(file.Content)
 		if err != nil {
-			failedFiles++
-			continue
+			return false
 		}
 		if len(content) > reviewSourceMaxFileBytes || totalBytes+len(content) > reviewSourceMaxTotalBytes {
-			failedFiles++
-			continue
+			return false
 		}
 		if !utf8.Valid(content) || strings.IndexByte(string(content), 0) >= 0 {
-			failedFiles++
-			continue
+			return false
 		}
 		totalBytes += len(content)
 		files[filePath] = redactReviewInput(string(content))
+		return true
+	}
+
+	failedFiles := 0
+	for _, filePath := range uniquePaths {
+		if !fetchFile(filePath) {
+			failedFiles++
+		}
 	}
 	if failedFiles > 0 {
 		return files, fmt.Errorf("%d 个源文件未能读取或超过安全限制", failedFiles)
+	}
+
+	// Imported source is optional. A missing related module must not invalidate
+	// the changed-file snapshot or turn a usable verification into a fetch error.
+	attemptsLeft := reviewSourceMaxFiles - len(uniquePaths)
+	for depth := 0; depth < 2 && attemptsLeft > 0; depth++ {
+		addedFile := false
+		for _, filePath := range reviewFindingImportedPaths(files, request.Findings, depth) {
+			if _, loaded := files[filePath]; loaded {
+				continue
+			}
+			if attemptsLeft == 0 {
+				break
+			}
+			attemptsLeft--
+			if fetchFile(filePath) {
+				addedFile = true
+			}
+		}
+		if !addedFile {
+			break
+		}
 	}
 	return files, nil
 }
@@ -347,10 +400,13 @@ func findingSourceExcerpt(files map[string]string, finding ReviewFinding, maxCha
 		return redactReviewInput(excerpt.String())
 	}
 	paths := make([]string, 0, len(files))
+	paths = append(paths, finding.File)
 	for filePath := range files {
-		paths = append(paths, filePath)
+		if filePath != finding.File {
+			paths = append(paths, filePath)
+		}
 	}
-	slices.Sort(paths)
+	slices.Sort(paths[1:])
 	definitions, references := reviewSourceRelated(files, paths, finding, symbols)
 	for _, block := range append(definitions, references...) {
 		if excerpt.Len()+len(block) > maxChars {
@@ -359,6 +415,279 @@ func findingSourceExcerpt(files map[string]string, finding ReviewFinding, maxCha
 		excerpt.WriteString(block)
 	}
 	return redactReviewInput(excerpt.String())
+}
+
+func reviewFindingImportedPaths(files map[string]string, findings []ReviewFinding, importPass int) []string {
+	relatedPaths := make([]string, 0)
+	seen := make(map[string]bool)
+	if importPass == 0 {
+		prioritized := make([]ReviewFinding, 0, len(findings))
+		remaining := make([]ReviewFinding, 0, len(findings))
+		for _, finding := range findings {
+			content, ok := files[finding.File]
+			if !ok || finding.Line <= 0 {
+				remaining = append(remaining, finding)
+				continue
+			}
+			lines := strings.Split(content, "\n")
+			if finding.Line > len(lines) {
+				remaining = append(remaining, finding)
+				continue
+			}
+			isTypeRelated := false
+			for _, symbol := range reviewSourceSymbols(lines, finding.Line-1, finding.Evidence) {
+				if symbol[0] >= 'A' && symbol[0] <= 'Z' {
+					isTypeRelated = true
+					break
+				}
+			}
+			if isTypeRelated {
+				prioritized = append(prioritized, finding)
+				continue
+			}
+			remaining = append(remaining, finding)
+		}
+		prioritized = append(prioritized, remaining...)
+		for _, finding := range prioritized {
+			content, ok := files[finding.File]
+			if !ok || finding.Line <= 0 {
+				continue
+			}
+			lines := strings.Split(content, "\n")
+			if finding.Line > len(lines) {
+				continue
+			}
+			symbols := make(map[string]bool)
+			for _, symbol := range reviewSourceSymbols(lines, finding.Line-1, finding.Evidence) {
+				symbols[symbol] = true
+			}
+			reviewAppendImportedPaths(reviewImportSearch{
+				Paths:    &relatedPaths,
+				Seen:     seen,
+				FilePath: finding.File,
+				Content:  content,
+				Symbols:  symbols,
+			})
+		}
+		return relatedPaths
+	}
+
+	symbols := make(map[string]bool)
+	for _, finding := range findings {
+		content, ok := files[finding.File]
+		if !ok || finding.Line <= 0 {
+			continue
+		}
+		lines := strings.Split(content, "\n")
+		if finding.Line > len(lines) {
+			continue
+		}
+		for _, symbol := range reviewSourceSymbols(lines, finding.Line-1, finding.Evidence) {
+			symbols[symbol] = true
+		}
+	}
+	if len(symbols) == 0 {
+		return relatedPaths
+	}
+
+	filePaths := make([]string, 0, len(files))
+	for filePath := range files {
+		filePaths = append(filePaths, filePath)
+	}
+	slices.Sort(filePaths)
+	for _, filePath := range filePaths {
+		reviewAppendImportedPaths(reviewImportSearch{
+			Paths:    &relatedPaths,
+			Seen:     seen,
+			FilePath: filePath,
+			Content:  files[filePath],
+			Symbols:  symbols,
+		})
+	}
+	return relatedPaths
+}
+
+func reviewAppendImportedPaths(search reviewImportSearch) {
+	lines := strings.Split(search.Content, "\n")
+	for index := 0; index < len(lines); index++ {
+		module, names, isFromImport, nextLine := reviewPythonImport(lines, index)
+		if module == "" {
+			continue
+		}
+		index = nextLine
+		if isFromImport {
+			matchedNames := make([]string, 0, len(names))
+			for _, name := range names {
+				if search.Symbols[name] {
+					matchedNames = append(matchedNames, name)
+				}
+			}
+			if len(matchedNames) == 0 {
+				continue
+			}
+			reviewAppendUniquePaths(
+				search.Paths,
+				search.Seen,
+				reviewPythonImportCandidates(search.FilePath, module, matchedNames),
+			)
+			continue
+		}
+		modules := strings.Split(module, ",")
+		for index, name := range names {
+			if search.Symbols[name] && index < len(modules) {
+				reviewAppendUniquePaths(
+					search.Paths,
+					search.Seen,
+					reviewPythonImportCandidates(search.FilePath, modules[index], nil),
+				)
+			}
+		}
+	}
+}
+
+func reviewPythonImport(lines []string, index int) (string, []string, bool, int) {
+	line := strings.TrimSpace(strings.SplitN(lines[index], "#", 2)[0])
+	if strings.HasPrefix(line, "from ") {
+		separator := strings.Index(line, " import ")
+		if separator < 0 {
+			return "", nil, true, index
+		}
+		module := strings.TrimSpace(strings.TrimPrefix(line[:separator], "from "))
+		rest := strings.TrimSpace(line[separator+len(" import "):])
+		lastLine := index
+		if strings.Contains(rest, "(") && !strings.Contains(rest, ")") {
+			for next := index + 1; next < len(lines) && next <= index+12; next++ {
+				rest += " " + strings.TrimSpace(strings.SplitN(lines[next], "#", 2)[0])
+				lastLine = next
+				if strings.Contains(lines[next], ")") {
+					break
+				}
+			}
+		}
+		if !reviewPythonModuleName(module) {
+			return "", nil, true, lastLine
+		}
+		return module, reviewPythonImportNames(rest), true, lastLine
+	}
+	if !strings.HasPrefix(line, "import ") {
+		return "", nil, false, index
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(line, "import "))
+	parts := strings.Split(rest, ",")
+	modules := make([]string, 0, len(parts))
+	names := make([]string, 0, len(parts))
+	for _, part := range parts {
+		fields := strings.Fields(strings.TrimSpace(part))
+		if len(fields) == 0 || !reviewPythonModuleName(fields[0]) {
+			continue
+		}
+		module := fields[0]
+		alias := strings.TrimSuffix(module[strings.LastIndex(module, ".")+1:], ",")
+		if len(fields) >= 3 && fields[1] == "as" {
+			alias = fields[2]
+		}
+		modules = append(modules, module)
+		names = append(names, alias)
+	}
+	if len(modules) == 0 {
+		return "", nil, false, index
+	}
+	return strings.Join(modules, ","), names, false, index
+}
+
+func reviewPythonImportNames(raw string) []string {
+	names := make([]string, 0)
+	for _, part := range strings.Split(raw, ",") {
+		fields := strings.Fields(strings.Trim(part, " \t()"))
+		if len(fields) == 0 {
+			continue
+		}
+		name := fields[0]
+		if name == "*" {
+			names = append(names, name)
+			continue
+		}
+		if !reviewPythonModuleName(name) {
+			continue
+		}
+		if len(fields) >= 3 && fields[1] == "as" {
+			names = append(names, name, fields[2])
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+func reviewPythonModuleName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, char := range name {
+		if char == '.' || char == '_' || char >= 'a' && char <= 'z' ||
+			char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func reviewPythonImportCandidates(sourcePath, module string, importedNames []string) []string {
+	module = strings.TrimSpace(module)
+	level := 0
+	for level < len(module) && module[level] == '.' {
+		level++
+	}
+	moduleParts := []string{}
+	if remainder := strings.Trim(module[level:], "."); remainder != "" {
+		moduleParts = strings.Split(remainder, ".")
+	}
+	roots := []string{}
+	if level > 0 {
+		baseParts := strings.Split(path.Dir(sourcePath), "/")
+		for step := 1; step < level && len(baseParts) > 0; step++ {
+			baseParts = baseParts[:len(baseParts)-1]
+		}
+		roots = append(roots, strings.Join(baseParts, "/"))
+	} else {
+		parts := strings.Split(sourcePath, "/")
+		for index, part := range parts[:max(0, len(parts)-1)] {
+			if part == "src" {
+				roots = append(roots, strings.Join(parts[:index+1], "/"))
+			}
+		}
+		roots = append(roots, "")
+	}
+
+	candidates := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, root := range roots {
+		base := path.Join(append([]string{root}, moduleParts...)...)
+		if len(moduleParts) > 0 {
+			reviewAppendUniquePaths(&candidates, seen, []string{base + ".py", path.Join(base, "__init__.py")})
+		} else {
+			reviewAppendUniquePaths(&candidates, seen, []string{path.Join(base, "__init__.py")})
+		}
+		for _, name := range importedNames {
+			if name == "*" || !reviewPythonModuleName(name) {
+				continue
+			}
+			child := path.Join(base, name)
+			reviewAppendUniquePaths(&candidates, seen, []string{child + ".py", path.Join(child, "__init__.py")})
+		}
+	}
+	return candidates
+}
+
+func reviewAppendUniquePaths(paths *[]string, seen map[string]bool, candidates []string) {
+	for _, candidate := range candidates {
+		if !reviewSourceValidPath(candidate) || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		*paths = append(*paths, candidate)
+	}
 }
 
 func reviewSourceLine(line string) string {
@@ -388,7 +717,14 @@ func reviewSourceWindow(lines []string, target, radius int) string {
 }
 
 func reviewSourceSymbols(lines []string, target int, evidence string) []string {
-	symbols := make([]string, 0, 6)
+	symbols := make([]string, 0, 16)
+	addIdentifiers := func(line string) {
+		for _, name := range reviewIdentifierPattern.FindAllString(line, -1) {
+			if reviewSourceUsefulSymbol(name) && !slices.Contains(symbols, name) {
+				symbols = append(symbols, name)
+			}
+		}
+	}
 	addCalls := func(line string) {
 		for _, match := range reviewSymbolCallPattern.FindAllStringSubmatch(line, -1) {
 			name := match[1]
@@ -397,22 +733,23 @@ func reviewSourceSymbols(lines []string, target int, evidence string) []string {
 			}
 		}
 	}
+	addIdentifiers(evidence)
 	addCalls(lines[target])
+	addIdentifiers(lines[target])
 	for index := target; index >= max(0, target-300); index-- {
 		if match := reviewSourceDefinition(lines[index]); match != "" {
-			if reviewSourceUsefulSymbol(match) && !slices.Contains(symbols, match) {
-				symbols = append(symbols, match)
-			}
+			addIdentifiers(lines[index])
 			break
 		}
 	}
 	addCalls(evidence)
-	return symbols[:min(len(symbols), 6)]
+	return symbols[:min(len(symbols), 16)]
 }
 
 func reviewSourceUsefulSymbol(name string) bool {
 	switch name {
-	case "if", "for", "while", "with", "return", "await", "print", "str", "len", "int", "list", "dict", "set":
+	case "if", "for", "while", "with", "return", "await", "print", "str", "len", "int", "list", "dict",
+		"set", "self", "cls", "None", "True", "False":
 		return false
 	default:
 		return len(name) >= 3
@@ -437,30 +774,41 @@ func reviewSourceRelated(
 ) ([]string, []string) {
 	definitions := make([]string, 0, 4)
 	references := make([]string, 0, 4)
-	for _, filePath := range paths {
-		lines := strings.Split(files[filePath], "\n")
-		for index, line := range lines {
-			if filePath == finding.File && index >= finding.Line-1-reviewSourceContextLines &&
-				index <= finding.Line-1+reviewSourceContextLines {
-				continue
-			}
-			for _, symbol := range symbols {
+	for _, symbol := range symbols {
+		foundDefinition := false
+		foundReference := false
+		for _, filePath := range paths {
+			lines := strings.Split(files[filePath], "\n")
+			for index, line := range lines {
+				if filePath == finding.File && index >= finding.Line-1-reviewSourceContextLines &&
+					index <= finding.Line-1+reviewSourceContextLines {
+					continue
+				}
 				if !reviewSourceHasIdentifier(line, symbol) {
 					continue
 				}
 				block := reviewSourceRelatedBlock(filePath, lines, index, symbol)
 				if reviewSourceDefinition(line) == symbol {
-					if len(definitions) < 4 {
+					if !foundDefinition && len(definitions) < 4 {
 						definitions = append(definitions, block)
+						foundDefinition = true
 					}
-				} else if len(references) < 4 {
-					references = append(references, block)
+					continue
 				}
+				if !foundReference && len(references) < 4 {
+					references = append(references, block)
+					foundReference = true
+				}
+				if foundDefinition && foundReference {
+					break
+				}
+			}
+			if foundDefinition && foundReference {
 				break
 			}
-			if len(definitions) >= 4 && len(references) >= 4 {
-				return definitions, references
-			}
+		}
+		if len(definitions) >= 4 && len(references) >= 4 {
+			return definitions, references
 		}
 	}
 	return definitions, references

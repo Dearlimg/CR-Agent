@@ -2,7 +2,9 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -18,7 +20,7 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		return "", fmt.Errorf("DEEPSEEK_API_KEY 未配置")
 	}
 	chat, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		APIKey: cfg.DeepSeekAPIKey, Model: "deepseek-chat",
+		APIKey: cfg.DeepSeekAPIKey, Model: reviewModelName(cfg),
 		BaseURL: strings.TrimRight(cfg.DeepSeekBaseURL, "/") + "/v1",
 	})
 	if err != nil {
@@ -44,8 +46,8 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 				return retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
 					attempt := retryCount
 					retryCount++
-					return observedModelRequest(ctx, "goal_evaluator", modelRound, attempt, budget, func() (*schema.Message, error) {
-						return chat.Generate(ctx, input, modeloptions.WithMaxTokens(budget))
+					return observedBudgetedModelRequest(ctx, "goal_evaluator", modelRound, attempt, budget, estimateModelInputTokens(input, nil), func(allowedTokens int) (*schema.Message, error) {
+						return chat.Generate(ctx, input, modeloptions.WithMaxTokens(allowedTokens))
 					})
 				})
 			})
@@ -80,8 +82,8 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 			return retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
 				attempt := retryCount
 				retryCount++
-				return observedModelRequest(ctx, "deepseek_chat", modelRound, attempt, budget, func() (*schema.Message, error) {
-					return bound.Generate(ctx, input, modeloptions.WithMaxTokens(budget))
+				return observedBudgetedModelRequest(ctx, "deepseek_flash", modelRound, attempt, budget, estimateModelInputTokens(input, tools), func(allowedTokens int) (*schema.Message, error) {
+					return bound.Generate(ctx, input, modeloptions.WithMaxTokens(allowedTokens))
 				})
 			})
 		})
@@ -138,20 +140,45 @@ func observedModelRequest(
 	budget int,
 	generate func() (*schema.Message, error),
 ) (*schema.Message, error) {
+	return observedBudgetedModelRequest(ctx, name, round, retryCount, budget, inputFramingTokenReserve, func(int) (*schema.Message, error) {
+		return generate()
+	})
+}
+
+func observedBudgetedModelRequest(
+	ctx context.Context,
+	name string,
+	round int,
+	retryCount int,
+	requestedOutputTokens int,
+	estimatedInputTokens int,
+	generate func(int) (*schema.Message, error),
+) (*schema.Message, error) {
+	meter := reviewBudgetFrom(ctx)
+	reservation, reserveErr := meter.reserve(estimatedInputTokens, requestedOutputTokens)
+	outputTokenLimit := requestedOutputTokens
+	if reserveErr == nil && meter != nil {
+		outputTokenLimit = reservation.outputTokens
+	}
 	var span *TraceSpan
 	if recorder := traceRecorderFrom(ctx); recorder != nil {
 		span = recorder.Start(
 			"model_request",
 			name,
 			"inference",
-			fmt.Sprintf("max_tokens=%d", budget),
+			fmt.Sprintf("requested_max_tokens=%d allowed_max_tokens=%d estimated_input_tokens=%d", requestedOutputTokens, outputTokenLimit, estimatedInputTokens),
 			traceParentFrom(ctx),
 		)
 	}
-	reply, err := generate()
-	if span == nil {
-		return reply, err
+	if reserveErr != nil {
+		endModelRequestTrace(span, TraceResult{
+			Status: "budget_exhausted", Output: "审查预算不足，已阻止模型请求", Round: round,
+			RetryCount: retryCount, Origin: "model",
+		})
+		_ = meter.persist()
+		return nil, reserveErr
 	}
+	reply, err := generate(outputTokenLimit)
 	result := TraceResult{
 		Status:     "succeeded",
 		Output:     "模型请求完成",
@@ -161,7 +188,7 @@ func observedModelRequest(
 	}
 	if err != nil || reply == nil {
 		result.Status = "failed"
-		result.Output = "模型请求失败"
+		result.Output = "模型请求失败，按预留额度计入预算"
 	} else if reply.ResponseMeta != nil {
 		result.FinishReason = reply.ResponseMeta.FinishReason
 		if usage := reply.ResponseMeta.Usage; usage != nil {
@@ -173,8 +200,73 @@ func observedModelRequest(
 			result.Output = "模型输出达到 token 上限"
 		}
 	}
-	span.End(result)
-	return reply, err
+	modelName, inputPrice, outputPrice := meter.tracePricing()
+	result.Model = modelName
+	result.InputPriceYuanPerMillion = inputPrice
+	result.OutputPriceYuanPerMillion = outputPrice
+	if meter != nil {
+		usageKnown := reply != nil && reply.ResponseMeta != nil && reply.ResponseMeta.Usage != nil
+		result.CostMicros = meter.settle(reservation, result.InputTokens, result.OutputTokens, usageKnown)
+		result.EstimatedCost = !usageKnown
+	}
+	endModelRequestTrace(span, result)
+	if err := meter.persist(); err != nil {
+		return nil, fmt.Errorf("模型预算记录失败，已停止后续调用")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if reply == nil {
+		return nil, fmt.Errorf("模型返回空响应")
+	}
+	if meter != nil && result.CostMicros > 0 && meter.isOverLimit() {
+		return nil, fmt.Errorf("审查预算已达到上限，已停止后续模型调用")
+	}
+	return reply, nil
+}
+
+func endModelRequestTrace(span *TraceSpan, result TraceResult) {
+	if span != nil {
+		span.End(result)
+	}
+}
+
+func estimateModelInputTokens(messages []*schema.Message, tools []*schema.ToolInfo) int {
+	// Treat each input byte as a token and add protocol/tool framing overhead.
+	// This intentionally overestimates common text/code requests before reserving cost.
+	bytes := int64(inputFramingTokenReserve + len(messages)*64 + len(tools)*128)
+	for _, message := range messages {
+		if message == nil {
+			continue
+		}
+		bytes += int64(len(message.Role) + len(message.Content) + len(message.ReasoningContent) + 64)
+		for _, call := range message.ToolCalls {
+			bytes += int64(len(call.ID) + len(call.Type) + len(call.Function.Name) + len(call.Function.Arguments) + 48)
+		}
+	}
+	for _, tool := range tools {
+		if tool == nil {
+			continue
+		}
+		bytes += int64(len(tool.Name) + len(tool.Desc) + 128)
+		if tool.ParamsOneOf != nil {
+			encoded, err := json.Marshal(tool.ParamsOneOf)
+			if err == nil {
+				bytes += int64(len(encoded))
+			}
+		}
+	}
+	if bytes > int64(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(bytes)
+}
+
+func reviewModelName(cfg Config) string {
+	if strings.TrimSpace(cfg.DeepSeekModel) == "" {
+		return "deepseek-flash"
+	}
+	return cfg.DeepSeekModel
 }
 
 func retryHarnessInference(ctx context.Context, cfg Config, generate func() (*schema.Message, error)) (*schema.Message, error) {

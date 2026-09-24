@@ -117,7 +117,7 @@ sequenceDiagram
 
 | 服务 | 何时调用 | 代码用途 |
 |---|---|---|
-| DeepSeek API | 需要运行审查、第二轮复核、Workflow Agent 或记忆提取时 | Eino OpenAI-compatible 适配层使用 `deepseek-chat`；默认 base URL 来自 `DEEPSEEK_BASE_URL`，API key 来自 `DEEPSEEK_API_KEY` |
+| DeepSeek API | 需要运行审查、第二轮复核、Workflow Agent 或记忆提取时 | Eino OpenAI-compatible 适配层默认使用 `deepseek-flash`；模型、base URL 和 API key 分别来自 `DEEPSEEK_MODEL`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_API_KEY` |
 | GitHub REST API / GitHub `.diff` | 请求给 GitHub PR URL 且未直接给 diff 时 | 拉取 PR diff；可选使用 `GITHUB_TOKEN`，API base 可配置 |
 | GitLab MR `.diff` | 请求给 GitLab MR URL 且未直接给 diff 时 | 拉取合并请求 diff；配置中没有单独的 GitLab token |
 | MySQL | 服务启动及请求持久化时 | 生产环境强制要求 `PERSISTENCE_MODE=mysql` 和 `MYSQL_DSN`；保存审查 Job、任务/后台任务和 Workflow 运行数据 |
@@ -143,7 +143,7 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 - **权限策略并非交互审批**：`allow` 会执行，`deny` 或 `require_approval` 在当前 Harness 都会转成工具错误；代码没有待审批记录、通知 UI、审批后恢复工具调用的完整状态机。
 - **观测和评测已起步**：模型请求、工具调用、核验和状态仍记录在原始 trace 中；用户界面隐藏难以解释的逐条 `model_request` / `deepseek_chat` 事件，保留模型请求次数和耗时汇总。当前 21 例合成 diff benchmark 可观测 precision/recall、变更行定位、trace 完整度和脱敏 canary，但每例只跑一次，按 fixture phrase group 做规则匹配。
 - **模型长度预算分开控制**：审查模型输出上限由 `MODEL_MAX_OUTPUT_TOKENS` 配置，默认 8,192；本地上下文字符预算默认 250,000。前者是生成 token 上限，调大它不会增大输入上下文。完整 diff 若超过单次请求可承载的上下文，仍会失败；不能保证任意大小的 PR 都能一次送入模型。
-- **预算控制不完整**：有 `REVIEW_BUDGET_CENTS` 配置和 trace token 字段，但当前审查结果把 `SpentCents` 写为常量 `1`，没有看到按模型用量计算或强制截断费用的路径。Benchmark README 也明确说现阶段没有美元成本计量或强制预算。
+- **预算按任务执行**：Review Job 可设置人民币上限，模型调用按 usage 与配置费率核算并在请求前预留费用；trace 保存 token 数、模型和费率快照。计量按高峰/缓存未命中单价保守估算，未和供应商账单对账。独立 benchmark 仍只有请求数与 token 计数上限，没有费用账单。
 
 ## 5. 与业界常见 Agent 设计的对照
 
@@ -162,7 +162,7 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 
 ### 总体判断
 
-和常见 Agent Runtime 相比，CR-Agent **核心 tool loop、权限检查、结构化输出、trace、workflow persistence 等基础能力已经存在**；差距主要不在“还少多少种 Agent 名词”，而在真实运行时完整性：MCP 外部互操作、Run 级状态恢复、能恢复的人工审批、多实例一致性、API 身份与授权、代表性评测和可执行成本预算。
+和常见 Agent Runtime 相比，CR-Agent **核心 tool loop、权限检查、结构化输出、trace、workflow persistence 等基础能力已经存在**；差距主要不在“还少多少种 Agent 名词”，而在真实运行时完整性：MCP 外部互操作、Run 级状态恢复、能恢复的人工审批、多实例一致性、API 身份与授权、代表性评测和费用对账。
 
 对其当前代码审查产品目标而言，强制引入 Shell、文件修改或常驻多 Agent Team 并不会自动提高质量，也会扩大风险面。更重要的是让现有只读结果稳定、可复核、可恢复，并用真实评测证明每个新增复杂度有收益。
 
@@ -178,7 +178,7 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 2. **再补完整作业恢复**：为 Review Job 保存经过脱敏的会话状态、轮次和工具完成记录，采用稳定调用键避免重启后重复副作用；重启后能恢复或准确标记不可恢复阶段。
 3. **接入真实 MCP transport**：实现 stdio 和/或 Streamable HTTP client、认证/凭据管理、超时取消、连接与版本协商、schema 校验、错误分类；用真实的只读文档服务做端到端集成。部署写工具先保留 deny，直到审批链路工作。
 4. **扩展评测而非堆工具**：补真实 PR 历史和完整仓库上下文，加入人工判定或独立语义判分，覆盖 Go 以外语言、不同 diff 规模、重复运行、token/美元成本及延迟分布。
-5. **让配置和运行事实一致**：真正按模型用量执行预算，明确 Redis 是否移除或集成；评估 Memory/Cron 本地文件在多实例下的读写和重复触发语义。
+5. **让配置和运行事实一致**：将预算估算与供应商账单对账，明确 Redis 是否移除或集成；评估 Memory/Cron 本地文件在多实例下的读写和重复触发语义。
 6. **仅在需求转为自动修复时扩展执行能力**：届时增加隔离工作区/worktree、只读与写工具分权、测试结果反馈、变更 diff 展示和人工合并控制；不要把这些能力混进当前只读审查 Agent 的默认工具池。
 
 ## 8. 代码入口索引

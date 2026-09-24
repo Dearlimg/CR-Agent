@@ -227,11 +227,15 @@ func run(options benchmarkOptions) error {
 	cfg.DeepSeekBaseURL = "http://" + listener.Addr().String()
 	cfg.SkillsDir = "skills"
 
+	modelName := cfg.DeepSeekModel
+	if strings.TrimSpace(modelName) == "" {
+		modelName = "deepseek-flash"
+	}
 	report := runReport{
 		Version:           "code-review-v1",
 		Route:             "single",
 		StartedAt:         time.Now().UTC(),
-		Model:             "deepseek-chat via configured endpoint",
+		Model:             modelName + " via configured endpoint",
 		CasesRequested:    len(cases),
 		MaxForwardedCalls: options.MaxCalls,
 		MaxOutputTokens:   options.MaxOutputTokens,

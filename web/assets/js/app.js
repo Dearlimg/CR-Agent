@@ -26,6 +26,7 @@ $("new").onclick = () => {
   $("error").textContent = "";
   $("source").value = "";
   $("diff").value = "";
+  $("budget").value = "";
   $("search").value = "";
   render();
   $("source").focus();

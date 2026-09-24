@@ -16,7 +16,7 @@ go run ./cmd/server
 - **可恢复**：生产运行时将任务状态、评论、Todo、trace 和工具调用写入 MySQL，状态含 queued/running/completed/failed。
 - **可观测**：每条评论带 `trace_id`，任务返回工具、脱敏输入、输出和时间戳。
 - **可扩展**：`ToolRegistry.Register("name", tool)` 声明式注册工具，不修改主流程。
-- **预算**：请求支持 `budget_cents`，默认读取 `REVIEW_BUDGET_CENTS`。
+- **预算**：按人民币控制每次审查的总模型费用；请求可传 `budget_yuan`，默认读取 `REVIEW_BUDGET_YUAN`（默认 ¥10）。每次模型请求按返回的输入/输出 token 和模型单价计费，并在请求前预留估算额度；超出上限后停止后续调用。方案和边界见 [`docs/token-budget-design.md`](docs/token-budget-design.md)。
 - **安全**：在本地原始 diff 上扫描疑似凭据，再向模型提供脱敏 diff；不执行仓库代码，配置只来自环境变量。
 - **按需 Skills**：启动时仅扫描 `skills/*/SKILL.md` 的名称和描述；审查任务会记录并加载 `code-review` 的完整指令，再交给主审查 Agent 或专项 Agent。
 
@@ -165,7 +165,7 @@ Cron 使用五字段格式：`分钟 小时 日期 月份 星期`，字段支持
 
 ## API
 
-- `POST /api/reviews`：`{"source":"...","diff":"...","memory_query":"...","goal":"可检查的完成条件","budget_cents":1000}`
+- `POST /api/reviews`：`{"source":"...","diff":"...","memory_query":"...","goal":"可检查的完成条件","budget_yuan":10}`；省略预算时使用 `REVIEW_BUDGET_YUAN`。
 - `GET /api/reviews/:id`：查询任务、评论和 trace
 - `GET /api/health`
 - `GET /api/memories`：列出持久记忆

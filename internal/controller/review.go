@@ -291,6 +291,10 @@ func (c *ReviewController) create(x *gin.Context) {
 		x.JSON(400, gin.H{"error": "source 或 diff 至少填写一项"})
 		return
 	}
+	if req.BudgetYuan < 0 || req.BudgetYuan > 1_000_000_000 || req.BudgetCents < 0 {
+		x.JSON(http.StatusBadRequest, gin.H{"error": "审查预算金额无效"})
+		return
+	}
 	j, err := c.Service.Create(req)
 	if err != nil {
 		x.JSON(500, gin.H{"error": err.Error()})

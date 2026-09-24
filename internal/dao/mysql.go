@@ -115,6 +115,14 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 	if startedAt == nil {
 		startedAt = &row.CreatedAt
 	}
+	budgetMicros := row.BudgetMicros
+	if budgetMicros <= 0 && row.BudgetCents > 0 {
+		budgetMicros = model.YuanToMicros(float64(row.BudgetCents) / 100)
+	}
+	spentMicros := row.SpentMicros
+	if spentMicros <= 0 && row.SpentCents > 0 {
+		spentMicros = model.YuanToMicros(float64(row.SpentCents) / 100)
+	}
 	job := &model.ReviewJob{
 		ID:               row.PublicID,
 		TaskID:           row.TaskID,
@@ -122,7 +130,10 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 		Status:           row.Status,
 		ReviewOutcome:    row.ReviewOutcome,
 		Source:           row.SourceURL,
-		SpentCents:       row.SpentCents,
+		BudgetMicros:     budgetMicros,
+		SpentMicros:      spentMicros,
+		BudgetYuan:       model.MicrosToYuan(budgetMicros),
+		SpentYuan:        model.MicrosToYuan(spentMicros),
 		StartedAt:        *startedAt,
 		FinishedAt:       row.FinishedAt,
 		UpdatedAt:        row.UpdatedAt,
@@ -157,30 +168,35 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 			traceStartedAt = &trace.CreatedAt
 		}
 		job.Trace = append(job.Trace, model.TraceEvent{
-			ID:           trace.TraceID,
-			ParentID:     trace.ParentID,
-			Kind:         trace.Kind,
-			Status:       trace.Status,
-			Round:        trace.Round,
-			RetryCount:   trace.RetryCount,
-			InputTokens:  trace.InputTokens,
-			OutputTokens: trace.OutputTokens,
-			FinishReason: trace.FinishReason,
-			Origin:       trace.Origin,
-			CacheHit:     trace.CacheHit,
-			ToolCallID:   trace.ToolCallID,
-			ToolVersion:  trace.ToolVersion,
-			InputDigest:  trace.InputDigest,
-			Tool:         trace.Tool,
-			Input:        trace.Input,
-			Output:       trace.Output,
-			Prompt:       trace.Prompt,
-			ModelReply:   trace.ModelReply,
-			DurationMs:   trace.DurationMs,
-			StartedAt:    *traceStartedAt,
-			EndedAt:      trace.EndedAt,
-			At:           trace.CreatedAt,
-			Phase:        trace.Phase,
+			ID:                        trace.TraceID,
+			ParentID:                  trace.ParentID,
+			Kind:                      trace.Kind,
+			Status:                    trace.Status,
+			Round:                     trace.Round,
+			RetryCount:                trace.RetryCount,
+			InputTokens:               trace.InputTokens,
+			OutputTokens:              trace.OutputTokens,
+			Model:                     trace.Model,
+			CostMicros:                trace.CostMicros,
+			EstimatedCost:             trace.EstimatedCost,
+			InputPriceYuanPerMillion:  trace.InputPriceYuanPerMillion,
+			OutputPriceYuanPerMillion: trace.OutputPriceYuanPerMillion,
+			FinishReason:              trace.FinishReason,
+			Origin:                    trace.Origin,
+			CacheHit:                  trace.CacheHit,
+			ToolCallID:                trace.ToolCallID,
+			ToolVersion:               trace.ToolVersion,
+			InputDigest:               trace.InputDigest,
+			Tool:                      trace.Tool,
+			Input:                     trace.Input,
+			Output:                    trace.Output,
+			Prompt:                    trace.Prompt,
+			ModelReply:                trace.ModelReply,
+			DurationMs:                trace.DurationMs,
+			StartedAt:                 *traceStartedAt,
+			EndedAt:                   trace.EndedAt,
+			At:                        trace.CreatedAt,
+			Phase:                     trace.Phase,
 		})
 	}
 	for _, todo := range row.Todos {
@@ -241,10 +257,11 @@ func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.D
 			now = time.Now().UTC()
 		}
 		row = model.DBReviewJob{
-			PublicID:    job.ID,
-			InputHash:   hashText(job.Source),
-			BudgetCents: 1000,
-			CreatedAt:   now,
+			PublicID:     job.ID,
+			InputHash:    hashText(job.Source),
+			BudgetMicros: reviewBudgetMicros(job),
+			SpentMicros:  reviewSpentMicros(job),
+			CreatedAt:    now,
 		}
 	} else if err != nil {
 		return model.DBReviewJob{}, err
@@ -263,7 +280,8 @@ func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.D
 		return model.DBReviewJob{}, fmt.Errorf("编码审查范围: %w", err)
 	}
 	row.ReviewScopeJSON = string(reviewScope)
-	row.SpentCents = job.SpentCents
+	row.BudgetMicros = reviewBudgetMicros(job)
+	row.SpentMicros = reviewSpentMicros(job)
 	row.ErrorMessage = job.Error
 	if !job.StartedAt.IsZero() {
 		startedAt := job.StartedAt
@@ -295,7 +313,8 @@ func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.D
 		"status":             row.Status,
 		"review_outcome":     row.ReviewOutcome,
 		"review_scope_json":  row.ReviewScopeJSON,
-		"spent_cents":        row.SpentCents,
+		"budget_micros":      row.BudgetMicros,
+		"spent_micros":       row.SpentMicros,
 		"error_message":      row.ErrorMessage,
 		"started_at":         row.StartedAt,
 		"finished_at":        row.FinishedAt,
@@ -364,31 +383,36 @@ func (s *MySQLStore) saveTraces(tx *gorm.DB, jobID uint, job *model.ReviewJob) e
 		err := tx.Where("trace_id = ?", trace.ID).First(&row).Error
 		if err == gorm.ErrRecordNotFound {
 			row = model.DBTraceEvent{
-				JobID:        jobID,
-				TraceID:      trace.ID,
-				ParentID:     trace.ParentID,
-				Kind:         trace.Kind,
-				Status:       trace.Status,
-				Round:        trace.Round,
-				RetryCount:   trace.RetryCount,
-				InputTokens:  trace.InputTokens,
-				OutputTokens: trace.OutputTokens,
-				FinishReason: trace.FinishReason,
-				Origin:       trace.Origin,
-				CacheHit:     trace.CacheHit,
-				ToolCallID:   trace.ToolCallID,
-				ToolVersion:  trace.ToolVersion,
-				InputDigest:  trace.InputDigest,
-				Tool:         trace.Tool,
-				Phase:        trace.Phase,
-				Input:        trace.Input,
-				Output:       trace.Output,
-				Prompt:       trace.Prompt,
-				ModelReply:   trace.ModelReply,
-				DurationMs:   trace.DurationMs,
-				StartedAt:    traceStartedAt(trace),
-				EndedAt:      trace.EndedAt,
-				CreatedAt:    trace.At,
+				JobID:                     jobID,
+				TraceID:                   trace.ID,
+				ParentID:                  trace.ParentID,
+				Kind:                      trace.Kind,
+				Status:                    trace.Status,
+				Round:                     trace.Round,
+				RetryCount:                trace.RetryCount,
+				InputTokens:               trace.InputTokens,
+				OutputTokens:              trace.OutputTokens,
+				Model:                     trace.Model,
+				CostMicros:                trace.CostMicros,
+				EstimatedCost:             trace.EstimatedCost,
+				InputPriceYuanPerMillion:  trace.InputPriceYuanPerMillion,
+				OutputPriceYuanPerMillion: trace.OutputPriceYuanPerMillion,
+				FinishReason:              trace.FinishReason,
+				Origin:                    trace.Origin,
+				CacheHit:                  trace.CacheHit,
+				ToolCallID:                trace.ToolCallID,
+				ToolVersion:               trace.ToolVersion,
+				InputDigest:               trace.InputDigest,
+				Tool:                      trace.Tool,
+				Phase:                     trace.Phase,
+				Input:                     trace.Input,
+				Output:                    trace.Output,
+				Prompt:                    trace.Prompt,
+				ModelReply:                trace.ModelReply,
+				DurationMs:                trace.DurationMs,
+				StartedAt:                 traceStartedAt(trace),
+				EndedAt:                   trace.EndedAt,
+				CreatedAt:                 trace.At,
 			}
 			if row.Status == "" {
 				row.Status = "succeeded"
@@ -417,28 +441,33 @@ func (s *MySQLStore) saveTraces(tx *gorm.DB, jobID uint, job *model.ReviewJob) e
 		}
 		startedAt := traceStartedAt(trace)
 		if err := tx.Model(&row).Updates(map[string]any{
-			"parent_id":     trace.ParentID,
-			"kind":          kind,
-			"status":        status,
-			"round":         trace.Round,
-			"retry_count":   trace.RetryCount,
-			"input_tokens":  trace.InputTokens,
-			"output_tokens": trace.OutputTokens,
-			"finish_reason": trace.FinishReason,
-			"origin":        trace.Origin,
-			"cache_hit":     trace.CacheHit,
-			"tool_call_id":  trace.ToolCallID,
-			"tool_version":  trace.ToolVersion,
-			"input_digest":  trace.InputDigest,
-			"tool":          trace.Tool,
-			"phase":         trace.Phase,
-			"input":         trace.Input,
-			"output":        trace.Output,
-			"prompt":        trace.Prompt,
-			"model_reply":   trace.ModelReply,
-			"duration_ms":   trace.DurationMs,
-			"started_at":    startedAt,
-			"ended_at":      trace.EndedAt,
+			"parent_id":                     trace.ParentID,
+			"kind":                          kind,
+			"status":                        status,
+			"round":                         trace.Round,
+			"retry_count":                   trace.RetryCount,
+			"input_tokens":                  trace.InputTokens,
+			"output_tokens":                 trace.OutputTokens,
+			"model":                         trace.Model,
+			"cost_micros":                   trace.CostMicros,
+			"estimated_cost":                trace.EstimatedCost,
+			"input_price_yuan_per_million":  trace.InputPriceYuanPerMillion,
+			"output_price_yuan_per_million": trace.OutputPriceYuanPerMillion,
+			"finish_reason":                 trace.FinishReason,
+			"origin":                        trace.Origin,
+			"cache_hit":                     trace.CacheHit,
+			"tool_call_id":                  trace.ToolCallID,
+			"tool_version":                  trace.ToolVersion,
+			"input_digest":                  trace.InputDigest,
+			"tool":                          trace.Tool,
+			"phase":                         trace.Phase,
+			"input":                         trace.Input,
+			"output":                        trace.Output,
+			"prompt":                        trace.Prompt,
+			"model_reply":                   trace.ModelReply,
+			"duration_ms":                   trace.DurationMs,
+			"started_at":                    startedAt,
+			"ended_at":                      trace.EndedAt,
 		}).Error; err != nil {
 			return fmt.Errorf("更新 trace event: %w", err)
 		}
@@ -534,4 +563,18 @@ func traceStartedAt(trace model.TraceEvent) *time.Time {
 		startedAt = trace.At
 	}
 	return &startedAt
+}
+
+func reviewBudgetMicros(job *model.ReviewJob) int64 {
+	if job.BudgetMicros > 0 {
+		return job.BudgetMicros
+	}
+	return model.YuanToMicros(job.BudgetYuan)
+}
+
+func reviewSpentMicros(job *model.ReviewJob) int64 {
+	if job.SpentMicros > 0 {
+		return job.SpentMicros
+	}
+	return model.YuanToMicros(job.SpentYuan)
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -143,6 +144,26 @@ func id(s string) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
+	if req.BudgetYuan < 0 || req.BudgetCents < 0 {
+		return nil, fmt.Errorf("审查预算必须大于 0 元")
+	}
+	budgetYuan := req.BudgetYuan
+	if budgetYuan == 0 && req.BudgetCents > 0 {
+		budgetYuan = float64(req.BudgetCents) / 100
+	}
+	if budgetYuan == 0 {
+		budgetYuan = s.Config.ReviewBudgetYuan
+	}
+	if budgetYuan <= 0 {
+		budgetYuan = defaultReviewBudgetYuan
+	}
+	if math.IsInf(budgetYuan, 0) || math.IsNaN(budgetYuan) || budgetYuan > 1_000_000_000 {
+		return nil, fmt.Errorf("审查预算金额无效")
+	}
+	budgetMicros := model.YuanToMicros(budgetYuan)
+	if budgetMicros <= 0 {
+		return nil, fmt.Errorf("审查预算至少为 0.000001 元")
+	}
 	now := time.Now().UTC()
 	todos := []model.TodoItem{
 		{Content: "扫描并解析代码变更", Status: "pending", Order: 0},
@@ -150,16 +171,18 @@ func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 		{Content: "核对代码证据、第二轮复核并去重审查发现", Status: "pending", Order: 2},
 	}
 	j := &model.ReviewJob{
-		ID:          id(req.Source + req.Diff),
-		Status:      "queued",
-		Source:      req.Source,
-		StartedAt:   now,
-		UpdatedAt:   now,
-		Comments:    []model.ReviewComment{},
-		ReviewScope: model.ReviewScope{Checks: []model.ReviewCheck{}},
-		Trace:       []model.TraceEvent{},
-		Todos:       todos,
-		TeamEvents:  []model.TeamEvent{},
+		ID:           id(req.Source + req.Diff),
+		Status:       "queued",
+		Source:       req.Source,
+		BudgetYuan:   model.MicrosToYuan(budgetMicros),
+		BudgetMicros: budgetMicros,
+		StartedAt:    now,
+		UpdatedAt:    now,
+		Comments:     []model.ReviewComment{},
+		ReviewScope:  model.ReviewScope{Checks: []model.ReviewCheck{}},
+		Trace:        []model.TraceEvent{},
+		Todos:        todos,
+		TeamEvents:   []model.TeamEvent{},
 	}
 	recorder := newTraceRecorder(j)
 	taskSpan := recorder.Start("input", "task_create", "task", reviewTaskSubject(req), "")
@@ -212,6 +235,15 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		recorder = newTraceRecorder(j)
 	}
 	ctx = withTraceRecorder(ctx, recorder)
+	meter := newReviewBudgetMeter(j, s.Config, func() error {
+		recorder.Flush()
+		j.UpdatedAt = time.Now().UTC()
+		if err := s.Store.Save(j); err != nil {
+			return fmt.Errorf("预算检查点持久化失败")
+		}
+		return nil
+	})
+	ctx = withReviewBudget(ctx, meter)
 	if j.StartedAt.IsZero() {
 		j.StartedAt = time.Now().UTC()
 	}
@@ -385,7 +417,6 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 		updateReviewCheck(&j.ReviewScope, "finding_verification", "failed", "最终审查模型调用失败")
 		return
 	}
-	j.SpentCents = 1
 	findings, parseErr := parseFindingsStrict(reply)
 	if parseErr != nil {
 		recorder.Record("input", "finding_verification", "verification", "解析模型 finding", "", TraceResult{
@@ -581,6 +612,7 @@ func isIncompleteReviewError(err error) bool {
 		errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, context.Canceled) ||
 		strings.Contains(err.Error(), "空响应") ||
+		strings.Contains(err.Error(), "审查预算") ||
 		strings.Contains(strings.ToLower(err.Error()), "timeout") ||
 		strings.Contains(strings.ToLower(err.Error()), "timed out")
 }

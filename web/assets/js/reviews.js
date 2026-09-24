@@ -32,9 +32,19 @@ async function run(e) {
   if (busy) return;
   const source = $("source").value.trim(),
     diff = $("diff").value.trim();
+  const budgetValue = $("budget").value.trim();
   if (!source && !diff) {
     $("error").textContent = "请填写审查需求或代码 diff。";
     return;
+  }
+  const request = { source, diff };
+  if (budgetValue) {
+    const budgetYuan = Number(budgetValue);
+    if (!Number.isFinite(budgetYuan) || budgetYuan <= 0) {
+      $("error").textContent = "预算金额必须是大于 0 的人民币金额。";
+      return;
+    }
+    request.budget_yuan = budgetYuan;
   }
   version++;
   closeStream();
@@ -48,7 +58,7 @@ async function run(e) {
     const r = await fetch("/api/reviews", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, diff }),
+      body: JSON.stringify(request),
     });
     const j = await r.json();
     if (!r.ok) throw Error(j.error || "创建任务失败");

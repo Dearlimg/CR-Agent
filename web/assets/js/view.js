@@ -63,7 +63,16 @@ function metrics() {
     (e) => e.origin === "model",
   ).length;
   $("cache-hits").textContent = calls.filter((e) => e.cache_hit).length;
-  $("cost").textContent = job ? (job.spent_cents ?? 0) + " cents" : "—";
+  const money = (yuan) =>
+    new Intl.NumberFormat("zh-CN", {
+      style: "currency",
+      currency: "CNY",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 6,
+    }).format(Number(yuan) || 0);
+  $("cost").textContent = job
+    ? money(job.spent_yuan) + " / " + money(job.budget_yuan)
+    : "—";
   $("footer-time").textContent = job ? "总耗时 " + wallLabel() : "等待新任务";
 }
 function eventDetails(e) {

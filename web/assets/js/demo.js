@@ -49,7 +49,8 @@ function sample() {
     started_at: new Date(start).toISOString(),
     finished_at: new Date(start + 24300).toISOString(),
     updated_at: new Date(start + 24300).toISOString(),
-    spent_cents: 8,
+    spent_yuan: 0.0048,
+    budget_yuan: 10,
     trace: data.map(([tool, phase, end, ms, output], i) => ({
       id: "demo-" + i,
       tool,

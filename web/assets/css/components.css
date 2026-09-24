@@ -435,6 +435,12 @@ pre {
 .send:hover {
   background: #c2d1ff;
 }
+.budget-input {
+  width: 92px;
+  margin-left: 6px;
+  padding: 5px 7px;
+  font-size: 12px;
+}
 .diffbox {
   margin-top: 7px;
 }

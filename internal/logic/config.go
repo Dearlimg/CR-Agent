@@ -12,6 +12,8 @@ import (
 	"github.com/joho/godotenv"
 )
 
+const defaultModelMaxOutputTokens = 32768
+
 var quotedCredentialValuePattern = regexp.MustCompile(
 	`(?i)((?:api[_-]?key|secret|password|token|authorization)["']?\s*(?::=|=|:)\s*)(["'])([^"'\r\n]+)(["'])`,
 )
@@ -85,7 +87,7 @@ func LoadConfig() Config {
 		TeamMailboxDir:            b("AGENT_TEAM_MAILBOX_DIR", ".team-mailboxes"),
 		TeamMaxConcurrency:        intEnv(b, "AGENT_TEAM_MAX_CONCURRENCY", 2),
 		ModelMaxRetries:           intEnv(b, "MODEL_MAX_RETRIES", 2),
-		ModelMaxOutputTokens:      intEnv(b, "MODEL_MAX_OUTPUT_TOKENS", 8192),
+		ModelMaxOutputTokens:      intEnv(b, "MODEL_MAX_OUTPUT_TOKENS", defaultModelMaxOutputTokens),
 		ModelRetryBaseMs:          intEnv(b, "MODEL_RETRY_BASE_MS", 500),
 		CronPollIntervalMs:        intEnv(b, "CRON_POLL_INTERVAL_MS", 1000),
 		MemoryMaxRecall:           intEnv(b, "MEMORY_MAX_RECALL", 5),

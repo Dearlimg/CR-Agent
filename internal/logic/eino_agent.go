@@ -30,7 +30,7 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 	harness.Compactor = NewContextCompactor(cfg)
 	outputBudget := cfg.ModelMaxOutputTokens
 	if outputBudget <= 0 {
-		outputBudget = 8192
+		outputBudget = defaultModelMaxOutputTokens
 	}
 	round := 0
 	nextRound := func() int {

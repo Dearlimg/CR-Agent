@@ -142,7 +142,7 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 - **恢复能力分层**：生产 Workflow 有 MySQL snapshot/event、稳定调用键和 Lease，支持复用已完成的子 Agent 结果；完整 ReviewHarness 的消息历史并不落库，普通后台 Runner 在重启后不能恢复 Go 闭包，会被标记失败。因此是“Workflow 可恢复”，不是“整个 Agent Job 可恢复”。
 - **权限策略并非交互审批**：`allow` 会执行，`deny` 或 `require_approval` 在当前 Harness 都会转成工具错误；代码没有待审批记录、通知 UI、审批后恢复工具调用的完整状态机。
 - **观测和评测已起步**：模型请求、工具调用、核验和状态仍记录在原始 trace 中；用户界面隐藏难以解释的逐条 `model_request` / `deepseek_chat` 事件，保留模型请求次数和耗时汇总。当前 21 例合成 diff benchmark 可观测 precision/recall、变更行定位、trace 完整度和脱敏 canary，但每例只跑一次，按 fixture phrase group 做规则匹配。
-- **模型长度预算分开控制**：审查模型输出上限由 `MODEL_MAX_OUTPUT_TOKENS` 配置，默认 8,192；本地上下文字符预算默认 250,000。前者是生成 token 上限，调大它不会增大输入上下文。完整 diff 若超过单次请求可承载的上下文，仍会失败；不能保证任意大小的 PR 都能一次送入模型。
+- **模型长度预算分开控制**：审查模型输出上限由 `MODEL_MAX_OUTPUT_TOKENS` 配置，默认 32,768；本地上下文字符预算默认 250,000。前者是生成 token 上限，调大它不会增大输入上下文。完整 diff 若超过单次请求可承载的上下文，仍会失败；不能保证任意大小的 PR 都能一次送入模型。
 - **预算按任务执行**：Review Job 可设置人民币上限，模型调用按 usage 与配置费率核算并在请求前预留费用；trace 保存 token 数、模型和费率快照。计量按高峰/缓存未命中单价保守估算，未和供应商账单对账。独立 benchmark 仍只有请求数与 token 计数上限，没有费用账单。
 
 ## 5. 与业界常见 Agent 设计的对照
@@ -228,7 +228,7 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 
 - 用户事件列表、搜索与时间线隐藏逐条 `model_request`，避免展示无法说明具体动作的 `deepseek_chat` 和易误解的 `input: max_tokens=4096`。后端原始 trace 不删，界面仍显示模型请求次数与耗时汇总。
 - 审查 Agent 不再按 28,000 字节分片，而是一次提交完整脱敏 diff。模型工具循环、格式修复、finding 独立复核等仍可能产生额外模型请求；用户不应据请求次数推断“重复审查”。
-- `MODEL_MAX_OUTPUT_TOKENS` 默认 8,192，和输入容量分开；本地上下文字符预算默认 250,000。若完整 diff 超过预算，应明确报错，不能把“单次提交”理解为无限输入。
+- `MODEL_MAX_OUTPUT_TOKENS` 默认 32,768，和输入容量分开；本地上下文字符预算默认 250,000。若完整 diff 超过预算，应明确报错，不能把“单次提交”理解为无限输入。
 - 若以后要重新在用户界面展示逐条模型请求，先在后端补 `operation`（审查、格式修复、finding 复核、goal evaluator、记忆提取）、provider/model、attempt/retry 等有意义的字段，并明确 `round` 的作用域、实际 prompt 不持久化。当前不再需要 `chunk_index/chunk_total` 作为审查路径的展示字段。
 - 对模型返回的结构化 verdict 和说明文本做一致性诊断；出现冲突时将该 finding 置为 `insufficient`，不要仅凭布尔值自动确认为真实问题。
 

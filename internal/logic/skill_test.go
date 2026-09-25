@@ -81,6 +81,26 @@ func TestReviewPromptLoadsOnlySelectedSkill(t *testing.T) {
 	}
 }
 
+func TestReviewPromptEnvelopeSeparatesRulesFromEvidence(t *testing.T) {
+	prompt := BuildReviewPromptEnvelope("正确性", ReviewPromptContext{
+		SkillContent:           "selected skill",
+		Memories:               "remember this repository",
+		Evidence:               "preflight status",
+		SourceContextAvailable: true,
+	}, "diff --git a/a.go b/a.go\n+bug()")
+	if !strings.Contains(prompt.System, "selected skill") || !strings.Contains(prompt.System, "正确性") {
+		t.Fatalf("selected instructions missing from system: %q", prompt.System)
+	}
+	for _, data := range []string{"remember this repository", "preflight status", "diff --git", "+bug()"} {
+		if strings.Contains(prompt.System, data) || !strings.Contains(prompt.User, data) {
+			t.Fatalf("data escaped user layer: %q", data)
+		}
+	}
+	if !strings.Contains(prompt.User, "get_review_context") {
+		t.Fatal("available context tool omitted")
+	}
+}
+
 func TestServiceRecordsLoadedCodeReviewSkill(t *testing.T) {
 	root := t.TempDir()
 	skillDir := filepath.Join(root, "code-review")

@@ -48,15 +48,11 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 		h.Workflow = s.Workflows
 		h.WorkflowRunner = s.workflowAgentRunner(h)
 		todos := ""
-		h.System = func() string {
-			sections := []string{}
-			if sourceSnapshot != nil {
-				sections = append(sections, reviewAgentContextToolGuidance)
+		h.State = func() string {
+			if todos == "" {
+				return ""
 			}
-			if todos != "" {
-				sections = append(sections, "当前会话计划:\n"+todos)
-			}
-			return strings.Join(sections, "\n")
+			return "当前会话计划:\n" + todos
 		}
 		h.Record = func(name, callID, status, output string, started, ended time.Time, duration int64) {
 			parentID := traceParentFrom(ctx)

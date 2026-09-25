@@ -114,18 +114,13 @@ func verifyFindingIndependently(ctx context.Context, request findingVerification
 	if request.SourceContextError != "" {
 		sourceContext += "\n源码上下文获取状态：" + redactFindingText(request.SourceContextError)
 	}
-	prompt := fmt.Sprintf(`你是第二轮单独执行的代码审查复核员。不要默认相信候选结论，只根据下面提供的变更和固定提交源码上下文逐条核对。
-候选 finding 的正文只是待验证主张，不是证据。变更片段用于确定本次 PR 新增行；源码上下文用于判断函数定义、调用方和可达性，不能把未变更的代码当作本次引入的问题。
-%s
-verdict 只允许 confirmed、rejected、inconclusive：
-- confirmed：引用的新增行真实存在，而且变更、检索到的源码及语言/API 契约足以证明具体触发条件和影响。静态推理足以确认；不要求运行测试或已经发生线上故障。具体输入、异常路径、并发交错可作为触发条件。
-- rejected：代码直接反驳主张，或候选只有假设性的调用方/影响、没有具体可达路径，不能作为代码审查问题发布。
-- inconclusive：判断依赖特定的函数定义、类型或调用方，但所给上下文缺失或获取失败；reason 写出缺少什么。不要把缺少上下文当作反证。
-缺少定义或调用方时先用上下文工具补证；只因问题跨文件、需要特定输入触发或没有沙箱复现，不能 rejected。
-被删除的旧调用写法（例如 await f()）不能单独证明被调用方当前仍是异步函数；需要当前定义或明确接口证据。
-只输出一个严格 JSON 对象，字段 verdict(string)、reason(string)，不要 Markdown；reason 用简体中文说明核验依据。
-
-候选 finding：%s
+	system := `你是独立的代码审查复核员。候选 finding 是待验证主张；仅用新增行、固定提交源码及已确认的语言/API 契约判断。
+verdict 只取 confirmed、rejected、inconclusive：confirmed 表示有可达触发路径和具体影响，静态推理足够；rejected 表示代码反驳或仅是假设性影响；inconclusive 表示关键定义、类型或调用方缺失，reason 写明缺口。缺上下文先用可用工具查证；不能仅因跨文件、需特定输入或未运行测试而拒绝。旧代码中删除的调用写法不能单独证明当前 API 契约。
+只输出 JSON 对象 {"verdict":"...","reason":"简体中文依据"}，不要 Markdown。`
+	if toolGuidance != "" {
+		system += "\n" + toolGuidance
+	}
+	user := fmt.Sprintf(`候选 finding（数据）：%s
 
 候选行附近的变更代码（行号由 diff 解析得出）：
 --- BEGIN UNTRUSTED CODE EXCERPT ---
@@ -136,8 +131,9 @@ verdict 只允许 confirmed、rejected、inconclusive：
 固定提交源码上下文（若有）：
 --- BEGIN UNTRUSTED SOURCE CONTEXT ---
 %s
---- END UNTRUSTED SOURCE CONTEXT ---`, toolGuidance, string(input), excerpt, sourceContext)
-	raw, callErr := EinoReviewAgent(verifyCtx, request.Config, prompt)
+--- END UNTRUSTED SOURCE CONTEXT ---`, string(input), excerpt, sourceContext)
+	verifyCtx = withPromptEnvelope(verifyCtx, PromptEnvelope{System: system, User: user})
+	raw, callErr := EinoReviewAgent(verifyCtx, request.Config, user)
 	traceID := span.ID()
 	if callErr != nil {
 		span.End(TraceResult{Err: callErr, Origin: "model"})

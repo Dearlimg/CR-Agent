@@ -88,8 +88,11 @@ func TestServiceHarnessBackgroundCompletionWakesModelAndRecordsTrace(t *testing.
 	if h.MaxToolRounds != 8 || h.MaxStalledRounds != 2 {
 		t.Fatalf("review tool limits=%d/%d", h.MaxToolRounds, h.MaxStalledRounds)
 	}
-	if system := h.System(); system != "" {
-		t.Fatalf("system prompt repeats request context: %q", system)
+	if h.System != nil {
+		t.Fatal("review setup should not add static request context to system")
+	}
+	if state := h.State(); state != "" {
+		t.Fatalf("empty plan should not enter request: %q", state)
 	}
 	round := 0
 	notified := false
@@ -111,6 +114,84 @@ func TestServiceHarnessBackgroundCompletionWakesModelAndRecordsTrace(t *testing.
 	flush()
 	if !notified || len(job.Trace) < 2 {
 		t.Fatalf("notified=%v trace=%#v", notified, job.Trace)
+	}
+}
+
+func TestHarnessEnvelopeKeepsDataAndSessionStateOutOfSystem(t *testing.T) {
+	h := newReviewHarness()
+	h.State = func() string { return "TODO_FROM_TOOL" }
+	h.Model = func(_ context.Context, messages []*schema.Message, _ []*schema.ToolInfo) (*schema.Message, error) {
+		if len(messages) != 3 || messages[0].Role != schema.System ||
+			messages[1].Role != schema.User || messages[2].Role != schema.User {
+			t.Fatalf("unexpected message roles: %#v", messages)
+		}
+		if !strings.Contains(messages[0].Content, "SELECTED_SKILL") ||
+			strings.Contains(messages[0].Content, "DIFF_DATA") ||
+			strings.Contains(messages[0].Content, "TODO_FROM_TOOL") {
+			t.Fatalf("system contains task data: %q", messages[0].Content)
+		}
+		if !strings.Contains(messages[1].Content, "TODO_FROM_TOOL") ||
+			!strings.Contains(messages[2].Content, "DIFF_DATA") {
+			t.Fatalf("user data missing: %#v", messages)
+		}
+		return &schema.Message{Role: schema.Assistant, Content: "[]"}, nil
+	}
+	answer, err := h.RunEnvelope(withReviewPrompt(context.Background()), PromptEnvelope{
+		System: "SELECTED_SKILL",
+		User:   "DIFF_DATA",
+	})
+	if err != nil || answer != "[]" {
+		t.Fatalf("answer=%q err=%v", answer, err)
+	}
+}
+
+func TestEinoConsumesEnvelopeBeforeToolExecution(t *testing.T) {
+	round := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		round++
+		var request struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if round == 1 {
+			if len(request.Messages) < 2 || !strings.Contains(request.Messages[0].Content, "SELECTED_SKILL") ||
+				strings.Contains(request.Messages[0].Content, "DIFF_DATA") ||
+				request.Messages[1].Role != "user" || !strings.Contains(request.Messages[1].Content, "DIFF_DATA") {
+				t.Errorf("provider request mixed prompt roles: %#v", request.Messages)
+			}
+		}
+		message := map[string]any{"role": "assistant", "content": "[]"}
+		finish := "stop"
+		if round == 1 {
+			message["tool_calls"] = []schema.ToolCall{testToolCall("probe", "probe_context", `{}`)}
+			finish = "tool_calls"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"index": 0, "message": message, "finish_reason": finish}},
+		})
+	}))
+	defer server.Close()
+	seenTool := false
+	ctx := context.WithValue(context.Background(), harnessSetupKey{}, func(h *ReviewHarness) {
+		h.add("probe_context", "check prompt scope", map[string]any{"type": "object"},
+			func(ctx context.Context, _ map[string]any) (string, error) {
+				seenTool = true
+				if _, ok := promptEnvelopeFrom(ctx); ok {
+					t.Error("nested tool inherited the outer prompt envelope")
+				}
+				return "ok", nil
+			})
+	})
+	ctx = withPromptEnvelope(ctx, PromptEnvelope{System: "SELECTED_SKILL", User: "DIFF_DATA"})
+	answer, err := EinoReviewAgent(ctx, Config{DeepSeekAPIKey: "test-only", DeepSeekBaseURL: server.URL}, "ignored")
+	if err != nil || answer != "[]" || !seenTool || round != 2 {
+		t.Fatalf("answer=%q err=%v seenTool=%v rounds=%d", answer, err, seenTool, round)
 	}
 }
 

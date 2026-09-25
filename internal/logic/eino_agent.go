@@ -92,6 +92,9 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 			})
 		})
 	}
+	if envelope, ok := promptEnvelopeFrom(ctx); ok {
+		return harness.RunEnvelope(withoutPromptEnvelope(ctx), envelope)
+	}
 	return harness.Run(ctx, prompt)
 }
 

@@ -58,9 +58,11 @@ func TestFindingVerifierDistinguishesMissingContextFromRejection(t *testing.T) {
 	for _, verdict := range []string{findingConfirmed, findingRejected, findingInconclusive} {
 		t.Run(verdict, func(t *testing.T) {
 			var prompt string
+			var system, user string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request struct {
 					Messages []struct {
+						Role    string `json:"role"`
 						Content string `json:"content"`
 					} `json:"messages"`
 				}
@@ -69,6 +71,12 @@ func TestFindingVerifierDistinguishesMissingContextFromRejection(t *testing.T) {
 				}
 				for _, message := range request.Messages {
 					prompt += message.Content
+					switch message.Role {
+					case "system":
+						system += message.Content
+					case "user":
+						user += message.Content
+					}
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -92,6 +100,10 @@ func TestFindingVerifierDistinguishesMissingContextFromRejection(t *testing.T) {
 			}
 			if !strings.Contains(prompt, "service.py") || !strings.Contains(prompt, "10 +return service.fetch()") {
 				t.Fatalf("verification prompt lacks code context: %q", prompt)
+			}
+			if !strings.Contains(system, "inconclusive") || strings.Contains(system, "service.py") ||
+				!strings.Contains(user, "service.py") {
+				t.Fatalf("verification roles mixed instructions and source: system=%q user=%q", system, user)
 			}
 		})
 	}

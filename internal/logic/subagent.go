@@ -127,7 +127,9 @@ func runReviewSpecialist(ctx context.Context, request specialistRunRequest) Suba
 }
 
 func reviewOnce(ctx context.Context, request specialistRunRequest, diff string) ([]ReviewFinding, error) {
-	prompt := BuildReviewSubagentPrompt(request.Agent.Focus, request.PromptContext, diff)
+	envelope := BuildReviewPromptEnvelope(request.Agent.Focus, request.PromptContext, diff)
+	prompt := envelope.System + "\n\n" + envelope.User
+	ctx = withPromptEnvelope(ctx, envelope)
 	reply, err := request.Infer(ctx, request.Config, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("完整 diff 审查模型调用失败：%v", redact(err.Error()))
@@ -155,6 +157,7 @@ func reviewOnce(ctx context.Context, request specialistRunRequest, diff string) 
 			repairedByTool = findings
 		})
 	})
+	repairCtx = withPromptEnvelope(repairCtx, PromptEnvelope{User: buildSpecialistRepairPrompt(reply)})
 	repaired, repairErr := request.Infer(
 		repairCtx,
 		request.Config,

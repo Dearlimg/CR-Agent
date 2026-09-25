@@ -21,7 +21,6 @@ const (
 	reviewContextToolDescription    = "浏览本次 PR 固定 head 的目录、检索源码或读取行段；无 file 的搜索仅覆盖已读取文件，不是全仓库搜索。"
 	reviewContextToolName           = "get_review_context"
 	reviewContextToolSystemGuidance = "若候选依赖未展示的定义、调用方、类型、循环控制或 API 用法，先调用 get_review_context 查证，再给出 verdict。只使用工具返回的固定提交源码；拿不到上下文时仍应返回 inconclusive，不可猜测。"
-	reviewAgentContextToolGuidance  = "首轮审查遇到需要确认的配置类型、函数定义、调用方、测试或 API 用法时，先调用 get_review_context 查证；未知路径时先用 directory 浏览目录（根目录为 .），然后用 file+query 搜索或 file+start_line+end_line 读取；只有 query 时仅搜索已读取文件，未命中不代表仓库没有该实现。不要仅因 diff 没展示上下文就跳过候选。只依据工具返回的本次 PR 固定 head 源码。"
 )
 
 func reviewContextToolSchema() map[string]any {

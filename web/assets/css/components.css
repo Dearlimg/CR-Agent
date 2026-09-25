@@ -132,6 +132,14 @@ main {
   justify-content: space-between;
   gap: 12px;
 }
+.export-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.export.secondary {
+  color: var(--muted);
+}
 .title {
   font-size: 17px;
   font-weight: 600;

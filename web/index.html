@@ -49,7 +49,22 @@
               ><span class="status" id="status" role="status">准备就绪</span>
               <div class="small muted">CR-Agent / Review workspace</div>
             </div>
-            <button id="export" class="export" disabled>Session log ↓</button>
+            <div class="export-actions">
+              <button
+                id="export"
+                class="export"
+                data-short-label="MD"
+                aria-label="导出 Markdown 审查报告"
+                disabled
+              >Markdown ↓</button>
+              <button
+                id="export-json"
+                class="export secondary"
+                data-short-label="JSON"
+                aria-label="导出完整 JSON 会话日志"
+                disabled
+              >Session log JSON ↓</button>
+            </div>
           </div>
           <nav class="tabs" aria-label="审查视图">
             <button data-tab="conversation">对话</button
@@ -199,6 +214,7 @@
     <script defer src="/assets/js/view.js"></script>
     <script defer src="/assets/js/reviews.js"></script>
     <script defer src="/assets/js/demo.js"></script>
+    <script defer src="/assets/js/export.js"></script>
     <script defer src="/assets/js/app.js"></script>
   </body>
 </html>

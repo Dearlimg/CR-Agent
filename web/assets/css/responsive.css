@@ -81,7 +81,7 @@
     font-size: 0;
   }
   .export:after {
-    content: "导出";
+    content: attr(data-short-label);
     font-size: 12px;
   }
   .overview {

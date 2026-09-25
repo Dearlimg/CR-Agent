@@ -172,7 +172,10 @@ func run(options benchmarkOptions) error {
 	if options.Limit <= 0 || options.MaxCalls <= 0 || options.MaxOutputTokens <= 0 || options.CaseTimeout <= 0 {
 		return errors.New("limit, max-calls, max-output-tokens 和 case-timeout 必须大于 0")
 	}
-	cfg := logic.LoadConfig()
+	cfg, err := logic.LoadConfig()
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.DeepSeekAPIKey) == "" {
 		return errors.New("未配置 DEEPSEEK_API_KEY；benchmark 不会自动读取或输出密钥")
 	}

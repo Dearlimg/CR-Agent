@@ -310,6 +310,7 @@ function render() {
   $("review-outcome").hidden = !job || !terminal(job);
   markup("review-outcome").html = renderOutcome();
   $("export").disabled = !job;
+  $("export-json").disabled = !job;
   for (const id of ["send", "new", "demo"]) $(id).disabled = busy;
   $("finding-count").textContent = comments.length;
   markup("findings").html =

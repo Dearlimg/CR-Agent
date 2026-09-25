@@ -88,7 +88,15 @@ $("conversation").onclick = async (e) => {
     $("error").textContent = error.message;
   }
 };
-$("export").onclick = async () => {
+$("export").onclick = () => {
+  if (!job) return;
+  downloadText(
+    "cr-agent-review-" + safeExportName(job.id) + ".md",
+    renderReviewMarkdown(job),
+    "text/markdown;charset=utf-8",
+  );
+};
+$("export-json").onclick = async () => {
   if (!job) return;
   if (!isDemo) {
     try {
@@ -98,14 +106,11 @@ $("export").onclick = async () => {
       return;
     }
   }
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(job, null, 2)], { type: "application/json" }),
+  downloadText(
+    "cr-agent-session-" + safeExportName(job.id) + ".json",
+    JSON.stringify(job, null, 2),
+    "application/json;charset=utf-8",
   );
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "cr-agent-" + job.id.replace(/[^a-zA-Z0-9_-]/g, "_") + ".json";
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 setInterval(() => {
   if (!document.hidden && job && !terminal(job)) metrics();

@@ -11,6 +11,15 @@ go run ./cmd/server
 
 打开 <http://localhost:8080>，输入 MR/PR 链接或粘贴 `git diff`。服务抓取链接中的 diff，执行前置检查，再将脱敏材料交给模型审查。
 
+凭据使用大写环境变量（如 `DEEPSEEK_API_KEY`、`GITHUB_TOKEN`、`E2B_API_KEY`），Windows、macOS、Linux 和容器均使用同一套配置名。进程环境变量优先；本地开发默认从当前工作目录加载 `.env`。从其他目录启动时，可在启动进程前设置 `CR_AGENT_ENV_FILE` 指向配置文件，例如 PowerShell：
+
+```powershell
+$env:CR_AGENT_ENV_FILE = "C:\cr-agent\.env"
+& "C:\cr-agent\cr-agent.exe"
+```
+
+生产环境应由服务管理器或密钥管理系统注入环境变量。Docker 使用 `docker run --env-file /opt/cr-agent/.env ...` 将配置注入容器进程；镜像不会复制 `.env`。指定的 `CR_AGENT_ENV_FILE` 不存在或无法读取时，服务会在启动时返回具体错误。
+
 ## 设计
 
 - **可恢复**：生产运行时将任务状态、评论、Todo、trace 和工具调用写入 MySQL，状态含 queued/running/completed/failed。
@@ -33,6 +42,10 @@ Trace 的 `origin` 区分编排调用和模型工具调用，`cache_hit` 表示�
 在 `.env` 配置 `E2B_API_KEY`、`E2B_DOMAIN` 和 `AGS_TEMPLATE` 后，GitHub PR 审查会从 PR 的固定 head SHA 下载完整源码，并在腾讯云 E2B 兼容沙箱中识别并运行 Go、Python、Node.js、Rust、Maven 或 Gradle 测试入口。默认单次测试上限为 600 秒，可用 `E2B_TEST_TIMEOUT_SECONDS` 调低；Docker 镜像会安装与已验证示例一致的 Python E2B SDK（版本见 `requirements-sandbox.txt`），本地运行需先安装该依赖，并可用 `E2B_PYTHON_EXECUTABLE` 指向对应解释器。
 
 沙箱工具模板需要包含对应项目的语言运行时；项目依赖不会由 CR-Agent 自动安装。模板缺少运行时、源码包超过安全大小限制、来源不是 GitHub PR 或没有可识别的测试入口时，审查结果会明确显示 `incomplete` 或 `not_run`；pytest 在测试收集阶段中断也会显示为 `incomplete`，不会计为测试用例已运行。测试日志限长并记录在 `automated_tests` trace；测试 API Key 不会传入 PR 测试进程，沙箱在执行结束后会尝试销毁。`AGS_TEMPLATE` 使用控制台的沙箱工具名称，工具 ID 仅供控制台识别。
+
+## 导出报告
+
+审查工作台可下载 GitHub Flavored Markdown 格式的可读报告，包含审查状态、范围、检查结果和已核验问题；会话日志仍可单独导出为 JSON，包含完整 trace 详情。
 
 ## Skills
 

@@ -15,7 +15,8 @@
 - assets/js/view.js：轨迹、结果、对话、指标和历史列表渲染。
 - assets/js/reviews.js：审查请求、会话加载和 SSE 生命周期。
 - assets/js/demo.js：明确标记的本地示例数据。
-- assets/js/app.js：交互绑定、导出、健康检测和启动入口。
+- assets/js/app.js：交互绑定、健康检测和启动入口。
+- assets/js/export.js：审查 Markdown 报告与完整 JSON trace 导出。
 
 脚本使用 defer 按 HTML 中的顺序执行，共享同一页面作用域；新增脚本时保留依赖顺序，避免重复声明共享变量。
 

@@ -2,6 +2,7 @@ package logic
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -76,8 +77,10 @@ type Config struct {
 	OutputPriceYuanPerMillion               float64
 }
 
-func LoadConfig() Config {
-	_ = godotenv.Load()
+func LoadConfig() (Config, error) {
+	if err := loadEnvironment(); err != nil {
+		return Config{}, err
+	}
 	b := func(k, d string) string {
 		if v := os.Getenv(k); v != "" {
 			return v
@@ -138,7 +141,26 @@ func LoadConfig() Config {
 		ReviewBudgetYuan:                        budgetYuan,
 		InputPriceYuanPerMillion:                floatEnv(b, "REVIEW_INPUT_PRICE_YUAN_PER_MILLION", 2.1),
 		OutputPriceYuanPerMillion:               floatEnv(b, "REVIEW_OUTPUT_PRICE_YUAN_PER_MILLION", 8.4),
+	}, nil
+}
+
+func loadEnvironment() error {
+	envFile := strings.TrimSpace(os.Getenv("CR_AGENT_ENV_FILE"))
+	explicitPath := envFile != ""
+	if !explicitPath {
+		envFile = ".env"
 	}
+
+	if _, err := os.Stat(envFile); err != nil {
+		if errors.Is(err, os.ErrNotExist) && !explicitPath {
+			return nil
+		}
+		return fmt.Errorf("检查配置文件 %q: %w", envFile, err)
+	}
+	if err := godotenv.Load(envFile); err != nil {
+		return fmt.Errorf("加载配置文件 %q: %w", envFile, err)
+	}
+	return nil
 }
 
 func intEnv(get func(string, string) string, key string, fallback int) int {

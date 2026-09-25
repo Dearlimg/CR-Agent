@@ -10,7 +10,10 @@ import (
 )
 
 func main() {
-	cfg := logic.LoadConfig()
+	cfg, err := logic.LoadConfig()
+	if err != nil {
+		panic(err)
+	}
 	if cfg.PersistenceMode != "mysql" {
 		panic("生产服务只支持 mysql 持久化，PERSISTENCE_MODE 必须为 mysql")
 	}

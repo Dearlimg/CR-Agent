@@ -19,10 +19,7 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 	if strings.TrimSpace(cfg.DeepSeekAPIKey) == "" {
 		return "", fmt.Errorf("DEEPSEEK_API_KEY 未配置")
 	}
-	chat, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		APIKey: cfg.DeepSeekAPIKey, Model: reviewModelName(cfg),
-		BaseURL: strings.TrimRight(cfg.DeepSeekBaseURL, "/") + "/v1",
-	})
+	router, err := newReviewModelRouter(ctx, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -52,12 +49,13 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 			modelRound := nextRound()
 			retryCount := 0
 			reply, err := generateWithinLengthBudget(messages, 1024, func(input []*schema.Message, budget int) (*schema.Message, error) {
-				return retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
-					attempt := retryCount
-					retryCount++
-					return observedBudgetedModelRequest(ctx, "goal_evaluator", modelRound, attempt, budget, estimateModelInputTokens(input, nil), func(allowedTokens int) (*schema.Message, error) {
-						return chat.Generate(ctx, input, modeloptions.WithMaxTokens(allowedTokens))
-					})
+				return generateReviewModelRequest(ctx, cfg, router, reviewModelRequest{
+					retryCount:  &retryCount,
+					traceName:   "goal_evaluator",
+					round:       modelRound,
+					budget:      budget,
+					messages:    input,
+					inputTokens: estimateModelInputTokens(input, nil),
 				})
 			})
 			if err != nil {
@@ -80,32 +78,26 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		setup(harness)
 	}
 	harness.Model = func(ctx context.Context, messages []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
-		var bound modeloptions.ToolCallingChatModel = chat
-		if len(tools) > 0 {
-			var err error
-			bound, err = chat.WithTools(tools)
-			if err != nil {
-				return nil, err
-			}
-		}
 		modelRound := nextRound()
 		retryCount := 0
 		return generateWithinLengthBudget(messages, outputBudget, func(input []*schema.Message, budget int) (*schema.Message, error) {
-			return retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
-				attempt := retryCount
-				retryCount++
-				return observedBudgetedModelRequest(ctx, "deepseek_model", modelRound, attempt, budget, estimateModelInputTokens(input, tools), func(allowedTokens int) (*schema.Message, error) {
-					return bound.Generate(ctx, input, modelRequestOptions(ctx, allowedTokens)...)
-				})
+			return generateReviewModelRequest(ctx, cfg, router, reviewModelRequest{
+				retryCount:  &retryCount,
+				traceName:   "review_model",
+				round:       modelRound,
+				budget:      budget,
+				messages:    input,
+				tools:       tools,
+				inputTokens: estimateModelInputTokens(input, tools),
 			})
 		})
 	}
 	return harness.Run(ctx, prompt)
 }
 
-func modelRequestOptions(ctx context.Context, maxTokens int) []modeloptions.Option {
+func modelRequestOptions(ctx context.Context, maxTokens int, useDeepSeekThinking bool) []modeloptions.Option {
 	options := []modeloptions.Option{modeloptions.WithMaxTokens(maxTokens)}
-	if isReviewPrompt(ctx) {
+	if useDeepSeekThinking && isReviewPrompt(ctx) {
 		options = append(options, openai.WithExtraFields(map[string]any{
 			"thinking":         map[string]string{"type": "enabled"},
 			"reasoning_effort": "high",
@@ -163,7 +155,7 @@ func observedModelRequest(
 	budget int,
 	generate func() (*schema.Message, error),
 ) (*schema.Message, error) {
-	return observedBudgetedModelRequest(ctx, name, round, retryCount, budget, inputFramingTokenReserve, func(int) (*schema.Message, error) {
+	return observedBudgetedModelRequest(ctx, name, round, retryCount, budget, inputFramingTokenReserve, reviewBudgetFrom(ctx).pricing(), func(int) (*schema.Message, error) {
 		return generate()
 	})
 }
@@ -175,10 +167,11 @@ func observedBudgetedModelRequest(
 	retryCount int,
 	requestedOutputTokens int,
 	estimatedInputTokens int,
+	pricing reviewModelPricing,
 	generate func(int) (*schema.Message, error),
 ) (*schema.Message, error) {
 	meter := reviewBudgetFrom(ctx)
-	reservation, reserveErr := meter.reserve(estimatedInputTokens, requestedOutputTokens)
+	reservation, reserveErr := meter.reserveForModel(estimatedInputTokens, requestedOutputTokens, pricing)
 	outputTokenLimit := requestedOutputTokens
 	if reserveErr == nil && meter != nil {
 		outputTokenLimit = reservation.outputTokens
@@ -212,6 +205,9 @@ func observedBudgetedModelRequest(
 	if err != nil || reply == nil {
 		result.Status = "failed"
 		result.Output = "模型请求失败，按预留额度计入预算"
+		if isProviderRejectedBeforeInference(err) {
+			result.Output = "服务商在模型生成前拒绝请求，未计模型费用"
+		}
 	} else if reply.ResponseMeta != nil {
 		result.FinishReason = reply.ResponseMeta.FinishReason
 		if usage := reply.ResponseMeta.Usage; usage != nil {
@@ -223,12 +219,14 @@ func observedBudgetedModelRequest(
 			result.Output = "模型输出达到 token 上限"
 		}
 	}
-	modelName, inputPrice, outputPrice := meter.tracePricing()
-	result.Model = modelName
-	result.InputPriceYuanPerMillion = inputPrice
-	result.OutputPriceYuanPerMillion = outputPrice
+	result.Model = reservation.pricing.modelName
+	result.InputPriceYuanPerMillion = reservation.pricing.inputPrice
+	result.OutputPriceYuanPerMillion = reservation.pricing.outputPrice
 	if meter != nil {
 		usageKnown := reply != nil && reply.ResponseMeta != nil && reply.ResponseMeta.Usage != nil
+		if err != nil && isProviderRejectedBeforeInference(err) {
+			usageKnown = true
+		}
 		result.CostMicros = meter.settle(reservation, result.InputTokens, result.OutputTokens, usageKnown)
 		result.EstimatedCost = !usageKnown
 	}

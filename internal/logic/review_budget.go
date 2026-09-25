@@ -21,6 +21,13 @@ type reviewBudgetContextKey struct{}
 type reviewBudgetReservation struct {
 	reservedMicros int64
 	outputTokens   int
+	pricing        reviewModelPricing
+}
+
+type reviewModelPricing struct {
+	modelName   string
+	inputPrice  float64
+	outputPrice float64
 }
 
 type reviewBudgetMeter struct {
@@ -86,9 +93,18 @@ func reviewBudgetFrom(ctx context.Context) *reviewBudgetMeter {
 }
 
 func (m *reviewBudgetMeter) reserve(estimatedInputTokens, requestedOutputTokens int) (reviewBudgetReservation, error) {
+	return m.reserveForModel(estimatedInputTokens, requestedOutputTokens, m.pricing())
+}
+
+func (m *reviewBudgetMeter) reserveForModel(
+	estimatedInputTokens int,
+	requestedOutputTokens int,
+	pricing reviewModelPricing,
+) (reviewBudgetReservation, error) {
 	if m == nil {
-		return reviewBudgetReservation{outputTokens: requestedOutputTokens}, nil
+		return reviewBudgetReservation{outputTokens: requestedOutputTokens, pricing: pricing}, nil
 	}
+	pricing = m.completePricing(pricing)
 	if estimatedInputTokens < inputFramingTokenReserve {
 		estimatedInputTokens = inputFramingTokenReserve
 	}
@@ -98,22 +114,23 @@ func (m *reviewBudgetMeter) reserve(estimatedInputTokens, requestedOutputTokens 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	remaining := m.limitMicros - m.spentMicros - m.reservedMicros
-	inputCost := tokenCostMicros(estimatedInputTokens, m.inputPrice)
+	inputCost := tokenCostMicros(estimatedInputTokens, pricing.inputPrice)
 	if inputCost >= remaining {
 		return reviewBudgetReservation{}, fmt.Errorf("审查预算不足，无法继续发送模型请求")
 	}
-	outputAllowance := int(math.Floor(float64(remaining-inputCost) / m.outputPrice))
+	outputAllowance := int(math.Floor(float64(remaining-inputCost) / pricing.outputPrice))
 	if outputAllowance < 1 {
 		return reviewBudgetReservation{}, fmt.Errorf("审查预算不足，无法继续生成模型输出")
 	}
 	if outputAllowance > requestedOutputTokens {
 		outputAllowance = requestedOutputTokens
 	}
-	reserved := inputCost + tokenCostMicros(outputAllowance, m.outputPrice)
+	reserved := inputCost + tokenCostMicros(outputAllowance, pricing.outputPrice)
 	m.reservedMicros += reserved
 	return reviewBudgetReservation{
 		reservedMicros: reserved,
 		outputTokens:   outputAllowance,
+		pricing:        pricing,
 	}, nil
 }
 
@@ -123,7 +140,8 @@ func (m *reviewBudgetMeter) settle(reservation reviewBudgetReservation, inputTok
 	}
 	charge := reservation.reservedMicros
 	if usageKnown {
-		charge = tokenCostMicros(inputTokens, m.inputPrice) + tokenCostMicros(outputTokens, m.outputPrice)
+		charge = tokenCostMicros(inputTokens, reservation.pricing.inputPrice) +
+			tokenCostMicros(outputTokens, reservation.pricing.outputPrice)
 	}
 	m.mu.Lock()
 	m.reservedMicros -= reservation.reservedMicros
@@ -162,6 +180,33 @@ func (m *reviewBudgetMeter) tracePricing() (string, float64, float64) {
 		return "", 0, 0
 	}
 	return m.modelName, m.inputPrice, m.outputPrice
+}
+
+func (m *reviewBudgetMeter) pricing() reviewModelPricing {
+	if m == nil {
+		return reviewModelPricing{}
+	}
+	return reviewModelPricing{
+		modelName:   m.modelName,
+		inputPrice:  m.inputPrice,
+		outputPrice: m.outputPrice,
+	}
+}
+
+func (m *reviewBudgetMeter) completePricing(pricing reviewModelPricing) reviewModelPricing {
+	if m == nil {
+		return pricing
+	}
+	if pricing.modelName == "" {
+		pricing.modelName = m.modelName
+	}
+	if pricing.inputPrice <= 0 {
+		pricing.inputPrice = m.inputPrice
+	}
+	if pricing.outputPrice <= 0 {
+		pricing.outputPrice = m.outputPrice
+	}
+	return pricing
 }
 
 func tokenCostMicros(tokens int, priceYuanPerMillion float64) int64 {

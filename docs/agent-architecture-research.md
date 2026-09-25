@@ -117,7 +117,7 @@ sequenceDiagram
 
 | 服务 | 何时调用 | 代码用途 |
 |---|---|---|
-| DeepSeek API | 需要运行审查、第二轮复核、Workflow Agent 或记忆提取时 | Eino OpenAI-compatible 适配层默认使用 `deepseek-v4-pro`；审查请求开启 high 思考强度。模型、base URL 和 API key 分别来自 `DEEPSEEK_MODEL`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_API_KEY` |
+| DeepSeek API | 需要运行审查、第二轮复核、Workflow Agent 或记忆提取时 | Eino OpenAI-compatible 适配层默认使用 `deepseek-flash`；审查请求开启 high 思考强度。模型、base URL 和 API key 分别来自 `DEEPSEEK_MODEL`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_API_KEY` |
 | GitHub REST API / GitHub `.diff` | 请求给 GitHub PR URL 且未直接给 diff 时 | 拉取 PR diff；可选使用 `GITHUB_TOKEN`，API base 可配置 |
 | GitLab MR `.diff` | 请求给 GitLab MR URL 且未直接给 diff 时 | 拉取合并请求 diff；配置中没有单独的 GitLab token |
 | MySQL | 服务启动及请求持久化时 | 生产环境强制要求 `PERSISTENCE_MODE=mysql` 和 `MYSQL_DSN`；保存审查 Job、任务/后台任务和 Workflow 运行数据 |

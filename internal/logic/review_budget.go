@@ -11,8 +11,8 @@ import (
 
 const (
 	defaultReviewBudgetYuan  = 10.0
-	defaultInputPrice        = 9.0
-	defaultOutputPrice       = 27.0
+	defaultInputPrice        = 2.1
+	defaultOutputPrice       = 8.4
 	inputFramingTokenReserve = 1024
 )
 
@@ -63,7 +63,7 @@ func newReviewBudgetMeter(job *model.ReviewJob, cfg Config, checkpoint func() er
 	}
 	modelName := cfg.DeepSeekModel
 	if strings.TrimSpace(modelName) == "" {
-		modelName = "deepseek-v4-pro"
+		modelName = "deepseek-flash"
 	}
 	return &reviewBudgetMeter{
 		job:         job,

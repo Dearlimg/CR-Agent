@@ -109,16 +109,31 @@ def _test_program(archive_path, commands, timeout_seconds):
         "    runner_error = 'sandbox checkout or test runner failed: ' + type(error).__name__",
         "finally:",
         "    shutil.rmtree(root, ignore_errors=True)",
-        "exit_codes = [item['exit_code'] for item in outputs]",
+        "def is_collection_error(item):",
+        "    output = (item.get('stdout', '') + item.get('stderr', '')).lower()",
+        "    is_python_exit = item.get('name') == 'Python' and item.get('exit_code') == 2",
+        "    return is_python_exit and 'errors during collection' in output",
+        "collection_failed = any(is_collection_error(item) for item in outputs)",
+        "test_failure = any(item['exit_code'] != 0 and not is_collection_error(item) for item in outputs)",
         "if runner_error or timed_out:",
         "    status = 'incomplete'",
-        "elif any(code != 0 for code in exit_codes):",
+        "elif collection_failed:",
+        "    status = 'incomplete'",
+        "elif test_failure:",
         "    status = 'failed'",
         "elif ran:",
         "    status = 'passed'",
         "else:",
         "    status = 'incomplete'",
-        "summary = {'ran': ran, 'status': status, 'runner_error': runner_error, 'timed_out': timed_out, 'commands': outputs}",
+        "collection_only = collection_failed and len(outputs) == 1 and is_collection_error(outputs[0])",
+        "summary = {",
+        "    'ran': ran and not collection_only,",
+        "    'status': status,",
+        "    'runner_error': runner_error,",
+        "    'timed_out': timed_out,",
+        "    'collection_failed': collection_failed,",
+        "    'commands': outputs,",
+        "}",
         "print(result_prefix + json.dumps(summary, ensure_ascii=False))",
     ]
     return "\n".join(lines)
@@ -187,6 +202,8 @@ def main():
             message = "沙箱中的自动化测试全部通过。"
         elif result.get("status") == "failed":
             message = "沙箱中的自动化测试失败；请查看执行输出。"
+        elif result.get("collection_failed"):
+            message = "Python 测试在收集阶段中断，测试用例未运行；请检查沙箱模板中的依赖与导入配置。"
         elif timed_out:
             message = "自动化测试超过执行时限，结果未完成。"
         elif error:

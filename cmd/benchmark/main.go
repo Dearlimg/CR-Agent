@@ -229,7 +229,7 @@ func run(options benchmarkOptions) error {
 
 	modelName := cfg.DeepSeekModel
 	if strings.TrimSpace(modelName) == "" {
-		modelName = "deepseek-v4-pro"
+		modelName = "deepseek-flash"
 	}
 	report := runReport{
 		Version:           "code-review-v1",

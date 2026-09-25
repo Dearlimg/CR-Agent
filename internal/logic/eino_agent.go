@@ -287,7 +287,7 @@ func estimateModelInputTokens(messages []*schema.Message, tools []*schema.ToolIn
 
 func reviewModelName(cfg Config) string {
 	if strings.TrimSpace(cfg.DeepSeekModel) == "" {
-		return "deepseek-v4-pro"
+		return "deepseek-flash"
 	}
 	return cfg.DeepSeekModel
 }

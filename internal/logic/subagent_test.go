@@ -2,7 +2,10 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -110,6 +113,52 @@ func TestReviewSpecialistRepairsIncompleteFindingSchema(t *testing.T) {
 	findings, err := parseFindingsStrict(result.Summary)
 	if result.Error != nil || err != nil || len(findings) != 1 || calls != 2 {
 		t.Fatalf("result=%#v findings=%#v err=%v calls=%d", result, findings, err, calls)
+	}
+}
+
+func TestReviewAgentAcceptsValidRepairFromProviderWithoutToolCall(t *testing.T) {
+	valid := `[{"file":"a.go","line":7,"severity":"medium","confidence":"high",` +
+		`"body":"会返回错误","evidence":"return err","trigger":"调用失败",` +
+		`"impact":"请求失败","suggestion":"处理错误"}]`
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var request struct {
+			Tools []struct {
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		content := strings.TrimSuffix(valid, "]")
+		if calls == 2 {
+			content = valid
+			if len(request.Tools) != 1 || request.Tools[0].Function.Name != "parse_review_findings_json" {
+				t.Errorf("repair tools=%#v", request.Tools)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "repair-test", "object": "chat.completion",
+			"choices": []any{map[string]any{
+				"index": 0, "message": map[string]any{"role": "assistant", "content": content},
+				"finish_reason": "stop",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	result := RunReviewAgent(context.Background(), Config{
+		DeepSeekAPIKey: "test-only", DeepSeekBaseURL: server.URL,
+	}, "diff", ReviewPromptContext{})
+	findings, err := parseFindingsStrict(result.Summary)
+	if result.Error != nil || err != nil || len(findings) != 1 || calls != 2 {
+		t.Fatalf("result=%#v findings=%#v parseErr=%v calls=%d", result, findings, err, calls)
 	}
 }
 

@@ -52,6 +52,13 @@ func TestSkillLoaderRejectsUnknownSkill(t *testing.T) {
 	}
 }
 
+func TestSkillFrontmatterHandlesWindowsLineEndings(t *testing.T) {
+	name, description := parseSkillFrontmatter("\ufeff---\r\nname: semantic-review\r\ndescription: 业务语义审查\r\n---\r\n正文", "fallback")
+	if name != "semantic-review" || description != "业务语义审查" {
+		t.Fatalf("name=%q description=%q", name, description)
+	}
+}
+
 func TestReviewPromptLoadsOnlySelectedSkill(t *testing.T) {
 	prompt := BuildReviewSubagentPrompt("审查正确性", ReviewPromptContext{
 		Catalog:      "- code-review: review; unused catalog text",

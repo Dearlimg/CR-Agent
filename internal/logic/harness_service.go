@@ -43,7 +43,7 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 		h.Policy = s.Loop.Policy
 		// The supplied diff and preflight results already contain review evidence.
 		// Bound exploratory tool turns only for this job-scoped review path.
-		h.MaxToolRounds = 4
+		h.MaxToolRounds = 8
 		h.MaxStalledRounds = 2
 		h.Workflow = s.Workflows
 		h.WorkflowRunner = s.workflowAgentRunner(h)

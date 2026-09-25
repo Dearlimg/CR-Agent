@@ -1,2 +1,0 @@
-e2b==2.51.0
-e2b-code-interpreter==2.10.0

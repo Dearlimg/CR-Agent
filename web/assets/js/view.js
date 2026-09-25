@@ -3,7 +3,7 @@ function closeStream() {
   stream = null;
 }
 function isHiddenSandboxEvent(event) {
-  return event.tool === "automated_tests" || event.tool === "typecheck";
+  return ["automated_tests", "typecheck", "syntax_check", "format_check"].includes(event.tool);
 }
 function showTab(name) {
   for (const n of ["trajectory", "conversation", "findings"])
@@ -218,7 +218,7 @@ function renderOutcome() {
   if (!job || !terminal(job)) return "";
   const scope = job.review_scope || {},
     checks = Array.isArray(scope.checks)
-      ? scope.checks.filter((check) => check.name !== "automated_tests")
+      ? scope.checks.filter((check) => !["automated_tests", "typecheck", "syntax_check", "format_check"].includes(check.name))
       : [],
     outcome = job.review_outcome;
   const titles = {

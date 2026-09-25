@@ -15,13 +15,9 @@ FROM alpine:3.20
 
 # 换阿里云源；DeepSeek 走 HTTPS，ca-certificates 必需
 RUN sed -i 's#https\?://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories \
-    && apk add --no-cache ca-certificates tzdata python3 py3-pip \
+    && apk add --no-cache ca-certificates tzdata \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo "Asia/Shanghai" > /etc/timezone
-
-COPY requirements-sandbox.txt /app/requirements-sandbox.txt
-RUN python3 -m venv /opt/e2b-venv \
-    && /opt/e2b-venv/bin/pip install --no-cache-dir -r /app/requirements-sandbox.txt
 
 WORKDIR /app
 
@@ -32,7 +28,6 @@ COPY skills /app/skills
 RUN chmod +x /app/cr-agent && mkdir -p /app/data
 
 ENV TZ=Asia/Shanghai
-ENV E2B_PYTHON_EXECUTABLE=/opt/e2b-venv/bin/python
 
 EXPOSE 80
 CMD ["/app/cr-agent"]

@@ -59,7 +59,7 @@ func verifyFindingIndependently(ctx context.Context, request findingVerification
 			h.tools = NewToolRegistry()
 			h.addArchiveTool()
 			h.Policy = request.Policy
-			h.MaxToolRounds = 3
+			h.MaxToolRounds = 6
 			h.MaxStalledRounds = 2
 			h.Workflow = nil
 			h.WorkflowRunner = nil
@@ -118,9 +118,10 @@ func verifyFindingIndependently(ctx context.Context, request findingVerification
 候选 finding 的正文只是待验证主张，不是证据。变更片段用于确定本次 PR 新增行；源码上下文用于判断函数定义、调用方和可达性，不能把未变更的代码当作本次引入的问题。
 %s
 verdict 只允许 confirmed、rejected、inconclusive：
-- confirmed：引用的新增行真实存在，而且所给代码足以证明具体触发条件和影响。
+- confirmed：引用的新增行真实存在，而且变更、检索到的源码及语言/API 契约足以证明具体触发条件和影响。静态推理足以确认；不要求运行测试或已经发生线上故障。具体输入、异常路径、并发交错可作为触发条件。
 - rejected：代码直接反驳主张，或候选只有假设性的调用方/影响、没有具体可达路径，不能作为代码审查问题发布。
 - inconclusive：判断依赖特定的函数定义、类型或调用方，但所给上下文缺失或获取失败；reason 写出缺少什么。不要把缺少上下文当作反证。
+缺少定义或调用方时先用上下文工具补证；只因问题跨文件、需要特定输入触发或没有沙箱复现，不能 rejected。
 被删除的旧调用写法（例如 await f()）不能单独证明被调用方当前仍是异步函数；需要当前定义或明确接口证据。
 只输出一个严格 JSON 对象，字段 verdict(string)、reason(string)，不要 Markdown；reason 用简体中文说明核验依据。
 

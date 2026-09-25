@@ -33,7 +33,7 @@ type PermissionPolicy struct {
 }
 
 func DefaultPermissionPolicy() *PermissionPolicy {
-	p := &PermissionPolicy{grants: map[Permission]PermissionDecision{PermissionReadDiff: PermissionAllow, PermissionNetworkFetch: PermissionAllow, PermissionStaticAnalysis: PermissionAllow, PermissionLLMInference: PermissionAllow, PermissionRepositoryRead: PermissionAllow, PermissionSandboxExec: PermissionAllow, PermissionRepositoryExec: PermissionRequireApproval, PermissionPublishReview: PermissionRequireApproval}}
+	p := &PermissionPolicy{grants: map[Permission]PermissionDecision{PermissionReadDiff: PermissionAllow, PermissionNetworkFetch: PermissionAllow, PermissionStaticAnalysis: PermissionAllow, PermissionLLMInference: PermissionAllow, PermissionRepositoryRead: PermissionAllow, PermissionSandboxExec: PermissionDeny, PermissionRepositoryExec: PermissionRequireApproval, PermissionPublishReview: PermissionRequireApproval}}
 	p.grants[PermissionManageSchedule] = PermissionRequireApproval
 	if raw := os.Getenv("AGENT_DENY_PERMISSIONS"); raw != "" {
 		for _, v := range strings.Split(raw, ",") {

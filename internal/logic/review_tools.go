@@ -46,23 +46,6 @@ func changedLinesTool(_ context.Context, in ToolInput) (ToolResult, error) {
 	return ToolResult{Output: fmt.Sprintf("diff 新增行=%d", analyzeDiff(in.Diff).AddedLines)}, nil
 }
 
-func syntaxCheckTool(_ context.Context, in ToolInput) (ToolResult, error) {
-	return preflightCheckTool(in.Diff, "syntax_check"), nil
-}
-
-func formatCheckTool(_ context.Context, in ToolInput) (ToolResult, error) {
-	return preflightCheckTool(in.Diff, "format_check"), nil
-}
-
-func preflightCheckTool(diff, name string) ToolResult {
-	for _, check := range analyzeDiff(diff).Checks {
-		if check.Name == name {
-			return ToolResult{Output: check.Status + ": " + check.Message}
-		}
-	}
-	return ToolResult{Output: "not_run: 检查不可用"}
-}
-
 func secretScanTool(ctx context.Context, in ToolInput) (ToolResult, error) {
 	findings, err := scanRawDiff(ctx, in.Diff)
 	if err != nil {

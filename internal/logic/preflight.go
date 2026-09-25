@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"go/format"
 	"path"
 	"regexp"
 	"strconv"
@@ -15,7 +14,7 @@ import (
 	"time"
 )
 
-const preflightVersion = "review-preflight-v1"
+const preflightVersion = "review-preflight-v2"
 
 var hunkPattern = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 var credentialPattern = regexp.MustCompile(`(?i)(?:api[_-]?key|secret|password|token|authorization)\s*[:=]\s*["']?[A-Za-z0-9_\-/+=]{8,}`)
@@ -224,8 +223,7 @@ func analyzeDiff(diff string) preflightAnalysis {
 	}
 	var current *ChangedFile
 	var nextLine int
-	var conflictCount, staticHints, formatFailures, syntaxFailures, completeGoFiles, partialGoFiles int
-	newFileSources := map[string]*strings.Builder{}
+	var conflictCount, staticHints int
 	if !strings.Contains(diff, "diff --git ") {
 		analysis.Files = append(analysis.Files, ChangedFile{Path: "diff", AddedLines: []int{}})
 		current = &analysis.Files[0]
@@ -266,44 +264,12 @@ func analyzeDiff(diff string) preflightAnalysis {
 			if strings.Contains(content, "TODO") || strings.Contains(content, "panic(") {
 				staticHints++
 			}
-			if current.New && strings.HasSuffix(current.Path, ".go") {
-				builder := newFileSources[current.Path]
-				if builder == nil {
-					builder = &strings.Builder{}
-					newFileSources[current.Path] = builder
-				}
-				builder.WriteString(content)
-				builder.WriteByte('\n')
-			}
+
 			nextLine++
 			continue
 		}
 		if strings.HasPrefix(line, " ") {
 			nextLine++
-		}
-	}
-	for _, file := range analysis.Files {
-		if !strings.HasSuffix(file.Path, ".go") {
-			continue
-		}
-		if !file.New {
-			partialGoFiles++
-			continue
-		}
-		completeGoFiles++
-		builder := newFileSources[file.Path]
-		if builder == nil {
-			syntaxFailures++
-			continue
-		}
-		content := []byte(builder.String())
-		formatted, err := format.Source(content)
-		if err != nil {
-			syntaxFailures++
-			continue
-		}
-		if string(formatted) != string(content) {
-			formatFailures++
 		}
 	}
 	staticStatus := "passed"
@@ -314,25 +280,6 @@ func analyzeDiff(diff string) preflightAnalysis {
 		PreflightCheck{Name: "conflict_marker_check", Status: passOrFail(conflictCount), Message: fmt.Sprintf("新增行冲突标记=%d", conflictCount)},
 		PreflightCheck{Name: "static_check", Status: staticStatus, Message: fmt.Sprintf("新增行 TODO/panic 字符串提示=%d；仅供人工判断", staticHints)},
 	)
-	goStatus := "not_run"
-	if completeGoFiles > 0 && partialGoFiles == 0 {
-		goStatus = "passed"
-	}
-	if syntaxFailures > 0 {
-		goStatus = "failed"
-	}
-	analysis.Checks = append(analysis.Checks, PreflightCheck{
-		Name: "syntax_check", Status: goStatus,
-		Message: fmt.Sprintf("新建 Go 文件解析=%d，解析失败=%d，修改文件未做完整语法检查=%d", completeGoFiles, syntaxFailures, partialGoFiles),
-	})
-	formatStatus := goStatus
-	if formatFailures > 0 {
-		formatStatus = "failed"
-	}
-	analysis.Checks = append(analysis.Checks, PreflightCheck{
-		Name: "format_check", Status: formatStatus,
-		Message: fmt.Sprintf("新建 Go 文件 gofmt 检查=%d，需格式化=%d，修改文件未检查=%d", completeGoFiles, formatFailures, partialGoFiles),
-	})
 	return analysis
 }
 

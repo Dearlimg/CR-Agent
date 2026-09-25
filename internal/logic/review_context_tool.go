@@ -2,7 +2,10 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
+	"path"
 	"slices"
 	"strings"
 )
@@ -15,16 +18,20 @@ const (
 	reviewContextToolDefaultRadius  = 12
 	reviewContextToolMaxRadius      = 40
 	reviewContextToolMaxLine        = reviewSourceMaxFileBytes
-	reviewContextToolDescription    = "从本次 PR 固定 head 提交中检索源码；指定文件路径可按需拉取并搜索符号或读取行段。"
+	reviewContextToolDescription    = "浏览本次 PR 固定 head 的目录、检索源码或读取行段；无 file 的搜索仅覆盖已读取文件，不是全仓库搜索。"
 	reviewContextToolName           = "get_review_context"
 	reviewContextToolSystemGuidance = "若候选依赖未展示的定义、调用方、类型、循环控制或 API 用法，先调用 get_review_context 查证，再给出 verdict。只使用工具返回的固定提交源码；拿不到上下文时仍应返回 inconclusive，不可猜测。"
-	reviewAgentContextToolGuidance  = "首轮审查遇到需要确认的配置类型、函数定义、调用方、测试或 API 用法时，先调用 get_review_context 查证；首次读取文件时同时提供仓库相对 file 路径和 query，已读取文件可只给 query。不要仅因 diff 没展示上下文就跳过候选。只依据工具返回的本次 PR 固定 head 源码。"
+	reviewAgentContextToolGuidance  = "首轮审查遇到需要确认的配置类型、函数定义、调用方、测试或 API 用法时，先调用 get_review_context 查证；未知路径时先用 directory 浏览目录（根目录为 .），然后用 file+query 搜索或 file+start_line+end_line 读取；只有 query 时仅搜索已读取文件，未命中不代表仓库没有该实现。不要仅因 diff 没展示上下文就跳过候选。只依据工具返回的本次 PR 固定 head 源码。"
 )
 
 func reviewContextToolSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"directory": map[string]any{
+				"type":        "string",
+				"description": "列出固定提交目录的文件和子目录；根目录传 .。此模式无需 query，不与 file/行段一起使用。",
+			},
 			"query": map[string]any{
 				"type":        "string",
 				"description": "要查证的符号或简短关键词，例如 max_retry_count、all_tool_messages。",
@@ -52,7 +59,6 @@ func reviewContextToolSchema() map[string]any {
 				"description": "符号搜索命中行前后的上下文行数，默认 12，最大 40。",
 			},
 		},
-		"required":             []string{"query"},
 		"additionalProperties": false,
 	}
 }
@@ -70,7 +76,19 @@ func runReviewContextTool(
 		policy.Decide(PermissionNetworkFetch) != PermissionAllow {
 		return "", fmt.Errorf("读取仓库源码的权限未授予")
 	}
-	query, err := requiredString(args, "query")
+	directory, err := optionalString(args, "directory")
+	if err != nil {
+		return "", err
+	}
+	if _, exists := args["directory"]; exists {
+		for _, key := range []string{"file", "query", "start_line", "end_line", "radius"} {
+			if _, exists := args[key]; exists {
+				return "", fmt.Errorf("directory 不能与 %s 同时使用", key)
+			}
+		}
+		return snapshot.listDirectory(ctx, directory)
+	}
+	query, err := optionalString(args, "query")
 	if err != nil {
 		return "", err
 	}
@@ -121,7 +139,53 @@ func runReviewContextTool(
 		}
 		return snapshot.readRange(filePath, startLine, endLine)
 	}
+	if query == "" {
+		return "", fmt.Errorf("搜索需要 query；或指定 directory 浏览目录，或指定 file 和完整行段")
+	}
 	return snapshot.search(query, filePath, radius)
+}
+
+// listDirectory discovers paths without executing repository code or following
+// download URLs supplied by the repository. Every request stays pinned to head.
+func (s *reviewSourceSnapshot) listDirectory(ctx context.Context, directory string) (string, error) {
+	if directory != "." && !reviewSourceValidPath(directory) {
+		return "", fmt.Errorf("无效的仓库相对目录")
+	}
+	if s.base == nil || s.client == nil || !reviewGitHubSHAPattern.MatchString(s.headSHA) {
+		return "", fmt.Errorf("固定提交目录不可用")
+	}
+	relative := directory
+	if directory == "." {
+		relative = ""
+	}
+	endpoint := reviewSourceURL(s.base, "repos", s.owner, s.repo, "contents") + "/" + reviewSourceEscapedPath(relative)
+	body, err := reviewSourceGET(ctx, s.client, endpoint+"?ref="+url.QueryEscape(s.headSHA), s.token, reviewSourceResponseBytes)
+	if err != nil {
+		return "", err
+	}
+	var entries []struct {
+		Path string `json:"path"`
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return "", fmt.Errorf("路径不是可浏览目录")
+	}
+	var output strings.Builder
+	fmt.Fprintf(&output, "head=%s directory=%s\n", s.headSHA, redactFindingText(directory))
+	for _, entry := range entries {
+		if !reviewSourceValidPath(entry.Path) || path.Dir(entry.Path) != directory ||
+			(entry.Type != "file" && entry.Type != "dir") {
+			continue
+		}
+		line := fmt.Sprintf("%s %s\n", entry.Type, redactFindingText(entry.Path))
+		if output.Len()+len(line) > reviewContextToolMaxChars-200 {
+			output.WriteString("目录结果已截断，请选择子目录继续查询。\n")
+			break
+		}
+		output.WriteString(line)
+	}
+	output.WriteString("仅列出当前目录；未读取的文件不在 query 搜索范围内。GitHub 目录接口最多返回 1000 项。")
+	return output.String(), nil
 }
 
 func optionalString(args map[string]any, key string) (string, error) {

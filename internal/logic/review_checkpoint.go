@@ -30,7 +30,6 @@ type reviewCheckpoint struct {
 	Artifacts               ReviewArtifacts          `json:"artifacts"`
 	PromptContext           ReviewPromptContext      `json:"prompt_context"`
 	InitialSource           checkpointSource         `json:"initial_source"`
-	Tests                   sandboxTestResult        `json:"tests"`
 	Candidates              []ReviewFinding          `json:"candidates"`
 	ModelTraceID            string                   `json:"model_trace_id,omitempty"`
 	CandidateSource         checkpointSource         `json:"candidate_source"`

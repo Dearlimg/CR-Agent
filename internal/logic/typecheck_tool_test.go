@@ -1,41 +1,12 @@
 package logic
 
 import (
-	"archive/zip"
-	"bytes"
-	"context"
-	"path/filepath"
-	"reflect"
-	"strings"
-	"testing"
-
 	"CR-Agent/internal/dao"
 	"CR-Agent/internal/model"
+	"context"
+	"path/filepath"
+	"testing"
 )
-
-func TestGoTypecheckUsesCompileOnlyCommand(t *testing.T) {
-	command := goTypecheckCommand()
-	if command.Name != "Go typecheck" || !reflect.DeepEqual(command.Args, []string{"go", "build", "./..."}) {
-		t.Fatalf("typecheck command=%#v", command)
-	}
-}
-
-func TestGoTypecheckRequiresModuleAndConfiguredSandbox(t *testing.T) {
-	moduleArchive := makeTypecheckArchive(t, map[string]string{
-		"go.mod":  "module example.com/review\n\ngo 1.22\n",
-		"main.go": "package main\nfunc main() {}\n",
-	})
-	result := runE2BGoTypecheck(context.Background(), Config{}, moduleArchive)
-	if result.Status != "not_run" || !strings.Contains(result.Message, "E2B_API_KEY") {
-		t.Fatalf("without sandbox credentials result=%#v", result)
-	}
-
-	noModule := makeTypecheckArchive(t, map[string]string{"main.go": "package main\n"})
-	result = runE2BGoTypecheck(context.Background(), Config{E2BAPIKey: "test-only"}, noModule)
-	if result.Status != "not_run" || !strings.Contains(result.Message, "go.mod") {
-		t.Fatalf("without Go module result=%#v", result)
-	}
-}
 
 func TestHarnessDoesNotRegisterSandboxTypecheck(t *testing.T) {
 	root := t.TempDir()
@@ -52,23 +23,4 @@ func TestHarnessDoesNotRegisterSandboxTypecheck(t *testing.T) {
 	if _, ok := harness.tools.Get("typecheck"); ok {
 		t.Fatal("sandbox typecheck must stay disabled in review tools")
 	}
-}
-
-func makeTypecheckArchive(t *testing.T, files map[string]string) []byte {
-	t.Helper()
-	var archive bytes.Buffer
-	writer := zip.NewWriter(&archive)
-	for name, content := range files {
-		entry, err := writer.Create(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := entry.Write([]byte(content)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return archive.Bytes()
 }

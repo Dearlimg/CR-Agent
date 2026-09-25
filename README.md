@@ -33,17 +33,13 @@ $env:CR_AGENT_ENV_FILE = "C:\cr-agent\.env"
 
 每次审查只执行一次 `preflight_analysis`，生成变更文件、新增行号、依赖文件、检查状态和疑似密钥位置。结构化结果同时提供给后续 Agent；模型工具池不再包含相同的 diff 解析、密钥扫描和格式检查工具。内存缓存仅保存不含原始代码和密钥值的解析结果，按来源、diff 摘要与分析器版本区分，30 分钟过期；原始 diff 的密钥扫描每次仍会执行。
 
-`syntax_check` 和 `format_check` 只对完整的新建 Go 文件分别运行解析与 `gofmt` 检查；修改过的文件缺少仓库上下文时明确标为 `not_run`。`static_check` 只统计新增行的 TODO 和 `panic(` 字符串提示，不把它们直接当作缺陷。依赖变更按文件路径识别。最终 finding 必须落在实际新增行，服务再统一归一化并去重。
+前置分析只提供变更范围、冲突标记、静态提示及脱敏信息，不运行语法、格式、编译或测试检查。LLM 负责业务逻辑、语言语义、契约和安全风险判断；通过 `get_review_context` 浏览固定 head 目录并检索实现、调用方和测试补证。新增行用于定位，完整论证可以引用已检索的跨文件源码。
 
 Trace 的 `origin` 区分编排调用和模型工具调用，`cache_hit` 表示解析结果复用；界面分别展示这两类调用与缓存命中。
 
-## 沙箱自动测试
+## 只读语义审查
 
-在 `.env` 配置 `E2B_API_KEY`、`E2B_DOMAIN` 和 `AGS_TEMPLATE` 后，GitHub PR 审查会从 PR 的固定 head SHA 下载完整源码，并在腾讯云 E2B 兼容沙箱中识别并运行 Go、Python、Node.js、Rust、Maven 或 Gradle 测试入口。默认单次测试上限为 600 秒，可用 `E2B_TEST_TIMEOUT_SECONDS` 调低；Docker 镜像会安装与已验证示例一致的 Python E2B SDK（版本见 `requirements-sandbox.txt`），本地运行需先安装该依赖，并可用 `E2B_PYTHON_EXECUTABLE` 指向对应解释器。
-
-ReviewHarness 还提供按需 `typecheck` 工具：当审查来源是 GitHub PR 且固定 head 包含根目录 `go.mod` 时，模型可请求 E2B 沙箱执行固定命令 `go build ./...`。该工具只编译 Go packages，不运行仓库测试，也不接收模型生成的命令参数；沙箱模板需要安装 Go。无 PR 固定 head、没有 Go module 或未配置 E2B 时会明确返回 `not_run`。
-
-沙箱工具模板需要包含对应项目的语言运行时；项目依赖不会由 CR-Agent 自动安装。模板缺少运行时、源码包超过安全大小限制、来源不是 GitHub PR 或没有可识别的测试入口时，审查结果会明确显示 `incomplete` 或 `not_run`；pytest 在测试收集阶段中断也会显示为 `incomplete`，不会计为测试用例已运行。测试日志限长并记录在 `automated_tests` trace；测试 API Key 不会传入 PR 测试进程，沙箱在执行结束后会尝试销毁。`AGS_TEMPLATE` 使用控制台的沙箱工具名称，工具 ID 仅供控制台识别。
+已移除 E2B 沙箱、自动测试及类型检查模块与部署依赖。审查不执行目标仓库代码，编译和测试由项目 CI 负责。旧报告中的语法、格式和沙箱检查在页面与 Markdown 导出中隐藏。
 
 ## 导出报告
 

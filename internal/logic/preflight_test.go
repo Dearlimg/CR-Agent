@@ -45,7 +45,7 @@ func TestPreflightScansRawDiffAndSharesOnlyRedactedEvidence(t *testing.T) {
 	}
 	summary := artifacts.PromptSummary()
 	if strings.Contains(summary, `"added_lines":`) || strings.Contains(summary, "diff_digest") ||
-		strings.Contains(summary, "原始 diff") || !strings.Contains(summary, `"syntax_check"`) {
+		strings.Contains(summary, "原始 diff") || !strings.Contains(summary, `"secret_scan"`) {
 		t.Fatalf("prompt summary repeats diff details or loses check status: %q", summary)
 	}
 	for _, check := range artifacts.Checks {
@@ -75,7 +75,7 @@ func TestRedactionPreservesPatchStructureAndModelJSON(t *testing.T) {
 	}
 }
 
-func TestNewGoFileReceivesRealSyntaxAndFormatChecks(t *testing.T) {
+func TestNewGoFileDoesNotRunCompilerOrFormatter(t *testing.T) {
 	diff := "diff --git a/new.go b/new.go\nnew file mode 100644\n" +
 		"--- /dev/null\n+++ b/new.go\n@@ -0,0 +1,2 @@\n+package main\n+func f(){ }\n"
 	artifacts, err := NewPreflightCache().Run(context.Background(), "inline", diff)
@@ -86,7 +86,7 @@ func TestNewGoFileReceivesRealSyntaxAndFormatChecks(t *testing.T) {
 	for _, check := range artifacts.Checks {
 		statuses[check.Name] = check.Status
 	}
-	if statuses["syntax_check"] != "passed" || statuses["format_check"] != "failed" {
+	if statuses["syntax_check"] != "" || statuses["format_check"] != "" {
 		t.Fatalf("check statuses=%#v", statuses)
 	}
 }

@@ -122,7 +122,7 @@ function reviewSeverityLabel(value) {
 function renderReviewMarkdown(job) {
   const scope = job.review_scope || {};
   const checks = Array.isArray(scope.checks)
-    ? scope.checks.filter((check) => check.name !== "automated_tests")
+    ? scope.checks.filter((check) => !["automated_tests", "typecheck", "syntax_check", "format_check"].includes(check.name))
     : [];
   const comments = Array.isArray(job.comments) ? job.comments : [];
   const lines = [

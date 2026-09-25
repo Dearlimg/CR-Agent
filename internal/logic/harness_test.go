@@ -85,7 +85,7 @@ func TestServiceHarnessBackgroundCompletionWakesModelAndRecordsTrace(t *testing.
 	ctx, flush := s.withReviewHarness(context.Background(), job, "diff --git a/a.go b/a.go\n+package a")
 	h := newReviewHarness()
 	ctx.Value(harnessSetupKey{}).(func(*ReviewHarness))(h)
-	if h.MaxToolRounds != 4 || h.MaxStalledRounds != 2 {
+	if h.MaxToolRounds != 8 || h.MaxStalledRounds != 2 {
 		t.Fatalf("review tool limits=%d/%d", h.MaxToolRounds, h.MaxStalledRounds)
 	}
 	if system := h.System(); system != "" {
@@ -96,7 +96,7 @@ func TestServiceHarnessBackgroundCompletionWakesModelAndRecordsTrace(t *testing.
 	h.Model = func(_ context.Context, messages []*schema.Message, _ []*schema.ToolInfo) (*schema.Message, error) {
 		round++
 		if round == 1 {
-			return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{testToolCall("bg", "background_check", `{"check":"syntax_check"}`)}}, nil
+			return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{testToolCall("bg", "background_check", `{"check":"conflict_marker_check"}`)}}, nil
 		}
 		for _, message := range messages {
 			if strings.Contains(message.Content, "<task_notification>") {

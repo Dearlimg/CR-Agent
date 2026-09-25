@@ -90,6 +90,29 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 				records, err := s.MemoryStore.Recall(query)
 				return renderMemories(records), err
 			})
+		h.addWithPermission("typecheck", "在隔离沙箱中编译 PR 固定 head 的 Go module；不会运行仓库测试", map[string]any{
+			"type": "object", "additionalProperties": false,
+		}, PermissionSandboxExec, func(toolCtx context.Context, _ map[string]any) (string, error) {
+			result := sandboxTestResult{Status: "not_run", Message: "Go 类型检查未运行。"}
+			if strings.TrimSpace(s.Config.E2BAPIKey) == "" {
+				result.Message = "未配置 E2B_API_KEY，Go 类型检查未运行。"
+				return jsonString(typecheckToolResult(result)), nil
+			}
+			if sourceSnapshot == nil || sourceSnapshot.headSHA == "" {
+				result.Message = "当前审查没有 PR 固定 head，无法检查完整 Go module。"
+				return jsonString(typecheckToolResult(result)), nil
+			}
+			if err := reviewSourcePermissionError(s.Loop.Policy, "typecheck"); err != nil {
+				return "", err
+			}
+			archive, err := downloadReviewSourceArchive(toolCtx, sourceSnapshot)
+			if err != nil {
+				result = sandboxTestResult{Status: "incomplete", Message: redactReviewInput(err.Error())}
+				return jsonString(typecheckToolResult(result)), nil
+			}
+			result = runE2BGoTypecheck(toolCtx, s.Config, archive)
+			return jsonString(typecheckToolResult(result)), nil
+		})
 		if sourceSnapshot != nil {
 			h.addWithPermission(
 				reviewContextToolName,
@@ -175,7 +198,7 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 				}
 				return jsonString(s.Cron.List()), nil
 			})
-		h.add("schedule_cron", "创建持久定时审查计划；后台模型调用需要宿主授权", stringObject("cron", "source"),
+		h.addWithPermission("schedule_cron", "创建持久定时审查计划；后台模型调用需要宿主授权", stringObject("cron", "source"), PermissionManageSchedule,
 			func(_ context.Context, args map[string]any) (string, error) {
 				expression, err := requiredString(args, "cron")
 				if err != nil {
@@ -191,7 +214,7 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 				job, err := s.Cron.Schedule(expression, source, "", true, true)
 				return jsonString(job), err
 			})
-		h.add("cancel_cron", "取消宿主定时计划；后台模型调用需要宿主授权", objectSchema("cron_id"),
+		h.addWithPermission("cancel_cron", "取消宿主定时计划；后台模型调用需要宿主授权", objectSchema("cron_id"), PermissionManageSchedule,
 			func(_ context.Context, args map[string]any) (string, error) {
 				cronID, err := requiredString(args, "cron_id")
 				if err != nil {
@@ -203,11 +226,6 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 				job, err := s.Cron.Cancel(cronID)
 				return jsonString(job), err
 			})
-		for _, name := range []string{"schedule_cron", "cancel_cron"} {
-			tool := h.tools[name]
-			tool.permission = PermissionManageSchedule
-			h.tools[name] = tool
-		}
 		h.add("background_check", "在后台读取已完成的前置检查结果，完成后自动通知当前会话", objectSchema("check"),
 			func(_ context.Context, args map[string]any) (string, error) {
 				name, err := requiredString(args, "check")

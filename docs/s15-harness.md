@@ -17,6 +17,7 @@ MCP 连接、Todo、归档引用和任务所有权；公共 Hook 与权限策略
 
 | 课程机制 | 迭代前 | 本次后的实际行为 |
 | --- | --- | --- |
+| 工具元数据 | 宿主循环、ReviewHarness、MCP 分别拼装工具信息 | 共用 `ToolMetadata`/`ToolDefinition`，注册验证必需字段、编译 JSON Schema 并检查权限和 handler；执行前按 schema 验证参数，Harness 从注册表构造模型工具池 |
 | 模型工具循环 | 没有向模型绑定工具 | 每轮重新绑定动态工具池，执行实际 tool calls，回填带 ID 的 tool messages |
 | Hooks | 静态循环发事件，未处理 Pre hook 拒绝 | 模型循环支持输入、执行前后、拒绝、错误和 Stop；前置检查也遵守 Pre 拒绝 |
 | 权限 | 通用 permission，MCP 策略映射丢失 deny/approval 区别 | 通用 permission 加 MCP 精确宿主策略；后台不弹交互审批，直接返回错误结果 |
@@ -46,14 +47,22 @@ MCP 连接、Todo、归档引用和任务所有权；公共 Hook 与权限策略
 但不能宣称与教程完整 coding-agent runtime 等价。要全量复刻，需要继续实现上面的
 持久团队协议、任务工作区和系统命令执行能力，并为每种生命周期补集成测试。
 
+## 工具注册与 typecheck
+
+新增宿主工具时，在注册表中提供 `ToolMetadata{Name, Description, InputSchema, Permission}` 和 `ToolDefinition.Run`。注册表使用 Draft 2020-12 JSON Schema 编译器检查 schema，并在执行前验证完整参数；为避免动态工具 schema 触发外部资源访问，外部 `$ref` 被拒绝。元数据转换为 Eino `ToolInfo`；Harness 通过通用分发器执行 handler，新增工具无需修改模型主循环。MCP 发现的工具也转换成同一份元数据结构，继续使用 MCP 精确宿主策略做二次授权。
+
+模型可按需调用 `typecheck` 检查 PR 固定 head 的 Go module。它要求 `E2B_API_KEY`、GitHub PR 固定 head 和根目录 `go.mod`，在受限 E2B 沙箱执行宿主固定的 `go build ./...`，不会执行项目测试或模型提供的命令。工具输出明确区分 `passed`、`failed`、`incomplete` 和 `not_run`。
+
 ## 入口与验证
 
 - `internal/logic/harness.go`：统一模型循环、动态发现、分发、配对、恢复、归档引用。
-- `internal/logic/harness_service.go`：把现有项目模块接入当前审查会话。
+- `internal/logic/agent_loop.go`：共享工具元数据、注册校验和 AgentLoop 定义。
+- `internal/logic/harness_service.go`：把项目能力与 `typecheck` 接入当前审查会话。
 - `internal/logic/eino_agent.go`：真实 Eino/OpenAI-compatible 适配；重试不包含工具执行。
 - `internal/logic/harness_test.go`：脚本模型和本地 HTTP 假模型验证完整协议链路。
 
 验证命令：`go test ./...`、`go vet ./...`、`git diff --check`。
-核心断言覆盖连接后动态工具可见、多个 tool call 一一配对、错误回传、Hook 拒绝、
-重试不重放工具、MCP 显式 deny 不被通用权限覆盖、后台完成自动续轮、归档配对与访问范围。
+核心断言覆盖统一元数据校验、新工具注册后无需改 Harness 主循环即可发现和调用、
+typecheck 的 E2B/Go module 前置条件、连接后 MCP 动态工具可见、多个 tool call 一一配对、
+错误回传、Hook 拒绝、重试不重放工具、MCP 显式 deny、后台自动续轮和归档访问范围。
 测试不使用真实模型密钥或远程 MySQL，不应据此宣称真实外部服务联调已通过。

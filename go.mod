@@ -6,6 +6,7 @@ require (
 	github.com/cloudwego/eino v0.9.20
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/eino-contrib/jsonschema v1.0.3
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/gin-gonic/gin v1.10.0
 	github.com/joho/godotenv v1.5.1
 	gorm.io/driver/mysql v1.5.7

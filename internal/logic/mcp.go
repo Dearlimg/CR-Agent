@@ -162,12 +162,9 @@ func (p *MCPHostPolicy) Decide(server, tool string) PermissionDecision {
 }
 
 type MCPToolSpec struct {
-	Server      string
-	RawName     string
-	Name        string
-	Description string
-	InputSchema map[string]any
-	Permission  Permission
+	Server  string
+	RawName string
+	ToolMetadata
 }
 
 type MCPManager struct {
@@ -308,6 +305,14 @@ func (m *MCPManager) AssembleToolPool() ([]MCPToolSpec, error) {
 			if err != nil {
 				return nil, err
 			}
+			description := strings.TrimSpace(tool.Description)
+			if description == "" {
+				description = fmt.Sprintf("调用 MCP server %s 上的 %s 工具", server, tool.Name)
+			}
+			inputSchema := cloneSchema(tool.InputSchema)
+			if len(inputSchema) == 0 {
+				inputSchema = map[string]any{"type": "object", "additionalProperties": false}
+			}
 			key := MCPToolKey{Server: server, Tool: tool.Name}
 			if origin, exists := origins[prefixed]; exists {
 				return nil, fmt.Errorf("MCP tool name collision after normalization: %q (%s/%s and %s/%s)", prefixed, origin.Server, origin.Tool, server, tool.Name)
@@ -317,7 +322,13 @@ func (m *MCPManager) AssembleToolPool() ([]MCPToolSpec, error) {
 			if policy.Decide(server, tool.Name) == PermissionAllow {
 				permission = PermissionReadDiff
 			}
-			pool = append(pool, MCPToolSpec{Server: server, RawName: tool.Name, Name: prefixed, Description: tool.Description, InputSchema: cloneSchema(tool.InputSchema), Permission: permission})
+			pool = append(pool, MCPToolSpec{
+				Server: server, RawName: tool.Name,
+				ToolMetadata: ToolMetadata{
+					Name: prefixed, Description: description,
+					InputSchema: inputSchema, Permission: permission,
+				},
+			})
 		}
 	}
 	return pool, nil
@@ -341,37 +352,47 @@ func (m *MCPManager) RegisterClientTools(registry *ToolRegistry, server string) 
 		if spec.Server != server {
 			continue
 		}
-		rawName := spec.RawName
-		mcpClient := client
-		registry.RegisterWithPermission(spec.Name, spec.Permission, func(ctx context.Context, in ToolInput) (ToolResult, error) {
-			decision := m.policy.Decide(server, rawName)
-			if decision != PermissionAllow {
-				return ToolResult{Output: fmt.Sprintf("MCP permission: %s", decision)}, nil
-			}
-			output, callErr := mcpClient.CallTool(ctx, rawName, in.Args)
-			if callErr != nil {
-				return ToolResult{Output: callErr.Error()}, nil
-			}
-			return ToolResult{Output: output}, nil
-		})
+		toolSpec := spec
+		if err := registry.RegisterOrReplace(ToolDefinition{
+			ToolMetadata: toolSpec.ToolMetadata,
+			Run: func(ctx context.Context, in ToolInput) (ToolResult, error) {
+				decision := m.policy.Decide(server, toolSpec.RawName)
+				if decision != PermissionAllow {
+					return ToolResult{Output: fmt.Sprintf("MCP permission: %s", decision)}, nil
+				}
+				output, callErr := client.CallTool(ctx, toolSpec.RawName, in.Args)
+				if callErr != nil {
+					return ToolResult{Output: callErr.Error()}, nil
+				}
+				return ToolResult{Output: output}, nil
+			},
+		}); err != nil {
+			return fmt.Errorf("注册 MCP 工具 %q: %w", toolSpec.Name, err)
+		}
 	}
 	return nil
 }
 
 func (m *MCPManager) RegisterConnectTool(registry *ToolRegistry) {
-	registry.RegisterWithPermission("connect_mcp", PermissionReadDiff, func(ctx context.Context, in ToolInput) (ToolResult, error) {
-		name, ok := in.Args["name"].(string)
-		if !ok || strings.TrimSpace(name) == "" {
-			return ToolResult{Output: "MCP error: connect_mcp requires string argument name"}, nil
-		}
-		output, err := m.Connect(ctx, name)
-		if err != nil {
-			return ToolResult{Output: err.Error()}, nil
-		}
-		if err := m.RegisterClientTools(registry, name); err != nil {
-			return ToolResult{Output: "MCP error: register discovered tools: " + err.Error()}, nil
-		}
-		return ToolResult{Output: output}, nil
+	registry.MustRegister(ToolDefinition{
+		ToolMetadata: ToolMetadata{
+			Name: "connect_mcp", Description: "连接宿主注册的 MCP server，并动态发现其工具",
+			InputSchema: objectSchema("name"), Permission: PermissionReadDiff,
+		},
+		Run: func(ctx context.Context, in ToolInput) (ToolResult, error) {
+			name, ok := in.Args["name"].(string)
+			if !ok || strings.TrimSpace(name) == "" {
+				return ToolResult{Output: "MCP error: connect_mcp requires string argument name"}, nil
+			}
+			output, err := m.Connect(ctx, name)
+			if err != nil {
+				return ToolResult{Output: err.Error()}, nil
+			}
+			if err := m.RegisterClientTools(registry, name); err != nil {
+				return ToolResult{Output: "MCP error: register discovered tools: " + err.Error()}, nil
+			}
+			return ToolResult{Output: output}, nil
+		},
 	})
 }
 

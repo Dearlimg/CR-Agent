@@ -148,7 +148,7 @@ func reviewOnce(ctx context.Context, request specialistRunRequest, diff string) 
 		if baseSetup != nil {
 			baseSetup(h)
 		}
-		h.tools = map[string]harnessTool{}
+		h.tools = NewToolRegistry()
 		h.System = nil
 	})
 	var repairedByTool []ReviewFinding

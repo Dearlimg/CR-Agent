@@ -72,7 +72,7 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		setup(harness)
 	} else {
 		// Summaries and memory extraction do not need side-effecting tools.
-		harness.tools = map[string]harnessTool{}
+		harness.tools = NewToolRegistry()
 	}
 	if setup, ok := ctx.Value(reviewFindingJSONToolSetupKey{}).(func(*ReviewHarness)); ok {
 		setup(harness)

@@ -29,6 +29,7 @@ CR-Agent 是一个**面向代码审查的受限 Agent 系统**，不是能任意
 | `load_skill(name)` | 按名读取 Skill 完整内容 | 只读取配置的 Skills 目录 |
 | `memory_recall(query)` | 查询与审查相关的长期记忆 | 使用项目本地 `.memory` 存储 |
 | `todo_write(items)` | 替换本次模型会话中的计划文本 | 会话局部状态，不是持久任务计划 |
+| `typecheck()` | 编译 PR 固定 head 的 Go module | E2B 沙箱固定执行 `go build ./...`；要求固定 PR head、根目录 `go.mod` 和 Go 运行时；不运行仓库测试，也不接收模型命令 |
 | `background_check(check)` | 异步读取已完成的前置检查结果并通知会话 | 不会重新执行静态检查；对已有结果做后台转交 |
 | `create_task(subject)`、`list_tasks()` | 创建、列出本会话子任务 | 模型只能列出本会话创建并登记所有权的任务 |
 | `get_task(task_id)`、`claim_task(task_id)`、`complete_task(task_id)` | 查询、认领、完成本会话子任务 | 不能操作其他会话任务 |
@@ -38,7 +39,11 @@ CR-Agent 是一个**面向代码审查的受限 Agent 系统**，不是能任意
 
 `load_skill`、`memory_recall` 等工具虽然对模型开放，服务在调用 Agent 前也会自动加载 `code-review` Skill 并做一次记忆召回。工具调用不是审查的唯一信息来源。
 
-### 1.3 MCP 动态工具
+### 1.3 统一工具元数据
+
+`ToolMetadata` 统一描述名称、用途、JSON Schema 和权限；`ToolDefinition` 再绑定宿主 handler。AgentLoop、ReviewHarness 和 MCP 适配都使用这一结构，注册阶段编译 schema 并验证必需字段，handler 执行前完整校验参数；外部 `$ref` 不会触发资源加载。Harness 从注册表动态生成 Eino `ToolInfo`。新增模型工具可以只补定义和 handler，由现有分发器负责权限、Hook、调用结果与 trace。
+
+### 1.4 MCP 动态工具
 
 调用 `connect_mcp` 后，Harness 下一轮才会把该 server 的工具加入模型可见工具列表。名称经过规范化并加上 `mcp__<server>__<tool>` 前缀。当前工具如下：
 
@@ -51,7 +56,7 @@ CR-Agent 是一个**面向代码审查的受限 Agent 系统**，不是能任意
 
 服务端持有 MCP 权限策略。`readOnlyHint`、`destructiveHint` 只是 server 提供的元数据，不构成授权。未知的 server/tool 默认要求审批。
 
-### 1.4 模型工具池之外的内部能力
+### 1.5 模型工具池之外的内部能力
 
 这些步骤是服务端代码直接执行的，不由模型在每轮自由选择：
 
@@ -188,9 +193,11 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 | 主题 | 代码 |
 |---|---|
 | Review Job、前置流程、证据核验 | [`internal/logic/service.go`](../internal/logic/service.go) |
-| Harness 工具循环、权限调用、上下文压缩 | [`internal/logic/harness.go`](../internal/logic/harness.go) |
+| 工具元数据与宿主注册表 | [`internal/logic/agent_loop.go`](../internal/logic/agent_loop.go) |
+| Harness 工具循环、通用注册表分发、上下文压缩 | [`internal/logic/harness.go`](../internal/logic/harness.go) |
 | 当前审查会话的 Skill、Memory、Task、Cron 工具 | [`internal/logic/harness_service.go`](../internal/logic/harness_service.go) |
 | MCP server 注册、动态工具池和权限策略 | [`internal/logic/mcp.go`](../internal/logic/mcp.go) |
+| Go typecheck 沙箱命令 | [`internal/logic/sandbox_runner.go`](../internal/logic/sandbox_runner.go) |
 | Eino / DeepSeek 适配、重试与 token 截断处理 | [`internal/logic/eino_agent.go`](../internal/logic/eino_agent.go) |
 | 固定前置分析与密钥扫描 | [`internal/logic/preflight.go`](../internal/logic/preflight.go) |
 | GitHub/GitLab diff 抓取 | [`internal/logic/fetch.go`](../internal/logic/fetch.go) |
@@ -206,6 +213,9 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 - Anthropic, [Writing effective tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents)：工具选择、命名边界、结果上下文、token 效率、工具描述和 evaluation。
 - OpenAI, [Agents SDK](https://openai.github.io/openai-agents-python/) 与 [Agents SDK tools](https://openai.github.io/openai-agents-python/tools/)：工具循环、MCP、handoff、guardrails、session 与 tracing 等运行时能力。
 - OpenAI, [Guardrails](https://openai.github.io/openai-agents-python/guardrails/) 与 [Tracing](https://openai.github.io/openai-agents-python/tracing/)：工具级前后置 guardrail，以及模型/工具/handoff/guardrail trace 的组织方式。
+- CloudWeGo Eino, [`schema.ToolInfo`](https://github.com/cloudwego/eino/blob/main/schema/tool.go)：以名称、用途描述和参数 schema 向 ChatModel 提供工具契约。
+- Go JSON Schema, [`santhosh-tekuri/jsonschema/v6`](https://github.com/santhosh-tekuri/jsonschema)：实现 Draft 2020-12 等多个版本的 schema 编译和实例验证；工具注册使用该库并禁用外部资源加载。
+- Go, [`go/types`](https://pkg.go.dev/go/types)：标准库的 Go package 类型检查器；完整包集合可通过 `go/packages` 加载。本项目的 PR 检查在隔离沙箱运行 `go build ./...`，让 Go 工具链按 module 和 build tags 检查完整 package 集合。
 - LangChain, [LangGraph Persistence](https://docs.langchain.com/oss/python/langgraph/persistence)：用 thread-scoped checkpoint 支持连续性、恢复与人工介入；用长期 store 管理跨会话信息。
 - Temporal, [Durable Execution](https://docs.temporal.io/) 与 [Activities](https://docs.temporal.io/activities)：通过执行历史恢复 Workflow；外部调用拆为独立 Activity，建议幂等，并记录结果与重试状态。
 - Azure Durable Task, [Durable orchestrations](https://learn.microsoft.com/en-us/azure/durable-task/common/durable-task-orchestrations)：在 await/yield 边界持久化执行历史，恢复时重放已完成 Activity 的结果，并要求编排代码保持确定性。

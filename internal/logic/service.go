@@ -49,19 +49,26 @@ func NewServiceWithRuntime(store dao.Store, cfg Config, repositories RuntimeRepo
 	_ = mcp.RegisterServer("docs", newDocsMCPServer)
 	_ = mcp.RegisterServer("deploy", newDeployMCPServer)
 	mcp.RegisterConnectTool(registry)
-	registry.RegisterWithPermission("preflight_analysis", PermissionStaticAnalysis, func(ctx context.Context, in ToolInput) (ToolResult, error) {
-		if in.Artifacts == nil {
-			return ToolResult{}, fmt.Errorf("preflight_analysis 缺少结果接收器")
-		}
-		artifacts, err := preflightCache.Run(ctx, in.Job.Source, in.Diff)
-		if err != nil {
-			return ToolResult{}, err
-		}
-		*in.Artifacts = artifacts
-		return ToolResult{
-			Output: artifacts.TraceSummary(), CacheHit: artifacts.CacheHit,
-			ToolVersion: preflightVersion, InputDigest: artifacts.DiffDigest,
-		}, nil
+	registry.MustRegister(ToolDefinition{
+		ToolMetadata: ToolMetadata{
+			Name: "preflight_analysis", Description: "解析 diff、扫描密钥并执行确定性前置检查",
+			InputSchema: map[string]any{"type": "object", "additionalProperties": false},
+			Permission:  PermissionStaticAnalysis,
+		},
+		Run: func(ctx context.Context, in ToolInput) (ToolResult, error) {
+			if in.Artifacts == nil {
+				return ToolResult{}, fmt.Errorf("preflight_analysis 缺少结果接收器")
+			}
+			artifacts, err := preflightCache.Run(ctx, in.Job.Source, in.Diff)
+			if err != nil {
+				return ToolResult{}, err
+			}
+			*in.Artifacts = artifacts
+			return ToolResult{
+				Output: artifacts.TraceSummary(), CacheHit: artifacts.CacheHit,
+				ToolVersion: preflightVersion, InputDigest: artifacts.DiffDigest,
+			}, nil
+		},
 	})
 	record := func(jobID, traceID, tool, status, input, output, callErr string, durationMs int64) error {
 		return store.RecordToolCall(jobID, traceID, tool, status, input, output, callErr, durationMs)

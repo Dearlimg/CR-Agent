@@ -422,7 +422,7 @@ func TestReviewPromptContextPreservesCodeWhileMaskingCredentialValues(t *testing
 	var received string
 	newHarness := func() *ReviewHarness {
 		harness := newReviewHarness()
-		harness.tools = map[string]harnessTool{}
+		harness.tools = NewToolRegistry()
 		harness.Model = func(_ context.Context, messages []*schema.Message, _ []*schema.ToolInfo) (*schema.Message, error) {
 			received = messages[len(messages)-1].Content
 			return &schema.Message{Role: schema.Assistant, Content: "done"}, nil
@@ -440,5 +440,56 @@ func TestReviewPromptContextPreservesCodeWhileMaskingCredentialValues(t *testing
 	}
 	if strings.Contains(received, `+log.Printf("password=%s", password)`) {
 		t.Fatalf("non-review harness must retain conservative redaction: %q", received)
+	}
+}
+
+func TestReviewHarnessDispatchesNewToolFromSharedMetadata(t *testing.T) {
+	h := newReviewHarness()
+	var received string
+	definition := ToolDefinition{
+		ToolMetadata: ToolMetadata{
+			Name: "registered_echo", Description: "回显指定文本",
+			InputSchema: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{"value": map[string]any{"type": "string"}},
+				"required":   []string{"value"},
+			},
+			Permission: PermissionReadDiff,
+		},
+		Run: func(_ context.Context, input ToolInput) (ToolResult, error) {
+			value, err := requiredString(input.Args, "value")
+			received = value
+			return ToolResult{Output: value}, err
+		},
+	}
+	if err := h.RegisterTool(definition); err != nil {
+		t.Fatal(err)
+	}
+	round := 0
+	h.Model = func(_ context.Context, messages []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
+		round++
+		if round == 1 {
+			found := false
+			for _, info := range tools {
+				if info.Name == definition.Name && info.Desc == definition.Description && info.ParamsOneOf != nil {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("registered metadata was not exposed to the model")
+			}
+			return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{
+				testToolCall("echo-call", definition.Name, `{"value":"typed metadata"}`),
+			}}, nil
+		}
+		last := messages[len(messages)-1]
+		if last.Role != schema.Tool || last.ToolCallID != "echo-call" || last.Content != "typed metadata" {
+			t.Fatalf("registered handler result=%#v", last)
+		}
+		return &schema.Message{Role: schema.Assistant, Content: "done"}, nil
+	}
+	answer, err := h.Run(context.Background(), "try the registered tool")
+	if err != nil || answer != "done" || received != "typed metadata" {
+		t.Fatalf("answer=%q received=%q err=%v", answer, received, err)
 	}
 }

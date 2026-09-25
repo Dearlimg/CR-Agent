@@ -24,7 +24,7 @@ $env:CR_AGENT_ENV_FILE = "C:\cr-agent\.env"
 
 - **可恢复**：生产运行时将审查阶段、逐条复核游标、预算预留、评论、Todo、trace 和工具调用写入 MySQL；服务重启后从最近完成的阶段继续。
 - **可观测**：每条评论带 `trace_id`，任务返回工具、脱敏输入、输出和时间戳。
-- **可扩展**：`ToolRegistry.Register("name", tool)` 声明式注册工具，不修改主流程。
+- **可扩展**：宿主循环、ReviewHarness 和 MCP 共享 `ToolMetadata` 与 `ToolDefinition`；注册时编译并校验 JSON Schema、权限和 handler，执行前验证参数，新增模型工具只需注册定义与 handler。
 - **预算**：按人民币控制每次审查的总模型费用；请求可传 `budget_yuan`，默认读取 `REVIEW_BUDGET_YUAN`（默认 ¥10）。每次模型请求按返回的输入/输出 token 和模型单价计费，并在请求前预留估算额度；超出上限后停止后续调用。方案和边界见 [`docs/token-budget-design.md`](docs/token-budget-design.md)。
 - **安全**：在本地原始 diff 上扫描疑似凭据，再向模型提供脱敏 diff；PR 测试只在配置的 E2B 远端沙箱运行，不在 CR-Agent 宿主执行。
 - **按需 Skills**：启动时仅扫描 `skills/*/SKILL.md` 的名称和描述；审查任务会记录并加载 `code-review` 的完整指令，再交给主审查 Agent 或专项 Agent。
@@ -40,6 +40,8 @@ Trace 的 `origin` 区分编排调用和模型工具调用，`cache_hit` 表示�
 ## 沙箱自动测试
 
 在 `.env` 配置 `E2B_API_KEY`、`E2B_DOMAIN` 和 `AGS_TEMPLATE` 后，GitHub PR 审查会从 PR 的固定 head SHA 下载完整源码，并在腾讯云 E2B 兼容沙箱中识别并运行 Go、Python、Node.js、Rust、Maven 或 Gradle 测试入口。默认单次测试上限为 600 秒，可用 `E2B_TEST_TIMEOUT_SECONDS` 调低；Docker 镜像会安装与已验证示例一致的 Python E2B SDK（版本见 `requirements-sandbox.txt`），本地运行需先安装该依赖，并可用 `E2B_PYTHON_EXECUTABLE` 指向对应解释器。
+
+ReviewHarness 还提供按需 `typecheck` 工具：当审查来源是 GitHub PR 且固定 head 包含根目录 `go.mod` 时，模型可请求 E2B 沙箱执行固定命令 `go build ./...`。该工具只编译 Go packages，不运行仓库测试，也不接收模型生成的命令参数；沙箱模板需要安装 Go。无 PR 固定 head、没有 Go module 或未配置 E2B 时会明确返回 `not_run`。
 
 沙箱工具模板需要包含对应项目的语言运行时；项目依赖不会由 CR-Agent 自动安装。模板缺少运行时、源码包超过安全大小限制、来源不是 GitHub PR 或没有可识别的测试入口时，审查结果会明确显示 `incomplete` 或 `not_run`；pytest 在测试收集阶段中断也会显示为 `incomplete`，不会计为测试用例已运行。测试日志限长并记录在 `automated_tests` trace；测试 API Key 不会传入 PR 测试进程，沙箱在执行结束后会尝试销毁。`AGS_TEMPLATE` 使用控制台的沙箱工具名称，工具 ID 仅供控制台识别。
 

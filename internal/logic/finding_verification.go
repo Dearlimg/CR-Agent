@@ -56,7 +56,7 @@ func verifyFindingIndependently(ctx context.Context, request findingVerification
 	if request.SourceSnapshot != nil {
 		toolGuidance = reviewContextToolSystemGuidance
 		verifyCtx = context.WithValue(verifyCtx, harnessSetupKey{}, func(h *ReviewHarness) {
-			h.tools = map[string]harnessTool{}
+			h.tools = NewToolRegistry()
 			h.addArchiveTool()
 			h.Policy = request.Policy
 			h.MaxToolRounds = 3

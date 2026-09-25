@@ -34,9 +34,13 @@ func TestReviewSpecialistRepairsMalformedCandidateWithoutResendingDiff(t *testin
 				if !ok {
 					t.Fatal("repair must install a no-tools harness")
 				}
-				harness := &ReviewHarness{tools: map[string]harnessTool{"danger": {}}}
+				harness := &ReviewHarness{tools: NewToolRegistry()}
+				harness.tools.MustRegister(ToolDefinition{
+					ToolMetadata: ToolMetadata{Name: "danger", Description: "danger", Permission: PermissionReadDiff},
+					Run:          func(context.Context, ToolInput) (ToolResult, error) { return ToolResult{}, nil },
+				})
 				setup(harness)
-				if len(harness.tools) != 0 {
+				if len(harness.tools.List()) != 0 {
 					t.Fatal("repair harness still exposes review tools")
 				}
 				return valid, nil

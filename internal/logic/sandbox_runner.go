@@ -47,6 +47,62 @@ type sandboxRunnerResponse struct {
 	Output  string `json:"output"`
 }
 
+type goTypecheckToolResult struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Output  string `json:"output,omitempty"`
+}
+
+func typecheckToolResult(result sandboxTestResult) goTypecheckToolResult {
+	return goTypecheckToolResult{
+		Status: result.Status, Message: redactReviewInput(result.Message),
+		Output: clipSandboxOutput(redactReviewInput(result.Output)),
+	}
+}
+
+func runE2BGoTypecheck(ctx context.Context, cfg Config, archive []byte) sandboxTestResult {
+	files, err := reviewSourceArchiveFiles(archive)
+	if err != nil {
+		return sandboxTestResult{Status: "incomplete", Message: "无法读取固定 head 源码，Go 类型检查未完成。"}
+	}
+	if _, hasModule := files["go.mod"]; !hasModule {
+		return sandboxTestResult{Status: "not_run", Message: "固定 head 根目录没有 go.mod，Go 类型检查不适用。"}
+	}
+	hasGoSource := false
+	for path := range files {
+		if strings.HasSuffix(path, ".go") {
+			hasGoSource = true
+			break
+		}
+	}
+	if !hasGoSource {
+		return sandboxTestResult{Status: "not_run", Message: "固定 head 中没有 Go 源文件，Go 类型检查不适用。"}
+	}
+	if strings.TrimSpace(cfg.E2BAPIKey) == "" {
+		return sandboxTestResult{Status: "not_run", Message: "未配置 E2B_API_KEY，Go 类型检查未运行。"}
+	}
+	result := runE2BSandboxTests(ctx, cfg, archive, []sandboxTestCommand{goTypecheckCommand()})
+	switch result.Status {
+	case "passed":
+		if !result.Ran {
+			result.Status = "incomplete"
+			result.Message = "沙箱没有执行 Go 编译，类型检查结果未完成。"
+		} else {
+			result.Message = "Go module 编译通过。"
+		}
+	case "failed":
+		result.Message = "Go module 编译失败；请依据输出定位类型或构建错误。"
+	default:
+		result.Status = "incomplete"
+		result.Message = "Go module 编译未能完成。"
+	}
+	return result
+}
+
+func goTypecheckCommand() sandboxTestCommand {
+	return sandboxTestCommand{Name: "Go typecheck", Args: []string{"go", "build", "./..."}}
+}
+
 func (s *Service) runSandboxTests(
 	ctx context.Context,
 	job *model.ReviewJob,

@@ -10,17 +10,10 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
-	"github.com/eino-contrib/jsonschema"
 )
 
 // HarnessModel performs one inference only. Retries must never replay handlers.
 type HarnessModel func(context.Context, []*schema.Message, []*schema.ToolInfo) (*schema.Message, error)
-
-type harnessTool struct {
-	info       *schema.ToolInfo
-	permission Permission
-	run        MCPHandler
-}
 
 // ReviewHarness is conversation-local; connected servers and tool history cannot
 // leak between concurrent specialist or lead conversations.
@@ -42,7 +35,7 @@ type ReviewHarness struct {
 	MaxRounds        int
 	MaxToolRounds    int
 	MaxStalledRounds int
-	tools            map[string]harnessTool
+	tools            *ToolRegistry
 	archives         map[string]string
 }
 
@@ -64,7 +57,7 @@ func newReviewHarness() *ReviewHarness {
 	h := &ReviewHarness{
 		MCP: mcp, Hooks: NewHookBus(), Policy: DefaultPermissionPolicy(),
 		MaxRounds: 16,
-		tools:     map[string]harnessTool{},
+		tools:     NewToolRegistry(),
 		archives:  map[string]string{},
 	}
 	h.add("connect_mcp", "连接宿主注册的 MCP server；docs/deploy 均为模拟服务", objectSchema("name"),
@@ -135,27 +128,36 @@ func (h *ReviewHarness) addWithPermission(
 	permission Permission,
 	run MCPHandler,
 ) {
-	encoded, err := json.Marshal(input)
-	if err != nil {
-		panic(err)
-	} // Only host-authored schemas reach add.
-	var params jsonschema.Schema
-	if err := json.Unmarshal(encoded, &params); err != nil {
-		panic(err)
+	h.MustRegisterTool(ToolDefinition{
+		ToolMetadata: ToolMetadata{Name: name, Description: description, InputSchema: input, Permission: permission},
+		Run: func(ctx context.Context, in ToolInput) (ToolResult, error) {
+			output, err := run(ctx, in.Args)
+			return ToolResult{Output: output}, err
+		},
+	})
+}
+
+func (h *ReviewHarness) RegisterTool(definition ToolDefinition) error {
+	if h.tools == nil {
+		h.tools = NewToolRegistry()
 	}
-	h.tools[name] = harnessTool{
-		info:       &schema.ToolInfo{Name: name, Desc: description, ParamsOneOf: schema.NewParamsOneOfByJSONSchema(&params)},
-		permission: permission, run: run,
+	return h.tools.Register(definition)
+}
+
+func (h *ReviewHarness) MustRegisterTool(definition ToolDefinition) {
+	if err := h.RegisterTool(definition); err != nil {
+		panic(err)
 	}
 }
 
-func (h *ReviewHarness) pool() ([]*schema.ToolInfo, map[string]harnessTool, error) {
-	tools := make(map[string]harnessTool, len(h.tools))
-	for name, tool := range h.tools {
-		if name == "read_archive" && len(h.archives) == 0 {
+func (h *ReviewHarness) pool() ([]*schema.ToolInfo, map[string]ToolDefinition, error) {
+	definitions := h.tools.List()
+	tools := make(map[string]ToolDefinition, len(definitions))
+	for _, definition := range definitions {
+		if definition.Name == "read_archive" && len(h.archives) == 0 {
 			continue
 		}
-		tools[name] = tool
+		tools[definition.Name] = definition
 	}
 	pool, err := h.MCP.AssembleToolPool()
 	if err != nil {
@@ -165,28 +167,32 @@ func (h *ReviewHarness) pool() ([]*schema.ToolInfo, map[string]harnessTool, erro
 		if _, exists := tools[spec.Name]; exists {
 			return nil, nil, fmt.Errorf("duplicate tool %q", spec.Name)
 		}
-		encoded, err := json.Marshal(spec.InputSchema)
-		if err != nil {
+		if _, err := spec.ToolMetadata.EinoInfo(); err != nil {
 			return nil, nil, err
 		}
-		var params jsonschema.Schema
-		if err := json.Unmarshal(encoded, &params); err != nil {
-			return nil, nil, err
-		}
-		tools[spec.Name] = harnessTool{
-			info:       &schema.ToolInfo{Name: spec.Name, Desc: spec.Description, ParamsOneOf: schema.NewParamsOneOfByJSONSchema(&params)},
-			permission: spec.Permission,
-			run: func(ctx context.Context, args map[string]any) (string, error) {
-				decision := h.MCP.policy.Decide(spec.Server, spec.RawName)
+		toolSpec := spec
+		definition := ToolDefinition{
+			ToolMetadata: toolSpec.ToolMetadata,
+			Run: func(ctx context.Context, in ToolInput) (ToolResult, error) {
+				decision := h.MCP.policy.Decide(toolSpec.Server, toolSpec.RawName)
 				if decision != PermissionAllow {
-					return "", fmt.Errorf("MCP permission: %s", decision)
+					return ToolResult{}, fmt.Errorf("MCP permission: %s", decision)
 				}
 				h.MCP.mu.RLock()
-				client := h.MCP.clients[spec.Server]
+				client := h.MCP.clients[toolSpec.Server]
 				h.MCP.mu.RUnlock()
-				return client.CallTool(ctx, spec.RawName, args)
+				if client == nil {
+					return ToolResult{}, fmt.Errorf("MCP server 未连接: %q", toolSpec.Server)
+				}
+				output, err := client.CallTool(ctx, toolSpec.RawName, in.Args)
+				return ToolResult{Output: output}, err
 			},
 		}
+		definition.inputValidator, err = definition.compileInputSchema()
+		if err != nil {
+			return nil, nil, fmt.Errorf("MCP 工具 %q 的输入 schema 无效: %w", toolSpec.Name, err)
+		}
+		tools[toolSpec.Name] = definition
 	}
 	names := make([]string, 0, len(tools))
 	for name := range tools {
@@ -195,7 +201,11 @@ func (h *ReviewHarness) pool() ([]*schema.ToolInfo, map[string]harnessTool, erro
 	sort.Strings(names)
 	infos := make([]*schema.ToolInfo, 0, len(names))
 	for _, name := range names {
-		infos = append(infos, tools[name].info)
+		info, err := tools[name].ToolMetadata.EinoInfo()
+		if err != nil {
+			return nil, nil, err
+		}
+		infos = append(infos, info)
 	}
 	return infos, tools, nil
 }
@@ -247,7 +257,7 @@ func (h *ReviewHarness) Run(ctx context.Context, prompt string) (string, error) 
 		stallBudgetReached := h.MaxStalledRounds > 0 && stalledRounds >= h.MaxStalledRounds
 		toolsExhausted := toolBudgetReached || stallBudgetReached
 		infos := []*schema.ToolInfo{}
-		var handlers map[string]harnessTool
+		var handlers map[string]ToolDefinition
 		if !toolsExhausted {
 			infos, handlers, err = h.pool()
 			if err != nil {
@@ -358,10 +368,10 @@ func (h *ReviewHarness) Run(ctx context.Context, prompt string) (string, error) 
 	return "", fmt.Errorf("harness 超过最大模型轮数 %d，任务未完成", limit)
 }
 
-func (h *ReviewHarness) execute(ctx context.Context, call schema.ToolCall, tools map[string]harnessTool) string {
+func (h *ReviewHarness) execute(ctx context.Context, call schema.ToolCall, tools map[string]ToolDefinition) string {
 	started := time.Now()
 	tool, exists := tools[call.Function.Name]
-	payload := HookContext{Tool: call.Function.Name, Permission: tool.permission, Reason: redact(call.Function.Arguments)}
+	payload := HookContext{Tool: call.Function.Name, Permission: tool.Permission, Reason: redact(call.Function.Arguments)}
 	output, err := func() (output string, err error) {
 		defer func() {
 			if recover() != nil {
@@ -382,9 +392,9 @@ func (h *ReviewHarness) execute(ctx context.Context, call schema.ToolCall, tools
 		if args == nil {
 			return "", fmt.Errorf("工具参数不能为空")
 		}
-		decision := h.Policy.Decide(tool.permission)
+		decision := h.Policy.Decide(tool.Permission)
 		if decision != PermissionAllow {
-			blocked := permissionError(call.Function.Name, tool.permission, decision)
+			blocked := permissionError(call.Function.Name, tool.Permission, decision)
 			payload.Error = blocked
 			h.Hooks.Emit(ctx, HookPermissionDenied, payload)
 			return "", blocked
@@ -392,7 +402,11 @@ func (h *ReviewHarness) execute(ctx context.Context, call schema.ToolCall, tools
 		if pre := h.Hooks.Emit(ctx, HookPreToolUse, payload); pre.Error != nil {
 			return "", pre.Error
 		}
-		return tool.run(ctx, args)
+		if err := tool.ValidateArguments(args); err != nil {
+			return "", fmt.Errorf("工具参数类型检查失败: %w", err)
+		}
+		result, err := tool.Run(ctx, ToolInput{Args: args})
+		return result.Output, err
 	}()
 	status := "succeeded"
 	ended := time.Now()

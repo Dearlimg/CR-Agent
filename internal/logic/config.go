@@ -58,6 +58,11 @@ type Config struct {
 	DeepSeekModel             string
 	GitHubToken               string
 	GitHubAPIBase             string
+	E2BAPIKey                 string
+	E2BDomain                 string
+	E2BTemplate               string
+	E2BPythonExecutable       string
+	E2BTestTimeoutSeconds     int
 	MySQLDSN                  string
 	RedisAddr                 string
 	RedisPassword             string
@@ -80,6 +85,7 @@ func LoadConfig() Config {
 			budgetYuan = float64(legacyCents) / 100
 		}
 	}
+	e2bTemplate := b("AGS_TEMPLATE", b("E2B_TEMPLATE", "code-2r1619ay8pi"))
 	return Config{
 		Port:                      b("PORT", "8080"),
 		PersistenceMode:           b("PERSISTENCE_MODE", "mysql"),
@@ -111,6 +117,11 @@ func LoadConfig() Config {
 		DeepSeekModel:             b("DEEPSEEK_MODEL", "deepseek-v4-pro"),
 		GitHubToken:               b("GITHUB_TOKEN", ""),
 		GitHubAPIBase:             b("GITHUB_API_BASE", "https://api.github.com"),
+		E2BAPIKey:                 strings.TrimSpace(b("E2B_API_KEY", "")),
+		E2BDomain:                 strings.TrimSpace(b("E2B_DOMAIN", "ap-shanghai.tencentags.com")),
+		E2BTemplate:               strings.TrimSpace(e2bTemplate),
+		E2BPythonExecutable:       strings.TrimSpace(b("E2B_PYTHON_EXECUTABLE", "")),
+		E2BTestTimeoutSeconds:     intEnv(b, "E2B_TEST_TIMEOUT_SECONDS", 600),
 		MySQLDSN:                  b("MYSQL_DSN", ""),
 		RedisAddr:                 b("REDIS_ADDR", "127.0.0.1:6379"),
 		RedisPassword:             b("REDIS_PASSWORD", ""),

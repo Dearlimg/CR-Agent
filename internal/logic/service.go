@@ -363,6 +363,12 @@ func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req mod
 	}
 
 	initialSourceSnapshot := s.prepareFirstPassReviewSource(ctx, j, recorder)
+	testResult := s.runSandboxTests(ctx, j, initialSourceSnapshot, recorder)
+	j.ReviewScope.TestsRan = testResult.Ran
+	updateReviewCheck(&j.ReviewScope, "automated_tests", testResult.Status, testResult.Message)
+	promptContext.Evidence += fmt.Sprintf("\n\nautomated_tests: %s; %s", testResult.Status, testResult.Message)
+	recorder.Flush()
+	_ = s.Store.Save(j)
 	promptContext.SourceContextAvailable = initialSourceSnapshot != nil
 	reviewCtx := withReviewSourceSnapshot(ctx, initialSourceSnapshot)
 	reviewCtx, flushHarness := s.withReviewHarness(reviewCtx, j, artifacts.SanitizedDiff, *artifacts)

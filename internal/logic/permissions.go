@@ -15,6 +15,7 @@ const (
 	PermissionLLMInference   Permission = "llm_inference"
 	PermissionRepositoryRead Permission = "repository_read"
 	PermissionRepositoryExec Permission = "repository_exec"
+	PermissionSandboxExec    Permission = "sandbox_exec"
 	PermissionPublishReview  Permission = "publish_review"
 	PermissionManageSchedule Permission = "manage_schedule"
 )
@@ -32,7 +33,7 @@ type PermissionPolicy struct {
 }
 
 func DefaultPermissionPolicy() *PermissionPolicy {
-	p := &PermissionPolicy{grants: map[Permission]PermissionDecision{PermissionReadDiff: PermissionAllow, PermissionNetworkFetch: PermissionAllow, PermissionStaticAnalysis: PermissionAllow, PermissionLLMInference: PermissionAllow, PermissionRepositoryRead: PermissionAllow, PermissionRepositoryExec: PermissionRequireApproval, PermissionPublishReview: PermissionRequireApproval}}
+	p := &PermissionPolicy{grants: map[Permission]PermissionDecision{PermissionReadDiff: PermissionAllow, PermissionNetworkFetch: PermissionAllow, PermissionStaticAnalysis: PermissionAllow, PermissionLLMInference: PermissionAllow, PermissionRepositoryRead: PermissionAllow, PermissionSandboxExec: PermissionAllow, PermissionRepositoryExec: PermissionRequireApproval, PermissionPublishReview: PermissionRequireApproval}}
 	p.grants[PermissionManageSchedule] = PermissionRequireApproval
 	if raw := os.Getenv("AGENT_DENY_PERMISSIONS"); raw != "" {
 		for _, v := range strings.Split(raw, ",") {

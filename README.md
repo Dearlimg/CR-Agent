@@ -17,7 +17,7 @@ go run ./cmd/server
 - **可观测**：每条评论带 `trace_id`，任务返回工具、脱敏输入、输出和时间戳。
 - **可扩展**：`ToolRegistry.Register("name", tool)` 声明式注册工具，不修改主流程。
 - **预算**：按人民币控制每次审查的总模型费用；请求可传 `budget_yuan`，默认读取 `REVIEW_BUDGET_YUAN`（默认 ¥10）。每次模型请求按返回的输入/输出 token 和模型单价计费，并在请求前预留估算额度；超出上限后停止后续调用。方案和边界见 [`docs/token-budget-design.md`](docs/token-budget-design.md)。
-- **安全**：在本地原始 diff 上扫描疑似凭据，再向模型提供脱敏 diff；不执行仓库代码，配置只来自环境变量。
+- **安全**：在本地原始 diff 上扫描疑似凭据，再向模型提供脱敏 diff；PR 测试只在配置的 E2B 远端沙箱运行，不在 CR-Agent 宿主执行。
 - **按需 Skills**：启动时仅扫描 `skills/*/SKILL.md` 的名称和描述；审查任务会记录并加载 `code-review` 的完整指令，再交给主审查 Agent 或专项 Agent。
 
 ## 前置检查与复用
@@ -27,6 +27,12 @@ go run ./cmd/server
 `syntax_check` 和 `format_check` 只对完整的新建 Go 文件分别运行解析与 `gofmt` 检查；修改过的文件缺少仓库上下文时明确标为 `not_run`。`static_check` 只统计新增行的 TODO 和 `panic(` 字符串提示，不把它们直接当作缺陷。依赖变更按文件路径识别。最终 finding 必须落在实际新增行，服务再统一归一化并去重。
 
 Trace 的 `origin` 区分编排调用和模型工具调用，`cache_hit` 表示解析结果复用；界面分别展示这两类调用与缓存命中。
+
+## 沙箱自动测试
+
+在 `.env` 配置 `E2B_API_KEY`、`E2B_DOMAIN` 和 `AGS_TEMPLATE` 后，GitHub PR 审查会从 PR 的固定 head SHA 下载完整源码，并在腾讯云 E2B 兼容沙箱中识别并运行 Go、Python、Node.js、Rust、Maven 或 Gradle 测试入口。默认单次测试上限为 600 秒，可用 `E2B_TEST_TIMEOUT_SECONDS` 调低；Docker 镜像会安装与已验证示例一致的 Python E2B SDK（版本见 `requirements-sandbox.txt`），本地运行需先安装该依赖，并可用 `E2B_PYTHON_EXECUTABLE` 指向对应解释器。
+
+沙箱工具模板需要包含对应项目的语言运行时；项目依赖不会由 CR-Agent 自动安装。模板缺少运行时、源码包超过安全大小限制、来源不是 GitHub PR 或没有可识别的测试入口时，审查结果会明确显示 `incomplete` 或 `not_run`。测试日志限长并记录在 `automated_tests` trace；测试 API Key 不会传入 PR 测试进程，沙箱在执行结束后会尝试销毁。`AGS_TEMPLATE` 使用控制台的沙箱工具名称，工具 ID 仅供控制台识别。
 
 ## Skills
 

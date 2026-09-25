@@ -85,12 +85,12 @@ func verifiedComments(findings []ReviewFinding, artifacts ReviewArtifacts, trace
 		for _, line := range file.AddedLines {
 			lines[line] = true
 		}
-		changed[file.Path] = lines
+		changed[normalizeReviewFilePath(file.Path)] = lines
 	}
 	seen := map[string]bool{}
 	out := []model.ReviewComment{}
 	for _, finding := range findings {
-		file := strings.TrimSpace(finding.File)
+		file := normalizeReviewFilePath(strings.TrimSpace(finding.File))
 		body := strings.TrimSpace(finding.Body)
 		if !changed[file][finding.Line] || body == "" {
 			continue

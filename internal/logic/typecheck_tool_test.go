@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -38,36 +37,20 @@ func TestGoTypecheckRequiresModuleAndConfiguredSandbox(t *testing.T) {
 	}
 }
 
-func TestHarnessRegistersTypecheckWithSandboxPermission(t *testing.T) {
+func TestHarnessDoesNotRegisterSandboxTypecheck(t *testing.T) {
 	root := t.TempDir()
 	service := NewService(dao.NewJobStore(filepath.Join(root, "jobs")), Config{
 		SkillsDir: "../../skills", MemoryDir: filepath.Join(root, "memory"),
 		TasksDir: filepath.Join(root, "tasks"), BackgroundTasksDir: filepath.Join(root, "background"),
 		TeamMailboxDir: filepath.Join(root, "team"), CronFile: filepath.Join(root, "cron.json"),
-		E2BAPIKey: "configured-for-test",
 	})
 	job := &model.ReviewJob{ID: "typecheck-tool", Source: "inline", Trace: []model.TraceEvent{}}
 	ctx, flush := service.withReviewHarness(context.Background(), job, "diff")
 	defer flush()
 	harness := newReviewHarness()
 	ctx.Value(harnessSetupKey{}).(func(*ReviewHarness))(harness)
-	definition, ok := harness.tools.Get("typecheck")
-	if !ok {
-		t.Fatal("typecheck was not registered in the model tool registry")
-	}
-	if definition.Permission != PermissionSandboxExec || definition.InputSchema["type"] != "object" {
-		t.Fatalf("typecheck metadata=%#v", definition.ToolMetadata)
-	}
-	result, err := definition.Run(ctx, ToolInput{Args: map[string]any{}})
-	if err != nil {
-		t.Fatalf("run typecheck without a PR snapshot: %v", err)
-	}
-	var output goTypecheckToolResult
-	if err := json.Unmarshal([]byte(result.Output), &output); err != nil {
-		t.Fatalf("decode typecheck output %q: %v", result.Output, err)
-	}
-	if output.Status != "not_run" || !strings.Contains(output.Message, "PR 固定 head") {
-		t.Fatalf("typecheck without a PR snapshot=%#v", output)
+	if _, ok := harness.tools.Get("typecheck"); ok {
+		t.Fatal("sandbox typecheck must stay disabled in review tools")
 	}
 }
 

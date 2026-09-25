@@ -90,29 +90,6 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 				records, err := s.MemoryStore.Recall(query)
 				return renderMemories(records), err
 			})
-		h.addWithPermission("typecheck", "在隔离沙箱中编译 PR 固定 head 的 Go module；不会运行仓库测试", map[string]any{
-			"type": "object", "additionalProperties": false,
-		}, PermissionSandboxExec, func(toolCtx context.Context, _ map[string]any) (string, error) {
-			result := sandboxTestResult{Status: "not_run", Message: "Go 类型检查未运行。"}
-			if strings.TrimSpace(s.Config.E2BAPIKey) == "" {
-				result.Message = "未配置 E2B_API_KEY，Go 类型检查未运行。"
-				return jsonString(typecheckToolResult(result)), nil
-			}
-			if sourceSnapshot == nil || sourceSnapshot.headSHA == "" {
-				result.Message = "当前审查没有 PR 固定 head，无法检查完整 Go module。"
-				return jsonString(typecheckToolResult(result)), nil
-			}
-			if err := reviewSourcePermissionError(s.Loop.Policy, "typecheck"); err != nil {
-				return "", err
-			}
-			archive, err := downloadReviewSourceArchive(toolCtx, sourceSnapshot)
-			if err != nil {
-				result = sandboxTestResult{Status: "incomplete", Message: redactReviewInput(err.Error())}
-				return jsonString(typecheckToolResult(result)), nil
-			}
-			result = runE2BGoTypecheck(toolCtx, s.Config, archive)
-			return jsonString(typecheckToolResult(result)), nil
-		})
 		if sourceSnapshot != nil {
 			h.addWithPermission(
 				reviewContextToolName,

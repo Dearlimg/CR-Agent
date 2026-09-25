@@ -80,15 +80,15 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 	harness.Model = func(ctx context.Context, messages []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
 		modelRound := nextRound()
 		retryCount := 0
-		return generateWithinLengthBudget(messages, outputBudget, func(input []*schema.Message, budget int) (*schema.Message, error) {
+		return generateReviewWithinLengthBudget(messages, outputBudget, tools, func(input []*schema.Message, budget int, allowedTools []*schema.ToolInfo) (*schema.Message, error) {
 			return generateReviewModelRequest(ctx, cfg, router, reviewModelRequest{
 				retryCount:  &retryCount,
 				traceName:   "review_model",
 				round:       modelRound,
 				budget:      budget,
 				messages:    input,
-				tools:       tools,
-				inputTokens: estimateModelInputTokens(input, tools),
+				tools:       allowedTools,
+				inputTokens: estimateModelInputTokens(input, allowedTools),
 			})
 		})
 	}
@@ -143,6 +143,72 @@ func generateWithinLengthBudget(
 		return nil, fmt.Errorf("模型输出达到 token 上限，精简重答仍被截断")
 	}
 	return reply, nil
+}
+
+func generateReviewWithinLengthBudget(
+	messages []*schema.Message,
+	budget int,
+	tools []*schema.ToolInfo,
+	generate func([]*schema.Message, int, []*schema.ToolInfo) (*schema.Message, error),
+) (*schema.Message, error) {
+	initial := func(input []*schema.Message, tokenBudget int) (*schema.Message, error) {
+		return generate(input, tokenBudget, tools)
+	}
+	fallback := func(input []*schema.Message, tokenBudget int) (*schema.Message, error) {
+		if tokenBudget > 4096 {
+			tokenBudget = 4096
+		}
+		return generate(input, tokenBudget, nil)
+	}
+	return generateWithinLengthBudgetFallback(messages, budget, initial, fallback)
+}
+
+func generateWithinLengthBudgetFallback(
+	messages []*schema.Message,
+	budget int,
+	initialGenerate func([]*schema.Message, int) (*schema.Message, error),
+	fallbackGenerate func([]*schema.Message, int) (*schema.Message, error),
+) (*schema.Message, error) {
+	reply, err := initialGenerate(messages, budget)
+	if err != nil {
+		return nil, err
+	}
+	if reply == nil {
+		return nil, fmt.Errorf("模型返回空响应")
+	}
+	if reply.ResponseMeta == nil || reply.ResponseMeta.FinishReason != "length" {
+		return reply, nil
+	}
+
+	for _, recovery := range []struct {
+		findings int
+		tokens   int
+	}{
+		{findings: 5, tokens: 4096},
+		{findings: 2, tokens: 2048},
+	} {
+		concise := &schema.Message{
+			Role: schema.User,
+			Content: fmt.Sprintf("上一轮输出被长度限制截断。请不要调用工具，直接给出精简的最终结论。最多保留 %d 条证据充分、优先级最高的问题；没有充分证据时输出 []。", recovery.findings) +
+				"只输出 JSON 数组，每项包含 file、line、severity、confidence、body、evidence、trigger、impact、suggestion 字段。",
+		}
+		input := append(append([]*schema.Message{}, messages...), concise)
+		tokenBudget := min(budget, recovery.tokens)
+		reply, err = fallbackGenerate(input, tokenBudget)
+		if err != nil {
+			return nil, err
+		}
+		if reply == nil {
+			return nil, fmt.Errorf("模型返回空响应")
+		}
+		if len(reply.ToolCalls) > 0 {
+			return nil, fmt.Errorf("模型在禁止工具的精简重答中仍请求工具调用")
+		}
+		if reply.ResponseMeta == nil || reply.ResponseMeta.FinishReason != "length" {
+			return reply, nil
+		}
+	}
+	return nil, fmt.Errorf("模型输出达到 token 上限，精简重答两轮仍被截断")
 }
 
 // A request span contains provider metadata only; prompts, replies and raw

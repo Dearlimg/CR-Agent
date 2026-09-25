@@ -32,13 +32,7 @@ function sample() {
     review_scope: {
       files_reviewed: 3,
       added_lines: 323,
-      tests_ran: false,
       checks: [
-        {
-          name: "automated_tests",
-          status: "not_run",
-          message: "示例未运行自动化测试",
-        },
         {
           name: "finding_verification",
           status: "passed",

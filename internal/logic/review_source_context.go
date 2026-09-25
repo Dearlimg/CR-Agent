@@ -20,9 +20,9 @@ import (
 
 const (
 	reviewSourceMaxFiles       = 16
-	reviewSourceMaxFileBytes   = 256 << 10
+	reviewSourceMaxFileBytes   = 1 << 20
 	reviewSourceMaxTotalBytes  = 1 << 20
-	reviewSourceResponseBytes  = 512 << 10
+	reviewSourceResponseBytes  = 2 << 20
 	reviewSourceMetadataBytes  = 64 << 10
 	reviewSourceTotalTimeout   = 20 * time.Second
 	reviewSourceRequestTimeout = 8 * time.Second

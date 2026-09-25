@@ -152,8 +152,6 @@ func (s *Service) runCheckpointed(
 	if checkpointReached(checkpoint, reviewStageContext) {
 		initialSourceSnapshot = restoreSnapshotFromCheckpoint(job.Source, s.Config, checkpoint.InitialSource)
 		promptContext = checkpoint.PromptContext
-		job.ReviewScope.TestsRan = checkpoint.Tests.Ran
-		updateReviewCheck(&job.ReviewScope, "automated_tests", checkpoint.Tests.Status, checkpoint.Tests.Message)
 	} else {
 		if decision := s.Loop.Policy.Decide(PermissionLLMInference); decision != PermissionAllow {
 			setReviewFailure(job, permissionError("subagent_review", PermissionLLMInference, decision),
@@ -195,14 +193,9 @@ func (s *Service) runCheckpointed(
 			Evidence:     redactReviewInput(artifacts.PromptSummary()),
 		}
 		initialSourceSnapshot = s.prepareFirstPassReviewSource(ctx, job, recorder)
-		checkpoint.Tests = s.runSandboxTests(ctx, job, initialSourceSnapshot, recorder)
-		job.ReviewScope.TestsRan = checkpoint.Tests.Ran
-		updateReviewCheck(&job.ReviewScope, "automated_tests", checkpoint.Tests.Status, checkpoint.Tests.Message)
-		promptContext.Evidence += fmt.Sprintf("\n\nautomated_tests: %s; %s", checkpoint.Tests.Status, redactReviewInput(checkpoint.Tests.Message))
 		promptContext.SourceContextAvailable = initialSourceSnapshot != nil
 		checkpoint.PromptContext = promptContext
 		checkpoint.InitialSource = snapshotForCheckpoint(initialSourceSnapshot)
-		checkpoint.Tests.Output = ""
 		if err := saveCheckpoint(reviewStageContext); err != nil {
 			setReviewFailure(job, err, "审查上下文持久化失败")
 			return
@@ -439,9 +432,6 @@ func reviewScopeFromArtifacts(artifacts ReviewArtifacts) model.ReviewScope {
 			Name: check.Name, Status: check.Status, Message: check.Message,
 		})
 	}
-	scope.Checks = append(scope.Checks, model.ReviewCheck{
-		Name: "automated_tests", Status: "not_run", Message: "本次审查流程未运行自动化测试",
-	})
 	return scope
 }
 

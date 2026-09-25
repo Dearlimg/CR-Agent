@@ -2,6 +2,9 @@ function closeStream() {
   stream?.close();
   stream = null;
 }
+function isHiddenSandboxEvent(event) {
+  return event.tool === "automated_tests" || event.tool === "typecheck";
+}
 function showTab(name) {
   for (const n of ["trajectory", "conversation", "findings"])
     $(n).hidden = n !== name;
@@ -37,7 +40,7 @@ function remember() {
   historyRender();
 }
 function metrics() {
-  const trace = job?.trace || [];
+  const trace = (job?.trace || []).filter((event) => !isHiddenSandboxEvent(event));
   $("duration").textContent = wallLabel();
   for (const k of ["model", "tool"]) {
     const timed = trace.filter(
@@ -89,7 +92,7 @@ function renderTrace() {
   const all = job?.trace || [],
     visible = all
       .map((e, i) => ({ ...e, index: i }))
-      .filter((e) => e.kind !== "model_request"),
+      .filter((e) => e.kind !== "model_request" && !isHiddenSandboxEvent(e)),
     q = $("search").value.toLowerCase();
   let trace = visible
     .filter((e) =>
@@ -214,7 +217,9 @@ function renderTrace() {
 function renderOutcome() {
   if (!job || !terminal(job)) return "";
   const scope = job.review_scope || {},
-    checks = Array.isArray(scope.checks) ? scope.checks : [],
+    checks = Array.isArray(scope.checks)
+      ? scope.checks.filter((check) => check.name !== "automated_tests")
+      : [],
     outcome = job.review_outcome;
   const titles = {
     completed_no_findings: "本次审查完成：未发现需要评论的问题。",
@@ -224,13 +229,11 @@ function renderOutcome() {
     failed: "审查失败",
   };
   const title = titles[outcome] || "审查结论不可用";
-  const tests = scope.tests_ran ? "已运行" : "未运行";
   const checkNames = {
     conflict_marker_check: "冲突标记检查",
     static_check: "静态提示检查",
     syntax_check: "语法检查",
     format_check: "格式检查",
-    automated_tests: "自动化测试",
     finding_verification: "证据与第二轮复核",
   };
   const checkStatuses = {
@@ -272,9 +275,7 @@ function renderOutcome() {
     esc(scope.files_reviewed ?? 0) +
     " 个文件、" +
     esc(scope.added_lines ?? 0) +
-    " 条新增行；自动化测试：" +
-    tests +
-    "</div>" +
+    " 条新增行</div>" +
     note +
     (rows ? '<div class="outcome-checks">检查情况' + rows + "</div>" : "") +
     "</div>"

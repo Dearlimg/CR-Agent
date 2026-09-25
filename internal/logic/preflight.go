@@ -216,6 +216,7 @@ func (c *PreflightCache) Run(ctx context.Context, source, diff string) (ReviewAr
 }
 
 func analyzeDiff(diff string) preflightAnalysis {
+	diff = normalizeDiffLineEndings(diff)
 	analysis := preflightAnalysis{
 		Files:           []ChangedFile{},
 		DependencyFiles: []string{},
@@ -343,11 +344,21 @@ func passOrFail(count int) string {
 }
 
 func diffFilePath(line string) string {
+	line = strings.TrimSuffix(line, "\r")
 	match := filePattern.FindStringSubmatch(line)
 	if len(match) == 3 {
-		return redactFindingText(match[2])
+		return redactFindingText(normalizeReviewFilePath(match[2]))
 	}
-	return redactFindingText(strings.TrimPrefix(line, "diff --git "))
+	return redactFindingText(normalizeReviewFilePath(strings.TrimPrefix(line, "diff --git ")))
+}
+
+func normalizeDiffLineEndings(diff string) string {
+	diff = strings.ReplaceAll(diff, "\r\n", "\n")
+	return strings.ReplaceAll(diff, "\r", "\n")
+}
+
+func normalizeReviewFilePath(file string) string {
+	return strings.TrimRight(file, "\r\n")
 }
 
 func isDependencyFile(name string) bool {
@@ -419,6 +430,7 @@ func scanRawDiff(ctx context.Context, diff string) ([]SecretFinding, error) {
 // sanitizeDiff keeps patch headers and line prefixes intact so agents can
 // still locate changed lines after credential-bearing content is removed.
 func sanitizeDiff(diff string) string {
+	diff = normalizeDiffLineEndings(diff)
 	lines := strings.Split(diff, "\n")
 	for index, line := range lines {
 		if strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "--- ") ||

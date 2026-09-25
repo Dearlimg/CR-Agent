@@ -82,7 +82,6 @@ function reviewCheckLabel(value) {
       static_check: "静态提示检查",
       syntax_check: "语法检查",
       format_check: "格式检查",
-      automated_tests: "自动化测试",
       finding_verification: "证据与第二轮复核",
       passed: "通过",
       failed: "失败",
@@ -122,7 +121,9 @@ function reviewSeverityLabel(value) {
 
 function renderReviewMarkdown(job) {
   const scope = job.review_scope || {};
-  const checks = Array.isArray(scope.checks) ? scope.checks : [];
+  const checks = Array.isArray(scope.checks)
+    ? scope.checks.filter((check) => check.name !== "automated_tests")
+    : [];
   const comments = Array.isArray(job.comments) ? job.comments : [];
   const lines = [
     "# CR-Agent 审查报告",
@@ -141,7 +142,6 @@ function renderReviewMarkdown(job) {
     "",
     `- 文件：${scope.files_reviewed ?? 0}`,
     `- 新增行：${scope.added_lines ?? 0}`,
-    `- 自动化测试：${scope.tests_ran ? "已运行" : "未运行"}`,
     "",
     "## 检查结果",
     "",

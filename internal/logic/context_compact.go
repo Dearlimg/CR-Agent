@@ -72,19 +72,19 @@ type ContextCompactor struct {
 func NewContextCompactor(cfg Config) *ContextCompactor {
 	toolResultBudget := cfg.ToolResultBudget
 	if toolResultBudget <= 0 {
-		toolResultBudget = 200000
+		toolResultBudget = defaultToolResultBudget
 	}
 	largeResultCharLimit := cfg.LargeResultCharLimit
 	if largeResultCharLimit <= 0 {
-		largeResultCharLimit = 30000
+		largeResultCharLimit = defaultLargeResultCharLimit
 	}
 	contextCharLimit := cfg.ContextCharLimit
 	if contextCharLimit <= 0 {
-		contextCharLimit = 250000
+		contextCharLimit = defaultContextCharLimit
 	}
 	maxMessages := cfg.ContextMaxMessages
 	if maxMessages <= 0 {
-		maxMessages = 50
+		maxMessages = defaultContextMaxMessages
 	}
 	outputDir := cfg.ContextOutputDir
 	if outputDir == "" {

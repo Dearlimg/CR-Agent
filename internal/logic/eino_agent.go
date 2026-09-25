@@ -155,8 +155,8 @@ func generateReviewWithinLengthBudget(
 		return generate(input, tokenBudget, tools)
 	}
 	fallback := func(input []*schema.Message, tokenBudget int) (*schema.Message, error) {
-		if tokenBudget > 4096 {
-			tokenBudget = 4096
+		if tokenBudget > 8192 {
+			tokenBudget = 8192
 		}
 		return generate(input, tokenBudget, nil)
 	}
@@ -184,8 +184,8 @@ func generateWithinLengthBudgetFallback(
 		findings int
 		tokens   int
 	}{
-		{findings: 5, tokens: 4096},
-		{findings: 2, tokens: 2048},
+		{findings: 5, tokens: 8192},
+		{findings: 2, tokens: 4096},
 	} {
 		concise := &schema.Message{
 			Role: schema.User,

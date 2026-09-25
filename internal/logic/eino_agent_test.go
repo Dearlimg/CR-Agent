@@ -141,8 +141,12 @@ func TestEinoAgentRecordsWireUsageAcrossLengthRetry(t *testing.T) {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if request.MaxTokens != 16384 {
-			t.Errorf("max_tokens=%d, want 16384", request.MaxTokens)
+		wantMaxTokens := 16384
+		if calls == 2 {
+			wantMaxTokens = 8192
+		}
+		if request.MaxTokens != wantMaxTokens {
+			t.Errorf("max_tokens=%d, want %d", request.MaxTokens, wantMaxTokens)
 		}
 		if calls == 2 && !strings.Contains(request.Messages[len(request.Messages)-1].Content, "精简") {
 			t.Error("length retry did not request concise re-answer")

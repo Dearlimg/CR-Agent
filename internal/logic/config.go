@@ -14,8 +14,12 @@ import (
 )
 
 const (
-	defaultModelMaxOutputTokens  = 32768
-	defaultReviewMaxOutputTokens = 8192
+	defaultModelMaxOutputTokens  = 65536
+	defaultReviewMaxOutputTokens = 16384
+	defaultContextCharLimit      = 500000
+	defaultToolResultBudget      = 400000
+	defaultLargeResultCharLimit  = 60000
+	defaultContextMaxMessages    = 100
 )
 
 var quotedCredentialValuePattern = regexp.MustCompile(
@@ -106,10 +110,10 @@ func LoadConfig() (Config, error) {
 		MemoryMaxRecall:                         intEnv(b, "MEMORY_MAX_RECALL", 5),
 		MemoryMaxChars:                          intEnv(b, "MEMORY_MAX_CHARS", 6000),
 		MemoryConsolidateAt:                     intEnv(b, "MEMORY_CONSOLIDATE_AT", 10),
-		ContextCharLimit:                        intEnv(b, "CONTEXT_CHAR_LIMIT", 250000),
-		ToolResultBudget:                        intEnv(b, "TOOL_RESULT_BUDGET", 200000),
-		LargeResultCharLimit:                    intEnv(b, "LARGE_RESULT_CHAR_LIMIT", 30000),
-		ContextMaxMessages:                      intEnv(b, "CONTEXT_MAX_MESSAGES", 50),
+		ContextCharLimit:                        intEnv(b, "CONTEXT_CHAR_LIMIT", defaultContextCharLimit),
+		ToolResultBudget:                        intEnv(b, "TOOL_RESULT_BUDGET", defaultToolResultBudget),
+		LargeResultCharLimit:                    intEnv(b, "LARGE_RESULT_CHAR_LIMIT", defaultLargeResultCharLimit),
+		ContextMaxMessages:                      intEnv(b, "CONTEXT_MAX_MESSAGES", defaultContextMaxMessages),
 		ContextOutputDir:                        b("CONTEXT_OUTPUT_DIR", ".task_outputs/tool-results"),
 		ContextTranscriptDir:                    b("CONTEXT_TRANSCRIPT_DIR", ".transcripts"),
 		WorkflowDir:                             b("AGENT_WORKFLOW_DIR", ".workflows"),

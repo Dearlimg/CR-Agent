@@ -78,7 +78,7 @@ func TestTaskStoreRejectsCycles(t *testing.T) {
 	}
 }
 
-func TestReviewTaskCompletesWithReviewJob(t *testing.T) {
+func TestIncompleteReviewKeepsTaskOpenForRecovery(t *testing.T) {
 	root := t.TempDir()
 	skillDir := filepath.Join(root, "code-review")
 	if err := os.Mkdir(skillDir, 0755); err != nil {
@@ -94,8 +94,13 @@ func TestReviewTaskCompletesWithReviewJob(t *testing.T) {
 	}
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
+		updated, found := service.Store.Get(job.ID)
 		task, getErr := service.TaskStore.Get(job.TaskID)
-		if getErr == nil && task.Status == model.TaskCompleted {
+		isRecoverableFailure := updated.Status == "failed" || updated.Status == "completed_with_warnings"
+		if found && isRecoverableFailure && getErr == nil {
+			if task.Status != model.TaskInProgress {
+				t.Fatalf("failed review task status=%q, want in_progress", task.Status)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

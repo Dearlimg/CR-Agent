@@ -136,6 +136,45 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 	return job, true
 }
 
+func (s *MySQLStore) ListRecoverableReviews() ([]*model.ReviewJob, error) {
+	var rows []model.DBReviewJob
+	if err := s.db.Select("public_id").
+		Where("status IN ? AND checkpoint_json <> ''", []string{"queued", "running"}).
+		Order("created_at asc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	reviews := make([]*model.ReviewJob, 0, len(rows))
+	for _, row := range rows {
+		job, found := s.Get(row.PublicID)
+		if found {
+			reviews = append(reviews, job)
+		}
+	}
+	return reviews, nil
+}
+
+func (s *MySQLStore) TryClaimReview(id, owner string, leaseUntil time.Time) (bool, error) {
+	now := time.Now().UTC()
+	result := s.db.Model(&model.DBReviewJob{}).
+		Where(
+			"public_id = ? AND (runner_lease_until IS NULL OR runner_lease_until <= ? OR runner_owner = ?)",
+			id,
+			now,
+			owner,
+		).
+		Updates(map[string]any{
+			"runner_owner":       owner,
+			"runner_lease_until": leaseUntil.UTC(),
+		})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (s *MySQLStore) ReleaseReview(id, owner string) error {
+	return s.db.Model(&model.DBReviewJob{}).
+		Where("public_id = ? AND runner_owner = ?", id, owner).
+		Updates(map[string]any{"runner_owner": "", "runner_lease_until": nil}).Error
+}
+
 func (s *MySQLStore) GetReviewEventSnapshot(id string, afterVersion int64, afterTraceCursor uint) (*ReviewEventSnapshot, bool, error) {
 	var row model.DBReviewJob
 	err := s.db.Model(&model.DBReviewJob{}).
@@ -214,7 +253,8 @@ func (s *MySQLStore) GetTraceDetails(id, traceID string) (*model.TraceEvent, boo
 func reviewJobColumns() []string {
 	return []string{
 		"id", "public_id", "task_id", "background_task_id", "source_url", "status", "review_outcome",
-		"review_scope_json", "budget_micros", "spent_micros", "budget_cents", "spent_cents", "error_message",
+		"review_scope_json", "budget_micros", "spent_micros", "reserved_micros", "checkpoint_json",
+		"budget_cents", "spent_cents", "error_message",
 		"version", "created_at", "started_at", "finished_at", "updated_at",
 	}
 }
@@ -266,6 +306,8 @@ func reviewJobFromDB(row model.DBReviewJob) *model.ReviewJob {
 		Source:           row.SourceURL,
 		BudgetMicros:     budgetMicros,
 		SpentMicros:      spentMicros,
+		ReservedMicros:   row.ReservedMicros,
+		CheckpointJSON:   row.CheckpointJSON,
 		BudgetYuan:       model.MicrosToYuan(budgetMicros),
 		SpentYuan:        model.MicrosToYuan(spentMicros),
 		StartedAt:        *startedAt,
@@ -413,6 +455,8 @@ func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.D
 	row.ReviewScopeJSON = string(reviewScope)
 	row.BudgetMicros = reviewBudgetMicros(job)
 	row.SpentMicros = reviewSpentMicros(job)
+	row.ReservedMicros = job.ReservedMicros
+	row.CheckpointJSON = job.CheckpointJSON
 	row.ErrorMessage = job.Error
 	if !job.StartedAt.IsZero() {
 		startedAt := job.StartedAt
@@ -446,6 +490,8 @@ func (s *MySQLStore) findOrCreateJob(tx *gorm.DB, job *model.ReviewJob) (model.D
 		"review_scope_json":  row.ReviewScopeJSON,
 		"budget_micros":      row.BudgetMicros,
 		"spent_micros":       row.SpentMicros,
+		"reserved_micros":    row.ReservedMicros,
+		"checkpoint_json":    row.CheckpointJSON,
 		"error_message":      row.ErrorMessage,
 		"started_at":         row.StartedAt,
 		"finished_at":        row.FinishedAt,

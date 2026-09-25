@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,6 +28,8 @@ type Service struct {
 	Workflows      *WorkflowRuntime
 	MCP            *MCPManager
 	PreflightCache *PreflightCache
+	recoveryMu     sync.Mutex
+	recoveryCancel context.CancelFunc
 }
 
 func NewService(store dao.Store, cfg Config) *Service {
@@ -114,6 +117,10 @@ func (s *Service) Start() error {
 	if s.CronError != nil {
 		return fmt.Errorf("初始化定时任务: %w", s.CronError)
 	}
+	if err := s.recoverInterruptedReviews(); err != nil {
+		return fmt.Errorf("恢复中断的代码审查: %w", err)
+	}
+	s.startReviewRecoveryLoop()
 	if s.Cron != nil {
 		s.Cron.Start()
 	}
@@ -121,6 +128,12 @@ func (s *Service) Start() error {
 }
 
 func (s *Service) Stop() {
+	s.recoveryMu.Lock()
+	if s.recoveryCancel != nil {
+		s.recoveryCancel()
+		s.recoveryCancel = nil
+	}
+	s.recoveryMu.Unlock()
 	if s.Cron != nil {
 		s.Cron.Stop()
 	}
@@ -185,6 +198,31 @@ func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 		TeamEvents:   []model.TeamEvent{},
 	}
 	recorder := newTraceRecorder(j)
+	checkpoint := newReviewCheckpoint(req)
+	var preflightTraceID string
+	if strings.TrimSpace(req.Diff) != "" {
+		if decision := s.Loop.Policy.Decide(PermissionStaticAnalysis); decision != PermissionAllow {
+			return nil, permissionError("preflight_analysis", PermissionStaticAnalysis, decision)
+		}
+		artifacts, err := s.PreflightCache.Run(context.Background(), req.Source, req.Diff)
+		if err != nil {
+			return nil, err
+		}
+		checkpoint.Stage = reviewStagePreflight
+		checkpoint.Request = safeCheckpointRequest(req)
+		checkpoint.Diff = artifacts.SanitizedDiff
+		checkpoint.Artifacts = artifacts
+		j.ReviewScope = reviewScopeFromArtifacts(artifacts)
+		span := recorder.Start("tool", "preflight_analysis", "preflight", "解析 diff、扫描密钥并执行一次确定性检查", "")
+		span.End(TraceResult{
+			Output: artifacts.TraceSummary(), CacheHit: artifacts.CacheHit,
+			ToolVersion: preflightVersion, InputDigest: artifacts.DiffDigest,
+		})
+		preflightTraceID = span.ID()
+	}
+	if err := persistReviewCheckpoint(j, checkpoint); err != nil {
+		return nil, err
+	}
 	taskSpan := recorder.Start("input", "task_create", "task", reviewTaskSubject(req), "")
 	task, err := s.TaskStore.Create(reviewTaskSubject(req), "由 Code Review Agent 自动创建的审查任务")
 	if err != nil {
@@ -208,13 +246,13 @@ func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 	if err := s.Store.Save(j); err != nil {
 		return nil, err
 	}
-	if err := s.Background.Launch(backgroundTask.ID, func(ctx context.Context) (string, error) {
-		s.runWithTracer(ctx, j, req, recorder)
-		if j.Status != "completed" && j.Status != "completed_with_warnings" {
-			return "", fmt.Errorf("审查任务失败：%s", j.Error)
-		}
-		return fmt.Sprintf("审查任务 %s 已完成", j.ID), nil
-	}); err != nil {
+	if preflightTraceID != "" {
+		_ = s.Store.RecordToolCall(
+			j.ID, preflightTraceID, "preflight_analysis", "succeeded", "diff input",
+			"确定性前置检查已保存", "", 0,
+		)
+	}
+	if err := s.launchReview(j, req, recorder); err != nil {
 		finished := time.Now().UTC()
 		j.Status = "failed"
 		j.ReviewOutcome = "failed"
@@ -228,391 +266,6 @@ func (s *Service) Create(req model.ReviewRequest) (*model.ReviewJob, error) {
 }
 func (s *Service) run(ctx context.Context, j *model.ReviewJob, req model.ReviewRequest) {
 	s.runWithTracer(ctx, j, req, newTraceRecorder(j))
-}
-
-func (s *Service) runWithTracer(ctx context.Context, j *model.ReviewJob, req model.ReviewRequest, recorder *TraceRecorder) {
-	if recorder == nil {
-		recorder = newTraceRecorder(j)
-	}
-	ctx = withTraceRecorder(ctx, recorder)
-	meter := newReviewBudgetMeter(j, s.Config, func() error {
-		recorder.Flush()
-		j.UpdatedAt = time.Now().UTC()
-		if err := s.Store.Save(j); err != nil {
-			return fmt.Errorf("预算检查点持久化失败")
-		}
-		return nil
-	})
-	ctx = withReviewBudget(ctx, meter)
-	if j.StartedAt.IsZero() {
-		j.StartedAt = time.Now().UTC()
-	}
-	j.Status = "running"
-	j.ReviewOutcome = ""
-	j.UpdatedAt = time.Now().UTC()
-	_ = s.Store.Save(j)
-	defer func() {
-		if j.ReviewOutcome == "" {
-			if j.Status == "failed" {
-				j.ReviewOutcome = "failed"
-			} else {
-				j.ReviewOutcome = "incomplete"
-			}
-		}
-		if j.ReviewOutcome == "incomplete" && j.Status == "completed" {
-			j.Status = "completed_with_warnings"
-		}
-		s.completeReviewTask(j, recorder)
-		recorder.Flush()
-		finished := time.Now().UTC()
-		j.FinishedAt = &finished
-		j.UpdatedAt = finished
-		// Publish the terminal status, final timestamps, and complete trace together.
-		_ = s.Store.Save(j)
-	}()
-	if strings.TrimSpace(req.Diff) == "" {
-		fetchSpan := recorder.Start("tool", "diff_fetcher", "action", req.Source, "")
-		if decision := s.Loop.Policy.Decide(PermissionNetworkFetch); decision != PermissionAllow {
-			err := permissionError("diff_fetcher", PermissionNetworkFetch, decision)
-			fetchSpan.End(TraceResult{Status: "denied", Err: err, Origin: "orchestrator"})
-			j.Status = "failed"
-			j.Error = err.Error()
-			return
-		}
-		fetchStarted := time.Now()
-		resolved, diff, err := fetchDiff(ctx, req.Source, s.Config)
-		fetchEnded := time.Now()
-		fetchDuration := fetchEnded.Sub(fetchStarted).Milliseconds()
-		fetchResult := TraceResult{Output: fmt.Sprintf("diff_bytes=%d", len(diff)), Err: err, Origin: "orchestrator"}
-		if err != nil {
-			fetchResult.Output = ""
-		}
-		fetchSpan.End(fetchResult)
-		fetchTraceID := fetchSpan.ID()
-		if err != nil {
-			_ = s.Store.RecordToolCall(j.ID, fetchTraceID, "diff_fetcher", "failed", req.Source, "", err.Error(), fetchDuration)
-			setReviewFailure(j, err, err.Error())
-			return
-		}
-		_ = s.Store.RecordToolCall(j.ID, fetchTraceID, "diff_fetcher", "succeeded", req.Source, fmt.Sprintf("diff_bytes=%d", len(diff)), "", fetchDuration)
-		j.Source, req.Diff = resolved, diff
-	}
-	artifacts := &ReviewArtifacts{}
-	if err := s.Loop.Run(ctx, ToolInput{Job: j, Diff: req.Diff, Tracer: recorder, Artifacts: artifacts}); err != nil {
-		setReviewFailure(j, err, err.Error())
-		recorder.Flush()
-		return
-	}
-	j.ReviewScope = model.ReviewScope{
-		FilesReviewed: len(artifacts.Files),
-		AddedLines:    artifacts.AddedLines,
-		TestsRan:      false,
-		Checks:        make([]model.ReviewCheck, 0, len(artifacts.Checks)+2),
-	}
-	for _, check := range artifacts.Checks {
-		j.ReviewScope.Checks = append(j.ReviewScope.Checks, model.ReviewCheck{
-			Name: check.Name, Status: check.Status, Message: check.Message,
-		})
-	}
-	j.ReviewScope.Checks = append(j.ReviewScope.Checks, model.ReviewCheck{
-		Name: "automated_tests", Status: "not_run", Message: "本次审查流程未运行自动化测试",
-	})
-	recorder.Flush()
-	if decision := s.Loop.Policy.Decide(PermissionLLMInference); decision != PermissionAllow {
-		j.Status = "failed"
-		j.Error = permissionError("subagent_review", PermissionLLMInference, decision).Error()
-		return
-	}
-	incompleteReason := preflightIncompleteReason(*artifacts)
-	if s.SkillError != nil {
-		j.Status = "failed"
-		j.Error = fmt.Sprintf("加载 Agent skills 失败：%v", s.SkillError)
-		return
-	}
-	skillSpan := recorder.Start("input", "load_skill", "skill", "code-review", "")
-	skill, err := s.SkillLoader.Load("code-review")
-	if err != nil {
-		skillSpan.End(TraceResult{Err: err})
-		j.Status = "failed"
-		j.Error = fmt.Sprintf("加载 code-review skill 失败：%v", err)
-		return
-	}
-	skillSpan.End(TraceResult{Output: "已加载完整 SKILL.md"})
-	skillTraceID := skillSpan.ID()
-	skillDuration := skillSpan.DurationMs()
-	_ = s.Store.RecordToolCall(j.ID, skillTraceID, "load_skill", "succeeded", skill.Name, "已加载完整 SKILL.md", "", skillDuration)
-	memoryQuery := strings.TrimSpace(req.MemoryQuery)
-	if memoryQuery == "" {
-		memoryQuery = j.Source + "\n" + redact(req.Diff)
-	}
-	memorySpan := recorder.Start("input", "memory_recall", "memory", "review request", "")
-	memories, memoryErr := s.MemoryStore.Recall(memoryQuery)
-	if memoryErr != nil {
-		memorySpan.End(TraceResult{Err: memoryErr})
-		_ = s.Store.RecordToolCall(j.ID, memorySpan.ID(), "memory_recall", "failed", "review request", "", memoryErr.Error(), memorySpan.DurationMs())
-	} else {
-		memoryOutput := fmt.Sprintf("召回 %d 条相关持久记忆", len(memories))
-		memorySpan.End(TraceResult{Output: memoryOutput})
-		_ = s.Store.RecordToolCall(j.ID, memorySpan.ID(), "memory_recall", "succeeded", "review request", memoryOutput, "", memorySpan.DurationMs())
-	}
-	promptContext := ReviewPromptContext{
-		Catalog:      s.SkillLoader.Catalog(),
-		SkillContent: skill.Content,
-		Memories:     redact(renderMemories(memories)),
-		Evidence:     artifacts.PromptSummary(),
-	}
-
-	initialSourceSnapshot := s.prepareFirstPassReviewSource(ctx, j, recorder)
-	testResult := s.runSandboxTests(ctx, j, initialSourceSnapshot, recorder)
-	j.ReviewScope.TestsRan = testResult.Ran
-	updateReviewCheck(&j.ReviewScope, "automated_tests", testResult.Status, testResult.Message)
-	promptContext.Evidence += fmt.Sprintf("\n\nautomated_tests: %s; %s", testResult.Status, testResult.Message)
-	recorder.Flush()
-	_ = s.Store.Save(j)
-	promptContext.SourceContextAvailable = initialSourceSnapshot != nil
-	reviewCtx := withReviewSourceSnapshot(ctx, initialSourceSnapshot)
-	reviewCtx, flushHarness := s.withReviewHarness(reviewCtx, j, artifacts.SanitizedDiff, *artifacts)
-	reviewCtx = withGoalCondition(reviewCtx, req.Goal)
-	if s.Loop.Hooks != nil {
-		s.Loop.Hooks.Emit(ctx, HookPreToolUse, HookContext{
-			JobID: j.ID, Tool: "review_agent",
-			Permission: PermissionLLMInference, Reason: "执行单 Agent 代码审查",
-		})
-	}
-	result := RunReviewAgent(reviewCtx, s.Config, artifacts.SanitizedDiff, promptContext)
-	flushHarness()
-	setTodoStatus(j, 1, "completed")
-	toolName := "review_agent"
-	traceID := result.TraceID
-	if traceID == "" {
-		traceID = id(toolName + j.ID)
-	}
-	if result.Error != nil {
-		_ = s.Store.RecordToolCall(j.ID, traceID, toolName, "failed", "单 Agent 代码审查", "", redact(result.Error.Error()), result.DurationMs)
-		if s.Loop.Hooks != nil {
-			s.Loop.Hooks.Emit(ctx, HookToolError, HookContext{
-				JobID: j.ID, Tool: toolName, Permission: PermissionLLMInference,
-				Reason: "执行单 Agent 代码审查", Error: result.Error, DurationMs: result.DurationMs,
-			})
-		}
-	} else {
-		_ = s.Store.RecordToolCall(j.ID, traceID, toolName, "succeeded", "单 Agent 代码审查", "审查候选已生成", "", result.DurationMs)
-		if s.Loop.Hooks != nil {
-			s.Loop.Hooks.Emit(ctx, HookPostToolUse, HookContext{
-				JobID: j.ID, Tool: toolName, Permission: PermissionLLMInference,
-				Reason: "执行单 Agent 代码审查", Output: "审查候选已生成", DurationMs: result.DurationMs,
-			})
-		}
-	}
-	_ = s.Store.Save(j)
-	reply := result.Summary
-	synthesisErr := result.Error
-	modelTraceID := traceID
-	var goalStop *GoalStopError
-	if errors.As(synthesisErr, &goalStop) {
-		j.Status = "completed_with_warnings"
-		j.ReviewOutcome = "incomplete"
-		j.Error = goalStop.Error()
-		updateReviewCheck(&j.ReviewScope, "finding_verification", "incomplete", "最终审查步骤未能生成完整结论")
-		return
-	}
-	if synthesisErr != nil {
-		if isIncompleteReviewError(synthesisErr) {
-			setReviewFailure(j, synthesisErr, "审查未完成："+redact(synthesisErr.Error()))
-			updateReviewCheck(&j.ReviewScope, "finding_verification", "incomplete", "最终审查步骤超时、被截断或未返回可解析内容")
-			return
-		}
-		setReviewFailure(j, synthesisErr, "模型调用失败："+redact(synthesisErr.Error()))
-		updateReviewCheck(&j.ReviewScope, "finding_verification", "failed", "最终审查模型调用失败")
-		return
-	}
-	findings, parseErr := parseFindingsStrict(reply)
-	if parseErr != nil {
-		recorder.Record("input", "finding_verification", "verification", "解析模型 finding", "", TraceResult{
-			Err: parseErr, Origin: "orchestrator",
-		})
-		j.Status = "completed_with_warnings"
-		j.ReviewOutcome = "incomplete"
-		j.Error = "审查未完成：模型输出不是有效的 finding JSON 数组。"
-		updateReviewCheck(&j.ReviewScope, "finding_verification", "incomplete", "模型输出格式无效，未能完成 finding 核验")
-		return
-	}
-	withEvidence, rejectedEvidence := validateFindingEvidence(findings, artifacts.SanitizedDiff)
-	sourceFiles := map[string]string{}
-	var sourceSnapshot *reviewSourceSnapshot
-	sourceContextError := ""
-	if len(withEvidence) > 0 {
-		paths := make([]string, 0, len(artifacts.Files))
-		seenPaths := map[string]bool{}
-		for _, finding := range withEvidence {
-			if !seenPaths[finding.File] {
-				paths = append(paths, finding.File)
-				seenPaths[finding.File] = true
-			}
-		}
-		for _, file := range artifacts.Files {
-			if !seenPaths[file.Path] {
-				paths = append(paths, file.Path)
-				seenPaths[file.Path] = true
-			}
-		}
-		if _, supported := parseReviewGitHubPR(j.Source); supported {
-			permission := PermissionRepositoryRead
-			decision := s.Loop.Policy.Decide(permission)
-			if decision == PermissionAllow {
-				permission = PermissionNetworkFetch
-				decision = s.Loop.Policy.Decide(permission)
-			}
-			if decision != PermissionAllow {
-				sourceContextError = permissionError("source_context_fetch", permission, decision).Error()
-				recorder.Record("tool", "source_context_fetch", "verification", "读取 PR 固定提交源码", "", TraceResult{
-					Status: "denied", Err: errors.New(sourceContextError), Origin: "orchestrator",
-				})
-			} else {
-				snapshot, loadErr := loadReviewSourceReaderWithFindings(ctx, reviewSourceSnapshotRequest{
-					Source:   j.Source,
-					Config:   s.Config,
-					Paths:    paths,
-					Findings: withEvidence,
-				})
-				sourceSnapshot = snapshot
-				if snapshot != nil {
-					sourceFiles = snapshot.files
-				}
-				if loadErr != nil {
-					sourceContextError = redactFindingText(loadErr.Error())
-					recorder.Record("tool", "source_context_fetch", "verification", "读取 PR 固定提交源码", "", TraceResult{
-						Err: loadErr, Origin: "orchestrator",
-					})
-				} else {
-					recorder.Record("tool", "source_context_fetch", "verification", "读取 PR 固定提交源码", "", TraceResult{
-						Output: fmt.Sprintf("可用文件=%d", len(sourceFiles)), Origin: "orchestrator",
-					})
-				}
-			}
-		}
-	}
-	confirmed := make([]ReviewFinding, 0, len(withEvidence))
-	rejectedByVerifier := 0
-	inconclusiveVerifications := 0
-	incompleteVerifications := 0
-	for _, finding := range withEvidence {
-		sourceExcerpt := findingSourceExcerpt(sourceFiles, finding, 12000)
-		findingContextError := sourceContextError
-		if sourceExcerpt == "" && len(sourceFiles) > 0 {
-			findingContextError = "固定提交源码与审查 diff 行不一致，或对应文件未读取"
-		}
-		verdict, reason, verifyTraceID, verifyErr := verifyFindingIndependently(ctx, findingVerificationRequest{
-			Config: s.Config, Diff: artifacts.SanitizedDiff, Finding: finding,
-			SourceExcerpt: sourceExcerpt, SourceContextError: findingContextError,
-			SourceSnapshot: sourceSnapshot, Policy: s.Loop.Policy,
-			RecordTool: func(
-				toolCtx context.Context,
-				name string,
-				callID string,
-				status string,
-				output string,
-				started time.Time,
-				ended time.Time,
-				duration int64,
-			) {
-				traceID, _ := recorder.RecordAt(
-					"tool",
-					name,
-					"verification",
-					"复核 Agent 按需读取固定提交源码",
-					traceParentFrom(toolCtx),
-					started,
-					ended,
-					TraceResult{
-						Status: status, Output: output, Origin: "model", ToolCallID: callID,
-					},
-				)
-				_ = s.Store.RecordToolCall(
-					j.ID,
-					traceID,
-					name,
-					status,
-					"复核 Agent 按需读取固定提交源码",
-					output,
-					"",
-					duration,
-				)
-			},
-			Recorder: recorder,
-		})
-		if verifyErr != nil {
-			if isIncompleteReviewError(verifyErr) {
-				incompleteVerifications++
-				if incompleteReason == "" {
-					incompleteReason = "部分问题的第二轮复核没有完成。"
-				}
-				continue
-			}
-			j.Comments = verifiedComments(confirmed, *artifacts, modelTraceID)
-			setReviewFailure(j, verifyErr, "第二轮复核模型调用失败："+redact(verifyErr.Error()))
-			updateReviewCheck(&j.ReviewScope, "finding_verification", "failed", "第二轮复核模型调用失败")
-			return
-		}
-		if verdict == findingRejected {
-			rejectedByVerifier++
-			continue
-		}
-		if verdict == findingInconclusive {
-			inconclusiveVerifications++
-			continue
-		}
-		finding.VerificationStatus = "second_pass_review_passed"
-		finding.VerificationReason = reason
-		finding.VerificationTraceID = verifyTraceID
-		confirmed = append(confirmed, finding)
-	}
-	j.Comments = verifiedComments(confirmed, *artifacts, modelTraceID)
-	verificationStatus := "passed"
-	verificationMessage := fmt.Sprintf(
-		"候选=%d；证据匹配=%d；第二轮复核确认=%d；第二轮复核排除=%d；证据待定=%d",
-		len(findings), len(withEvidence), len(j.Comments), rejectedByVerifier, inconclusiveVerifications,
-	)
-	if len(findings) == 0 && incompleteReason == "" {
-		verificationStatus = "not_needed"
-		verificationMessage = "模型未报告候选问题，无需逐条复核"
-	} else if incompleteReason != "" || rejectedEvidence > 0 || inconclusiveVerifications > 0 {
-		verificationStatus = "incomplete"
-		verificationMessage += fmt.Sprintf("；证据不足=%d；复核未完成=%d", rejectedEvidence, incompleteVerifications)
-		if incompleteReason != "" {
-			verificationMessage += "；" + incompleteReason
-		}
-	}
-	updateReviewCheck(&j.ReviewScope, "finding_verification", verificationStatus, verificationMessage)
-	recorder.Record("input", "finding_verification", "verification", "代码证据与第二轮复核", "", TraceResult{
-		Output: verificationMessage, Origin: "orchestrator",
-	})
-	if rejectedEvidence > 0 && incompleteReason == "" {
-		incompleteReason = "有候选问题缺少与变更行完全匹配的代码证据，审查未能完整核验。"
-	}
-	if inconclusiveVerifications > 0 && incompleteReason == "" {
-		incompleteReason = "部分候选问题缺少判定所需的代码上下文，审查未能完整核验。"
-	}
-	if incompleteReason != "" {
-		j.Status = "completed_with_warnings"
-		j.ReviewOutcome = "incomplete"
-		j.Error = incompleteReason
-	} else if len(j.Comments) > 0 {
-		j.ReviewOutcome = "completed_with_findings"
-	} else {
-		j.ReviewOutcome = "completed_no_findings"
-	}
-	setTodoStatus(j, 2, "completed")
-	if err := ctx.Err(); err != nil {
-		setReviewFailure(j, err, "后台审查已取消")
-		return
-	}
-	s.extractReviewMemories(ctx, j, req)
-	if j.ReviewOutcome == "incomplete" {
-		j.Status = "completed_with_warnings"
-	} else {
-		j.Status = "completed"
-	}
 }
 
 func updateReviewCheck(scope *model.ReviewScope, name, status, message string) {

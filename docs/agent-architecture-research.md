@@ -1,12 +1,12 @@
 # CR-Agent 当前工具体系、工作流程与业界设计对照
 
-> 调研基准：2026-09-24。以当前工作区 `feat/version2` 分支的代码为准；重点核对 `internal/logic`、`internal/controller`、`internal/dao` 与 `cmd/server`。本文描述代码实际路径，不把 README 中的模块清单直接视为默认运行行为。
+> 调研基准：2026-09-25。以当前工作区 `feat/version2` 分支的代码为准；重点核对 `internal/logic`、`internal/controller`、`internal/dao` 与 `cmd/server`。本文描述代码实际路径，不把 README 中的模块清单直接视为默认运行行为。
 
 ## 结论摘要
 
 CR-Agent 是一个**面向代码审查的受限 Agent 系统**，不是能任意操作代码库的通用 Coding Agent。整体采用混合结构：宿主代码固定安排审查生命周期，单个模型 Agent 在有限工具范围内决定何时补充上下文；模型输出之后再由程序做变更行证据校验和第二轮模型复核。
 
-当前结构的强项是边界清晰：不让模型执行 Shell 或改仓库；前置检查、权限、工具结果回填、重试、脱敏、证据核验和追踪均有宿主控制。主要差距在于：MCP 还没有真实传输或真实外部 MCP 服务；完整审查会话不能从进程中断处续跑；需要审批的工具目前只是被拒绝，不存在可等待和恢复的审批流程；评测集仍小且使用规则化匹配。
+当前结构的强项是边界清晰：不让模型执行 Shell 或改仓库；前置检查、权限、工具结果回填、重试、脱敏、证据核验、检查点和追踪均有宿主控制。主审查阶段与逐条复核结果可在进程中断后恢复；模型服务与数据库之间仍存在无法原子提交的单次调用窗口。其他差距包括：MCP 还没有真实传输或真实外部 MCP 服务；需要审批的工具目前只是被拒绝，不存在可等待和恢复的审批流程；评测集仍小且使用规则化匹配。
 
 **特别说明：**代码中确有 Team / specialist 模块，但当前默认审查入口调用的是 `RunReviewAgent` 单 Agent 路径，并没有调用 `ReviewTeam.Run`。MCP 名称和接口已搭好，但内置 `docs`、`deploy` 都是进程内模拟，不会访问真实文档平台或部署平台。
 
@@ -82,6 +82,7 @@ sequenceDiagram
     BG->>S: 若无 diff，抓取 GitHub/GitLab diff
     BG->>P: 固定执行 preflight_analysis
     P-->>BG: 分析产物、检查状态、脱敏 diff
+    BG->>DB: 保存阶段快照与预算状态
     BG->>S: 加载 code-review Skill、召回记忆
     S->>H: 构造本次会话工具、权限、Hooks、Workflow 与目标条件
     H->>M: 发送审查 prompt 和当前工具定义
@@ -94,6 +95,7 @@ sequenceDiagram
     BG->>S: 校验新增行证据并逐条独立复核
     S->>M: 对候选 finding 做第二轮判断
     M-->>S: is_real 与核验理由
+    S->>DB: 保存每条 verdict 和复核游标
     S->>DB: 保存最终评论、状态与 trace
     S-->>C: GET /api/reviews/:id 或 SSE 查询结果
 ```
@@ -139,7 +141,7 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 - **工作流和 Agent 混合**：整个审查生命周期是宿主固定编排；Agent 只在审查阶段自主决定是否调用可用工具。`review-changes` Workflow 是模型可选的宿主脚本，不等于主服务默认改走 Workflow。
 - **单 Agent 是当前默认，不是 Team**：审查入口调用 `RunReviewAgent`。`ReviewTeam`、三类 specialist 和团队消息代码仍在仓库，但默认 `runWithTracer` 没有调用它们。当前默认路径的“第二轮复核”是逐条独立 verifier 调用，也不等于三个并行 reviewer。
 - **能力受限且偏只读**：没有仓库检出、文件读取/修改、Shell、测试运行、PR 发布或任意命令执行。对 diff 做审查不需要开放这些能力；若目标变成自动修复 Agent，才需要单独设计沙箱、worktree、测试反馈与变更审批。
-- **恢复能力分层**：生产 Workflow 有 MySQL snapshot/event、稳定调用键和 Lease，支持复用已完成的子 Agent 结果；完整 ReviewHarness 的消息历史并不落库，普通后台 Runner 在重启后不能恢复 Go 闭包，会被标记失败。因此是“Workflow 可恢复”，不是“整个 Agent Job 可恢复”。
+- **恢复能力分层**：生产 Workflow 有 MySQL snapshot/event、稳定调用键和 Lease，支持复用已完成的子 Agent 结果。主审查另在 MySQL 保存脱敏输入、已完成阶段结果、逐条 finding verdict、复核游标和模型预算预留；重启后从最近持久化阶段继续。Harness 的完整消息历史仍不落库，因此首轮模型会话若在候选结果写入检查点前中断，会重跑该未完成阶段。模型服务与数据库之间没有分布式事务；当前外部请求按至少一次语义恢复，无法保证恰好一次。
 - **权限策略并非交互审批**：`allow` 会执行，`deny` 或 `require_approval` 在当前 Harness 都会转成工具错误；代码没有待审批记录、通知 UI、审批后恢复工具调用的完整状态机。
 - **观测和评测已起步**：模型请求、工具调用、核验和状态仍记录在原始 trace 中；用户界面隐藏难以解释的逐条 `model_request` / `deepseek_chat` 事件，保留模型请求次数和耗时汇总。当前 21 例合成 diff benchmark 可观测 precision/recall、变更行定位、trace 完整度和脱敏 canary，但每例只跑一次，按 fixture phrase group 做规则匹配。
 - **模型长度预算分开控制**：通用模型输出上限由 `MODEL_MAX_OUTPUT_TOKENS` 配置，默认 32,768；代码审查与 finding 复核额外受 `REVIEW_MAX_OUTPUT_TOKENS` 限制，默认 8,192，并启用 DeepSeek high thinking 模式。本地上下文字符预算默认 250,000。完整 diff 若超过单次请求可承载的上下文，仍会失败；不能保证任意大小的 PR 都能一次送入模型。
@@ -155,14 +157,14 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 | 工具接口 | 本地 Go handler + JSON Schema；当前 MCP server 是进程内模拟 | Function/local/hosted tools、MCP tools；明确工具用途、参数、回传信息，并按任务逐步扩面 | Harness 循环具备真实基础；MCP 连接与真实服务生态尚未完成 |
 | MCP 互操作 | 只实现了进程内 list/call 类边界，没有协议 transport | MCP 规范定义 stdio 与 Streamable HTTP 等传输，允许客户端与独立 server 交互 | 当前是 MCP 适配层原型，不能宣称已集成外部 MCP server |
 | 多 Agent | 三个审查方向和 `ReviewTeam` 代码存在，但不是默认主路径 | 需要专才所有权清楚时使用 manager/handoff；可并行时拆分并聚合 | 现阶段以单 Agent + 逐条 verifier 为主；没有必要为了“像业界”而默认启用 Team |
-| 状态和恢复 | Workflow 层可 MySQL 恢复；完整模型会话和 Review Job 中断后不能从精确轮次恢复 | Checkpoint 持久化 thread/run 状态，长期 Store 保存跨会话数据，并设计中断与人工恢复 | 这是较实质的 Runtime 差距；如果服务需容忍重启，应把 Agent turn/工具完成记录纳入可恢复状态 |
+| 状态和恢复 | Workflow 与 Review 阶段都可 MySQL 恢复；逐条 verifier 结果与游标持久化，外部请求仍有一个可能重试的窗口 | Checkpoint 持久化 thread/run 状态，长期 Store 保存跨会话数据，并设计中断与人工恢复 | 主流程阶段恢复已落地；完整 Harness 消息历史不落库，不能从模型会话内部轮次继续 |
 | 安全 | diff 脱敏、工具权限、Hook、输入视作不可信、finding 行证据校验；没有写代码能力 | 按工具调用做输入/输出 guardrail，危险操作接入人工批准；执行代码时放入隔离 sandbox | 只读审查已有较好边界；审批闭环和 HTTP 身份认证是需要补齐/确认的生产边界 |
 | 可观测与评估 | 自建 trace；小规模 benchmark 有多项指标 | trace 覆盖模型、工具、handoff、guardrail，使用任务集反复 eval 并据此调整工具与流程 | 结构有了，评估代表性和重复性不足；不能从一次合成集推断线上召回率或成本 |
 | 记忆 | 本地文件长期记忆 + 当前进程中的 Harness 对话 | 会话 checkpoint 与跨会话 store 分开管理 | 概念上已有 recall/store，但本地记忆不适合无共享盘的多实例部署；对话状态不持久 |
 
 ### 总体判断
 
-和常见 Agent Runtime 相比，CR-Agent **核心 tool loop、权限检查、结构化输出、trace、workflow persistence 等基础能力已经存在**；差距主要不在“还少多少种 Agent 名词”，而在真实运行时完整性：MCP 外部互操作、Run 级状态恢复、能恢复的人工审批、多实例一致性、API 身份与授权、代表性评测和费用对账。
+和常见 Agent Runtime 相比，CR-Agent **核心 tool loop、权限检查、结构化输出、trace、workflow persistence 和主审查阶段恢复等基础能力已经存在**；差距主要不在“还少多少种 Agent 名词”，而在真实运行时完整性：MCP 外部互操作、完整模型会话历史恢复、能恢复的人工审批、多实例 API 身份与授权、代表性评测和费用对账。
 
 对其当前代码审查产品目标而言，强制引入 Shell、文件修改或常驻多 Agent Team 并不会自动提高质量，也会扩大风险面。更重要的是让现有只读结果稳定、可复核、可恢复，并用真实评测证明每个新增复杂度有收益。
 
@@ -175,7 +177,7 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 ## 7. 建议的改进顺序
 
 1. **先补生产边界**：为 HTTP API 明确身份、租户和资源授权；把 `require_approval` 变成可等待、可审计、可恢复的审批状态，或对当前确实不支持审批的工具明确禁用。
-2. **再补完整作业恢复**：为 Review Job 保存经过脱敏的会话状态、轮次和工具完成记录，采用稳定调用键避免重启后重复副作用；重启后能恢复或准确标记不可恢复阶段。
+2. **继续完善作业恢复**：若要在 Harness 内部轮次级别恢复，需持久化完整对话、工具结果和稳定调用键；当前方案按 Review 阶段和 finding 粒度恢复，并对尚无持久结果的外部调用采用至少一次语义。相关字段、入口与恢复边界见 [`docs/review-recovery.md`](review-recovery.md)。
 3. **接入真实 MCP transport**：实现 stdio 和/或 Streamable HTTP client、认证/凭据管理、超时取消、连接与版本协商、schema 校验、错误分类；用真实的只读文档服务做端到端集成。部署写工具先保留 deny，直到审批链路工作。
 4. **扩展评测而非堆工具**：补真实 PR 历史和完整仓库上下文，加入人工判定或独立语义判分，覆盖 Go 以外语言、不同 diff 规模、重复运行、token/美元成本及延迟分布。
 5. **让配置和运行事实一致**：将预算估算与供应商账单对账，明确 Redis 是否移除或集成；评估 Memory/Cron 本地文件在多实例下的读写和重复触发语义。
@@ -205,6 +207,8 @@ Redis 目前只有配置字段，未发现当前运行路径连接 Redis。审�
 - OpenAI, [Agents SDK](https://openai.github.io/openai-agents-python/) 与 [Agents SDK tools](https://openai.github.io/openai-agents-python/tools/)：工具循环、MCP、handoff、guardrails、session 与 tracing 等运行时能力。
 - OpenAI, [Guardrails](https://openai.github.io/openai-agents-python/guardrails/) 与 [Tracing](https://openai.github.io/openai-agents-python/tracing/)：工具级前后置 guardrail，以及模型/工具/handoff/guardrail trace 的组织方式。
 - LangChain, [LangGraph Persistence](https://docs.langchain.com/oss/python/langgraph/persistence)：用 thread-scoped checkpoint 支持连续性、恢复与人工介入；用长期 store 管理跨会话信息。
+- Temporal, [Durable Execution](https://docs.temporal.io/) 与 [Activities](https://docs.temporal.io/activities)：通过执行历史恢复 Workflow；外部调用拆为独立 Activity，建议幂等，并记录结果与重试状态。
+- Azure Durable Task, [Durable orchestrations](https://learn.microsoft.com/en-us/azure/durable-task/common/durable-task-orchestrations)：在 await/yield 边界持久化执行历史，恢复时重放已完成 Activity 的结果，并要求编排代码保持确定性。
 - Model Context Protocol, [Transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) 与 [Tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)：MCP 标准传输、工具发现/调用和安全交互模型。
 - DeepSeek, [Chat Completions API](https://api-docs.deepseek.com/api/create-chat-completion/)：`max_tokens` 限制生成 token 数，输入和生成结果合计仍受模型上下文窗口约束；`usage.completion_tokens` 是实际生成 token 数。
 

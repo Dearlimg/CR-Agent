@@ -16,6 +16,7 @@ func NewReviewController(s *logic.Service) *ReviewController { return &ReviewCon
 func (c *ReviewController) Register(r *gin.Engine) {
 	r.GET("/api/health", func(x *gin.Context) { x.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	r.POST("/api/reviews", c.create)
+	r.POST("/api/reviews/:id/resume", c.resume)
 	r.GET("/api/reviews/:id", c.get)
 	r.GET("/api/reviews/:id/events", c.events)
 	r.GET("/api/reviews/:id/traces/:traceID", c.traceDetails)
@@ -369,6 +370,20 @@ func (c *ReviewController) create(x *gin.Context) {
 	}
 	x.JSON(http.StatusAccepted, j)
 }
+
+func (c *ReviewController) resume(x *gin.Context) {
+	job, err := c.Service.ResumeReview(x.Param("id"))
+	if err != nil {
+		status := http.StatusConflict
+		if strings.Contains(err.Error(), "不存在") {
+			status = http.StatusNotFound
+		}
+		x.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	x.JSON(http.StatusAccepted, job)
+}
+
 func (c *ReviewController) get(x *gin.Context) {
 	j, ok := c.Service.Store.Get(x.Param("id"))
 	if !ok {

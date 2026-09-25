@@ -73,13 +73,14 @@ func newReviewBudgetMeter(job *model.ReviewJob, cfg Config, checkpoint func() er
 		modelName = "deepseek-flash"
 	}
 	return &reviewBudgetMeter{
-		job:         job,
-		limitMicros: limitMicros,
-		spentMicros: job.SpentMicros,
-		inputPrice:  cfg.InputPriceYuanPerMillion,
-		outputPrice: cfg.OutputPriceYuanPerMillion,
-		modelName:   modelName,
-		checkpoint:  checkpoint,
+		job:            job,
+		limitMicros:    limitMicros,
+		reservedMicros: job.ReservedMicros,
+		spentMicros:    job.SpentMicros,
+		inputPrice:     cfg.InputPriceYuanPerMillion,
+		outputPrice:    cfg.OutputPriceYuanPerMillion,
+		modelName:      modelName,
+		checkpoint:     checkpoint,
 	}
 }
 
@@ -112,14 +113,15 @@ func (m *reviewBudgetMeter) reserveForModel(
 		return reviewBudgetReservation{}, fmt.Errorf("模型输出 token 上限无效")
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	remaining := m.limitMicros - m.spentMicros - m.reservedMicros
 	inputCost := tokenCostMicros(estimatedInputTokens, pricing.inputPrice)
 	if inputCost >= remaining {
+		m.mu.Unlock()
 		return reviewBudgetReservation{}, fmt.Errorf("审查预算不足，无法继续发送模型请求")
 	}
 	outputAllowance := int(math.Floor(float64(remaining-inputCost) / pricing.outputPrice))
 	if outputAllowance < 1 {
+		m.mu.Unlock()
 		return reviewBudgetReservation{}, fmt.Errorf("审查预算不足，无法继续生成模型输出")
 	}
 	if outputAllowance > requestedOutputTokens {
@@ -127,6 +129,11 @@ func (m *reviewBudgetMeter) reserveForModel(
 	}
 	reserved := inputCost + tokenCostMicros(outputAllowance, pricing.outputPrice)
 	m.reservedMicros += reserved
+	m.job.ReservedMicros = m.reservedMicros
+	m.mu.Unlock()
+	if err := m.persist(); err != nil {
+		return reviewBudgetReservation{}, fmt.Errorf("模型预算预留持久化失败，已阻止模型请求")
+	}
 	return reviewBudgetReservation{
 		reservedMicros: reserved,
 		outputTokens:   outputAllowance,
@@ -155,8 +162,31 @@ func (m *reviewBudgetMeter) settle(reservation reviewBudgetReservation, inputTok
 	}
 	m.job.SpentMicros = m.spentMicros
 	m.job.SpentYuan = model.MicrosToYuan(m.spentMicros)
+	m.job.ReservedMicros = m.reservedMicros
 	m.mu.Unlock()
 	return charge
+}
+
+func (m *reviewBudgetMeter) recoverReservations() error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	if m.reservedMicros == 0 {
+		m.mu.Unlock()
+		return nil
+	}
+	if m.reservedMicros > math.MaxInt64-m.spentMicros {
+		m.spentMicros = math.MaxInt64
+	} else {
+		m.spentMicros += m.reservedMicros
+	}
+	m.reservedMicros = 0
+	m.job.ReservedMicros = 0
+	m.job.SpentMicros = m.spentMicros
+	m.job.SpentYuan = model.MicrosToYuan(m.spentMicros)
+	m.mu.Unlock()
+	return m.persist()
 }
 
 func (m *reviewBudgetMeter) persist() error {

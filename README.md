@@ -22,7 +22,7 @@ $env:CR_AGENT_ENV_FILE = "C:\cr-agent\.env"
 
 ## 设计
 
-- **可恢复**：生产运行时将任务状态、评论、Todo、trace 和工具调用写入 MySQL，状态含 queued/running/completed/failed。
+- **可恢复**：生产运行时将审查阶段、逐条复核游标、预算预留、评论、Todo、trace 和工具调用写入 MySQL；服务重启后从最近完成的阶段继续。
 - **可观测**：每条评论带 `trace_id`，任务返回工具、脱敏输入、输出和时间戳。
 - **可扩展**：`ToolRegistry.Register("name", tool)` 声明式注册工具，不修改主流程。
 - **预算**：按人民币控制每次审查的总模型费用；请求可传 `budget_yuan`，默认读取 `REVIEW_BUDGET_YUAN`（默认 ¥10）。每次模型请求按返回的输入/输出 token 和模型单价计费，并在请求前预留估算额度；超出上限后停止后续调用。方案和边界见 [`docs/token-budget-design.md`](docs/token-budget-design.md)。
@@ -46,6 +46,10 @@ Trace 的 `origin` 区分编排调用和模型工具调用，`cache_hit` 表示�
 ## 导出报告
 
 审查工作台可下载 GitHub Flavored Markdown 格式的可读报告，包含审查状态、范围、检查结果和已核验问题；会话日志仍可单独导出为 JSON，包含完整 trace 详情。
+
+## 中断恢复
+
+生产服务启动后会自动续跑中断的 `queued`/`running` 审查。对超时、预算不足或部分复核未完成的终态任务，可调用 `POST /api/reviews/{id}/resume` 从已保存的阶段恢复；正在由其他实例执行的 Job 返回 `409`。已完成的逐条复核会跳过，未完成的 finding 从游标位置继续。模型请求前写入预算预留，恢复时将无法确认结果的预留保守计入已花费预算。外部模型请求与数据库不能构成一个事务，因此崩溃恰好发生在模型返回之后时，当前请求可能重试；已持久化的阶段结果和 finding verdict 不会重跑。详见 [`docs/review-recovery.md`](docs/review-recovery.md)。
 
 ## Skills
 
@@ -95,8 +99,9 @@ Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。生�
 依赖已完成，完成时返回刚被解锁的下游任务；添加依赖会拒绝自依赖、缺失任务和环。
 
 每个 `POST /api/reviews` 会自动创建并认领一个 Lead（`review-agent`）任务，返回的审查 Job
-包含 `task_id`，审查完成后任务自动完成。失败的审查任务会保留 `in_progress`，以便
-恢复或人工检查，而不会被错误标记为已完成。
+包含 `task_id`，审查结束后任务自动完成。未完整审查会在 Job 上体现为
+`completed_with_warnings` 或 `failed`；检查点尚未到 `completed` 时，Lead 任务保持
+`in_progress`，可通过恢复入口继续执行。
 
 模型调用对 EOF、连接中断、超时、限流和 5xx 做有限指数退避重试。少于 4 个变更文件、少于 300 条 diff 新增行，且没有跨文件依赖变更的任务由一个主审查 Agent 完成；其余任务运行三个专项 Agent 和最终汇总。团队默认最多同时运行 2
 个专项调用。专项调用失败但最终汇总成功时，Job 状态为
@@ -162,7 +167,8 @@ Workflow 支持 `agent`、`parallel`、`pipeline`、`phase`、`log` 和一层嵌
 后台任务将服务端注册的慢操作放到独立 Goroutine 中执行，创建后立刻返回 `bg_<id>`，
 主请求无需等待。生产任务元数据保存在 MySQL `background_tasks`，状态包括 `pending`、
 `running`、`completed`、`failed` 和 `cancelled`。服务重启后无法安全恢复原内存 Runner，
-因此会将未结束任务标记为 failed，并提供可消费一次的完成通知。
+因此会将旧后台任务标记为 failed，并提供可消费一次的完成通知。审查服务会读取 Review Job
+检查点，为可恢复的审查创建新后台任务并续跑。
 
 审查请求自动使用后台 Runner，返回的 Job 中包含 `background_task_id`。为避免将服务变成
 任意命令执行入口，HTTP API 不接受 shell command；后台执行只能由后端注册 Runner。

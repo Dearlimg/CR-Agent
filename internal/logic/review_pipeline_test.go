@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestReviewPipelineReanchorsAndRecordsThreeWayVerdict(t *testing.T) {
@@ -164,6 +165,146 @@ func TestReviewPipelineUsesPinnedSourceForSemanticVerification(t *testing.T) {
 	if !strings.Contains(verificationPrompt, "related fetch at service.py:1") ||
 		!strings.Contains(verificationPrompt, "def fetch():") {
 		t.Fatalf("verification omitted related pinned source: %q", verificationPrompt)
+	}
+}
+
+func TestReviewResumeContinuesAtUnfinishedFindingAndRestoresBudget(t *testing.T) {
+	var calls atomic.Int32
+	modelAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{
+				"message":       map[string]any{"role": "assistant", "content": `{"verdict":"confirmed","reason":"复核确认"}`},
+				"finish_reason": "stop",
+			}},
+		})
+	}))
+	defer modelAPI.Close()
+
+	root := t.TempDir()
+	storeDir := filepath.Join(root, "jobs")
+	checkpoint := newReviewCheckpoint(model.ReviewRequest{Source: "inline"})
+	checkpoint.Stage = reviewStageVerification
+	checkpoint.Diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,2 @@\n+bug_a()\n+bug_b()\n"
+	checkpoint.Artifacts = ReviewArtifacts{
+		Files:      []ChangedFile{{Path: "a.py", AddedLines: []int{1, 2}}},
+		AddedLines: 2, Checks: []PreflightCheck{},
+	}
+	checkpoint.Candidates = []ReviewFinding{
+		{File: "a.py", Line: 1, Severity: "medium", Confidence: "medium", Body: "bug a", Evidence: "bug_a()", Trigger: "call", Impact: "fails", Suggestion: "fix"},
+		{File: "a.py", Line: 2, Severity: "medium", Confidence: "medium", Body: "bug b", Evidence: "bug_b()", Trigger: "call", Impact: "fails", Suggestion: "fix"},
+	}
+	checkpoint.ModelTraceID = "first-pass-trace"
+	checkpoint.VerificationCursor = 1
+	checkpoint.VerificationResults = []checkpointVerification{{
+		Finding: ReviewFinding{
+			File: "a.py", Line: 1, Severity: "medium", Confidence: "medium", Body: "bug a",
+			Evidence: "bug_a()", Trigger: "call", Impact: "fails", Suggestion: "fix",
+			VerificationStatus: "second_pass_review_passed", VerificationReason: "already checked",
+		},
+		Verdict: string(findingConfirmed),
+	}}
+	job := &model.ReviewJob{
+		ID: "resume-fixture", Status: "running", Source: "inline", BudgetYuan: 10,
+		BudgetMicros: 10_000_000, SpentMicros: 1200, ReservedMicros: 500,
+		Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}, Todos: []model.TodoItem{},
+	}
+	if err := persistReviewCheckpoint(job, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := dao.NewJobStore(storeDir).Save(job); err != nil {
+		t.Fatal(err)
+	}
+
+	store := dao.NewJobStore(storeDir)
+	service := NewService(store, Config{
+		SkillsDir: "../../skills", MemoryDir: filepath.Join(root, "memory"),
+		TasksDir: filepath.Join(root, "tasks"), BackgroundTasksDir: filepath.Join(root, "background"),
+		TeamMailboxDir: filepath.Join(root, "team"), CronFile: filepath.Join(root, "cron.json"),
+		DeepSeekAPIKey: "test-only", DeepSeekBaseURL: modelAPI.URL,
+	})
+	if _, err := service.ResumeReview(job.ID); err != nil {
+		t.Fatalf("resume review: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		updated, found := store.Get(job.ID)
+		if found && (updated.Status == "completed" || updated.Status == "completed_with_warnings" || updated.Status == "failed") {
+			if updated.Status != "completed" || len(updated.Comments) != 2 {
+				t.Fatalf("resume status=%q comments=%d error=%q", updated.Status, len(updated.Comments), updated.Error)
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("model calls=%d, want only the unfinished finding to be rechecked", calls.Load())
+			}
+			if updated.SpentMicros < 1700 || updated.ReservedMicros != 0 {
+				t.Fatalf("budget spent=%d reserved=%d; interrupted reservation was not restored", updated.SpentMicros, updated.ReservedMicros)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("resumed review did not reach a terminal state")
+}
+
+func TestServiceStartResumesPersistedFinalizingReview(t *testing.T) {
+	root := t.TempDir()
+	store := dao.NewJobStore(filepath.Join(root, "jobs"))
+	checkpoint := newReviewCheckpoint(model.ReviewRequest{Source: "inline"})
+	checkpoint.Stage = reviewStageFinalizing
+	job := &model.ReviewJob{
+		ID: "startup-resume-fixture", Status: "running", Source: "inline",
+		BudgetYuan: 10, BudgetMicros: 10_000_000,
+		Comments: []model.ReviewComment{}, Trace: []model.TraceEvent{}, Todos: []model.TodoItem{},
+	}
+	if err := persistReviewCheckpoint(job, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(job); err != nil {
+		t.Fatal(err)
+	}
+	store = dao.NewJobStore(filepath.Join(root, "jobs"))
+	service := NewService(store, Config{
+		SkillsDir: "../../skills", MemoryDir: filepath.Join(root, "memory"),
+		TasksDir: filepath.Join(root, "tasks"), BackgroundTasksDir: filepath.Join(root, "background"),
+		TeamMailboxDir: filepath.Join(root, "team"), CronFile: filepath.Join(root, "cron.json"),
+	})
+	if err := service.Start(); err != nil {
+		t.Fatalf("start with recoverable review: %v", err)
+	}
+	defer service.Stop()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		updated, found := store.Get(job.ID)
+		if found && updated.Status == "completed" {
+			if updated.ReviewOutcome != "completed_no_findings" {
+				t.Fatalf("review outcome=%q, want completed_no_findings", updated.ReviewOutcome)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("service startup did not resume the finalizing review")
+}
+
+func TestReviewCheckpointRedactsRequestSecrets(t *testing.T) {
+	checkpoint := newReviewCheckpoint(model.ReviewRequest{
+		Source:      "inline",
+		Diff:        "raw diff must not be persisted",
+		MemoryQuery: `api_key="checkpoint-query-secret"`,
+		Goal:        `token="checkpoint-goal-secret"`,
+	})
+	if checkpoint.Request.Diff != "" {
+		t.Fatalf("raw diff was retained in checkpoint request: %q", checkpoint.Request.Diff)
+	}
+	encoded, err := json.Marshal(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"checkpoint-query-secret", "checkpoint-goal-secret", "raw diff must not be persisted"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("checkpoint contains sensitive or duplicate request data %q: %s", secret, encoded)
+		}
 	}
 }
 

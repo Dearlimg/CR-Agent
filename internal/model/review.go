@@ -98,6 +98,8 @@ type ReviewJob struct {
 	SpentYuan        float64         `json:"spent_yuan"`
 	BudgetMicros     int64           `json:"-"`
 	SpentMicros      int64           `json:"-"`
+	ReservedMicros   int64           `json:"-"`
+	CheckpointJSON   string          `json:"-"`
 	StartedAt        time.Time       `json:"started_at"`
 	FinishedAt       *time.Time      `json:"finished_at,omitempty"`
 	UpdatedAt        time.Time       `json:"updated_at"`

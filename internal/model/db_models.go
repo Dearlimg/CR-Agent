@@ -7,17 +7,21 @@ import (
 
 // DBReviewJob is the durable aggregate root for one review execution.
 type DBReviewJob struct {
-	ID               uint   `gorm:"primaryKey"`
-	PublicID         string `gorm:"size:32;not null;uniqueIndex"`
-	TaskID           string `gorm:"size:32;index"`
-	BackgroundTaskID string `gorm:"size:32;index"`
-	SourceURL        string `gorm:"type:text"`
-	InputHash        string `gorm:"size:64;not null;index"`
-	Status           string `gorm:"size:24;not null;index"`
-	ReviewOutcome    string `gorm:"size:32;index"`
-	ReviewScopeJSON  string `gorm:"type:longtext"`
-	BudgetMicros     int64  `gorm:"not null;default:0"`
-	SpentMicros      int64  `gorm:"not null;default:0"`
+	ID               uint       `gorm:"primaryKey"`
+	PublicID         string     `gorm:"size:32;not null;uniqueIndex"`
+	TaskID           string     `gorm:"size:32;index"`
+	BackgroundTaskID string     `gorm:"size:32;index"`
+	SourceURL        string     `gorm:"type:text"`
+	InputHash        string     `gorm:"size:64;not null;index"`
+	Status           string     `gorm:"size:24;not null;index"`
+	ReviewOutcome    string     `gorm:"size:32;index"`
+	ReviewScopeJSON  string     `gorm:"type:longtext"`
+	BudgetMicros     int64      `gorm:"not null;default:0"`
+	SpentMicros      int64      `gorm:"not null;default:0"`
+	ReservedMicros   int64      `gorm:"not null;default:0"`
+	CheckpointJSON   string     `gorm:"type:longtext"`
+	RunnerOwner      string     `gorm:"size:128;index"`
+	RunnerLeaseUntil *time.Time `gorm:"index"`
 	// Legacy columns are retained so existing installations can migrate in place.
 	BudgetCents  int               `gorm:"not null;default:1000"`
 	SpentCents   int               `gorm:"not null;default:0"`

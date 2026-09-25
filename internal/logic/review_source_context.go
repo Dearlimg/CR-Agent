@@ -68,6 +68,10 @@ type reviewSourceSnapshotRequest struct {
 	Paths                  []string
 	Findings               []ReviewFinding
 	PrepareForOnDemandRead bool
+	PinnedHeadSHA          string
+	PinnedOwner            string
+	PinnedRepo             string
+	ExistingFiles          map[string]string
 }
 
 type reviewSourceSnapshot struct {
@@ -153,28 +157,43 @@ func loadReviewSourceReaderWithFindings(
 	if officialAPI {
 		token = cfg.GitHubToken
 	}
-	metadataURL := reviewSourceURL(base, "repos", pr.owner, pr.repo, "pulls", pr.number)
-	metadataBody, err := reviewSourceGET(ctx, client, metadataURL, token, reviewSourceMetadataBytes)
-	if err != nil {
-		return nil, fmt.Errorf("读取 PR head 信息: %w", err)
-	}
-	var metadata reviewSourceMetadata
-	if err := json.Unmarshal(metadataBody, &metadata); err != nil {
-		return nil, fmt.Errorf("解析 PR head 信息: %w", err)
-	}
-	if !reviewGitHubSHAPattern.MatchString(metadata.Head.SHA) {
-		return nil, fmt.Errorf("PR head SHA 无效")
-	}
 	owner, repo := pr.owner, pr.repo
-	if metadata.Head.Repo != nil && metadata.Head.Repo.FullName != "" {
-		owner, repo, err = reviewSourceFullName(metadata.Head.Repo.FullName)
+	headSHA := request.PinnedHeadSHA
+	if headSHA != "" {
+		if !reviewGitHubSHAPattern.MatchString(headSHA) {
+			return nil, fmt.Errorf("检查点中的 PR head SHA 无效")
+		}
+		if request.PinnedOwner != "" && request.PinnedRepo != "" {
+			owner, repo = request.PinnedOwner, request.PinnedRepo
+		}
+	} else {
+		metadataURL := reviewSourceURL(base, "repos", pr.owner, pr.repo, "pulls", pr.number)
+		metadataBody, err := reviewSourceGET(ctx, client, metadataURL, token, reviewSourceMetadataBytes)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("读取 PR head 信息: %w", err)
+		}
+		var metadata reviewSourceMetadata
+		if err := json.Unmarshal(metadataBody, &metadata); err != nil {
+			return nil, fmt.Errorf("解析 PR head 信息: %w", err)
+		}
+		if !reviewGitHubSHAPattern.MatchString(metadata.Head.SHA) {
+			return nil, fmt.Errorf("PR head SHA 无效")
+		}
+		headSHA = metadata.Head.SHA
+		if metadata.Head.Repo != nil && metadata.Head.Repo.FullName != "" {
+			owner, repo, err = reviewSourceFullName(metadata.Head.Repo.FullName)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	snapshot := &reviewSourceSnapshot{
-		base: base, owner: owner, repo: repo, headSHA: metadata.Head.SHA,
-		token: token, client: client, files: make(map[string]string, len(uniquePaths)),
+		base: base, owner: owner, repo: repo, headSHA: headSHA,
+		token: token, client: client, files: make(map[string]string, len(request.ExistingFiles)+len(uniquePaths)),
+	}
+	for filePath, content := range request.ExistingFiles {
+		snapshot.files[filePath] = content
+		snapshot.totalSize += len(content)
 	}
 	fetchFile := func(filePath string) bool {
 		_, err := snapshot.fetchPath(ctx, filePath)

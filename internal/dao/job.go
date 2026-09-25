@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type JobStore struct {
@@ -13,6 +14,7 @@ type JobStore struct {
 	jobs     map[string]*model.ReviewJob
 	revision map[string]int64
 	dir      string
+	leases   map[string]reviewLease
 }
 
 // Store is the persistence contract used by the review service.
@@ -41,9 +43,24 @@ type TraceDetailStore interface {
 	GetTraceDetails(id, traceID string) (*model.TraceEvent, bool, error)
 }
 
-func NewJobStore(dir string) *JobStore {
-	return &JobStore{jobs: map[string]*model.ReviewJob{}, revision: map[string]int64{}, dir: dir}
+// ReviewRecoveryStore provides durable review enumeration and an execution lease.
+type ReviewRecoveryStore interface {
+	ListRecoverableReviews() ([]*model.ReviewJob, error)
+	TryClaimReview(id, owner string, leaseUntil time.Time) (bool, error)
+	ReleaseReview(id, owner string) error
 }
+
+func NewJobStore(dir string) *JobStore {
+	store := &JobStore{jobs: map[string]*model.ReviewJob{}, revision: map[string]int64{}, dir: dir, leases: map[string]reviewLease{}}
+	_ = store.loadJobs()
+	return store
+}
+
+type reviewLease struct {
+	owner string
+	until time.Time
+}
+
 func (s *JobStore) Save(j *model.ReviewJob) error {
 	s.mu.Lock()
 	s.jobs[j.ID] = j
@@ -52,11 +69,93 @@ func (s *JobStore) Save(j *model.ReviewJob) error {
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return err
 	}
-	b, err := json.Marshal(j)
+	b, err := json.Marshal(struct {
+		*model.ReviewJob
+		CheckpointJSON string `json:"checkpoint_json,omitempty"`
+		BudgetMicros   int64  `json:"budget_micros,omitempty"`
+		SpentMicros    int64  `json:"spent_micros,omitempty"`
+		ReservedMicros int64  `json:"reserved_micros,omitempty"`
+	}{
+		ReviewJob:      j,
+		CheckpointJSON: j.CheckpointJSON,
+		BudgetMicros:   j.BudgetMicros,
+		SpentMicros:    j.SpentMicros,
+		ReservedMicros: j.ReservedMicros,
+	})
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(s.dir, j.ID+".json"), b, 0600)
+}
+
+func (s *JobStore) loadJobs() error {
+	entries, err := os.ReadDir(s.dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(s.dir, entry.Name()))
+		if err != nil {
+			return err
+		}
+		var persisted struct {
+			model.ReviewJob
+			CheckpointJSON string `json:"checkpoint_json"`
+			BudgetMicros   int64  `json:"budget_micros"`
+			SpentMicros    int64  `json:"spent_micros"`
+			ReservedMicros int64  `json:"reserved_micros"`
+		}
+		if err := json.Unmarshal(content, &persisted); err != nil {
+			return err
+		}
+		job := persisted.ReviewJob
+		job.CheckpointJSON = persisted.CheckpointJSON
+		job.BudgetMicros = persisted.BudgetMicros
+		job.SpentMicros = persisted.SpentMicros
+		job.ReservedMicros = persisted.ReservedMicros
+		s.jobs[job.ID] = &job
+		s.revision[job.ID] = 1
+	}
+	return nil
+}
+
+func (s *JobStore) ListRecoverableReviews() ([]*model.ReviewJob, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	reviews := []*model.ReviewJob{}
+	for _, job := range s.jobs {
+		if (job.Status == "queued" || job.Status == "running") && job.CheckpointJSON != "" {
+			reviews = append(reviews, reviewJobWithoutTraceDetails(job))
+		}
+	}
+	return reviews, nil
+}
+
+func (s *JobStore) TryClaimReview(id, owner string, leaseUntil time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	lease, exists := s.leases[id]
+	if exists && lease.until.After(now) && lease.owner != owner {
+		return false, nil
+	}
+	s.leases[id] = reviewLease{owner: owner, until: leaseUntil}
+	return true, nil
+}
+
+func (s *JobStore) ReleaseReview(id, owner string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if lease, exists := s.leases[id]; exists && lease.owner == owner {
+		delete(s.leases, id)
+	}
+	return nil
 }
 func (s *JobStore) Get(id string) (*model.ReviewJob, bool) {
 	s.mu.RLock()

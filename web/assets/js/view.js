@@ -81,6 +81,7 @@ function eventDetails(e) {
     (e.input || "—") +
     "\n\n输出\n" +
     (e.output || "—") +
+    (e.prompt ? "\n\n提示词\n" + e.prompt : "") +
     (e.model_reply ? "\n\n模型回复\n" + e.model_reply : "")
   );
 }
@@ -112,6 +113,8 @@ function renderTrace() {
         (e) =>
           '<details class="event" data-index="' +
           e.index +
+          '" data-trace-id="' +
+          esc(e.id) +
           '" ' +
           (opened.has(String(e.index)) ? "open" : "") +
           '><summary><span class="badge ' +
@@ -126,11 +129,11 @@ function renderTrace() {
               "未标注") +
               (e.cache_hit ? " · 解析缓存命中" : "") +
               " · " +
-              (e.output || e.input),
+              (e.status || e.model || "展开加载输入与输出"),
           ) +
           '</span></span><span class="time">' +
           durationLabel(e) +
-          "</span></summary><pre>" +
+          "</span></summary><pre data-event-details>" +
           esc(eventDetails(e)) +
           "</pre></details>",
       )
@@ -279,7 +282,8 @@ function renderOutcome() {
 }
 function render() {
   const trace = job?.trace || [],
-    comments = job?.comments || [];
+    comments = job?.comments || [],
+    modelTraces = trace.filter((e) => e.kind === "model_request");
   $("status").textContent = isDemo
     ? "示例预览"
     : terminal(job) && !job.finished_at
@@ -372,17 +376,24 @@ function render() {
     ? '<div class="source"><span class="badge input">USER</span><p>' +
       esc(job.source || "审查粘贴的代码 diff") +
       "</p></div>" +
-      trace
-        .filter((e) => e.model_reply)
-        .map(
+      (modelTraces.length
+        ? modelTraces
+            .map(
           (e) =>
             '<article class="comment"><span class="badge model">' +
             esc(e.tool) +
-            "</span><pre>" +
-            esc(e.model_reply) +
-            "</pre></article>",
-        )
-        .join("")
+            "</span>" +
+            (e.model_reply
+              ? "<pre>" + esc(e.model_reply) + "</pre>"
+              : traceDetailsLoaded(e.id)
+                ? '<p class="small muted">该模型调用没有文本回复。</p>'
+                : '<button type="button" data-trace-details="' +
+                  esc(e.id) +
+                  '">按需加载模型回复</button>') +
+            "</article>",
+            )
+            .join("")
+        : '<div class="empty"><b>暂无模型调用</b>模型回复会在按需加载后显示。</div>')
     : '<div class="empty"><b>开始一次有依据的代码审查</b>输入 PR / MR 链接，或展开输入框粘贴 diff。</div>';
   if (job?.error) $("error").textContent = job.error;
   metrics();

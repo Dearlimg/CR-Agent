@@ -1,3 +1,55 @@
+const loadedTraceDetails = new Set();
+
+function mergeReviewEvent(previous, update) {
+  const traces = new Map((previous?.trace || []).map((trace) => [trace.id, trace]));
+  for (const trace of update.trace || []) {
+    const existing = traces.get(trace.id) || {};
+    traces.set(trace.id, {
+      ...existing,
+      ...trace,
+      input: trace.input || existing.input || "",
+      output: trace.output || existing.output || "",
+      prompt: trace.prompt || existing.prompt || "",
+      model_reply: trace.model_reply || existing.model_reply || "",
+    });
+  }
+  const orderedTraces = [...traces.values()].sort((a, b) => {
+    const startA = Date.parse(a.started_at || a.at) || 0;
+    const startB = Date.parse(b.started_at || b.at) || 0;
+    return startA - startB || String(a.id).localeCompare(String(b.id));
+  });
+  return {
+    ...previous,
+    ...update,
+    comments: update.comments || previous?.comments || [],
+    todos: update.todos || previous?.todos || [],
+    trace: orderedTraces,
+  };
+}
+
+async function loadTraceDetails(traceID) {
+  if (!job || !traceID) return null;
+  const jobID = job.id;
+  const cacheKey = jobID + ":" + traceID;
+  const current = job.trace?.find((trace) => trace.id === traceID);
+  if (loadedTraceDetails.has(cacheKey)) return current || null;
+  const response = await fetch(
+    "/api/reviews/" + encodeURIComponent(jobID) + "/traces/" + encodeURIComponent(traceID),
+  );
+  const detail = await response.json();
+  if (!response.ok) throw Error(detail.error || "读取 trace 详情失败");
+  if (job?.id !== jobID) return null;
+  const index = (job.trace || []).findIndex((trace) => trace.id === traceID);
+  if (index < 0) return null;
+  job.trace[index] = { ...job.trace[index], ...detail };
+  loadedTraceDetails.add(cacheKey);
+  return job.trace[index];
+}
+
+function traceDetailsLoaded(traceID) {
+  return Boolean(job && loadedTraceDetails.has(job.id + ":" + traceID));
+}
+
 function connect(id) {
   closeStream();
   const token = version;
@@ -7,7 +59,7 @@ function connect(id) {
   stream.addEventListener("review", (e) => {
     if (token !== version) return;
     try {
-      job = JSON.parse(e.data);
+      job = mergeReviewEvent(job, JSON.parse(e.data));
       if (finalSnapshot(job)) {
         closeStream();
         busy = false;

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"CR-Agent/internal/dao"
 	"CR-Agent/internal/logic"
 	"CR-Agent/internal/model"
 	"github.com/gin-gonic/gin"
@@ -17,6 +18,7 @@ func (c *ReviewController) Register(r *gin.Engine) {
 	r.POST("/api/reviews", c.create)
 	r.GET("/api/reviews/:id", c.get)
 	r.GET("/api/reviews/:id/events", c.events)
+	r.GET("/api/reviews/:id/traces/:traceID", c.traceDetails)
 	r.GET("/api/memories", c.listMemories)
 	r.POST("/api/memories", c.saveMemory)
 	r.POST("/api/tasks", c.createTask)
@@ -249,11 +251,58 @@ func (c *ReviewController) events(x *gin.Context) {
 	x.Header("Content-Type", "text/event-stream")
 	x.Header("Cache-Control", "no-cache")
 	x.Header("Connection", "keep-alive")
+	x.Header("X-Accel-Buffering", "no")
 	flusher, ok := x.Writer.(http.Flusher)
 	if !ok {
 		x.Status(http.StatusInternalServerError)
 		return
 	}
+	if store, ok := c.Service.Store.(dao.ReviewEventStore); ok {
+		c.streamReviewUpdates(x, flusher, store)
+		return
+	}
+	c.streamReviewSnapshots(x, flusher)
+}
+
+func (c *ReviewController) streamReviewUpdates(x *gin.Context, flusher http.Flusher, store dao.ReviewEventStore) {
+	const pollInterval = time.Second
+	var version int64
+	var traceCursor uint
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		update, found, err := store.GetReviewEventSnapshot(x.Param("id"), version, traceCursor)
+		if err != nil {
+			x.SSEvent("error", gin.H{"error": "读取 review 状态失败"})
+			flusher.Flush()
+			return
+		}
+		if !found {
+			x.SSEvent("error", gin.H{"error": "review 不存在"})
+			flusher.Flush()
+			return
+		}
+		version = update.Version
+		traceCursor = update.TraceCursor
+		if update.Changed && update.Job != nil {
+			terminal := reviewTerminal(update.Job.Status)
+			x.SSEvent("review", update.Job)
+			flusher.Flush()
+			if terminal && update.Job.FinishedAt != nil {
+				return
+			}
+		}
+		select {
+		case <-x.Request.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (c *ReviewController) streamReviewSnapshots(x *gin.Context, flusher http.Flusher) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 	for {
 		j, found := c.Service.Store.Get(x.Param("id"))
 		if !found {
@@ -272,9 +321,27 @@ func (c *ReviewController) events(x *gin.Context) {
 		select {
 		case <-x.Request.Context().Done():
 			return
-		case <-time.After(250 * time.Millisecond):
+		case <-ticker.C:
 		}
 	}
+}
+
+func (c *ReviewController) traceDetails(x *gin.Context) {
+	store, ok := c.Service.Store.(dao.TraceDetailStore)
+	if !ok {
+		x.JSON(http.StatusNotImplemented, gin.H{"error": "trace 详情不可用"})
+		return
+	}
+	trace, found, err := store.GetTraceDetails(x.Param("id"), x.Param("traceID"))
+	if err != nil {
+		x.JSON(http.StatusInternalServerError, gin.H{"error": "读取 trace 详情失败"})
+		return
+	}
+	if !found {
+		x.JSON(http.StatusNotFound, gin.H{"error": "trace 不存在"})
+		return
+	}
+	x.JSON(http.StatusOK, trace)
 }
 
 func reviewTerminal(status string) bool {

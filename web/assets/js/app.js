@@ -56,8 +56,48 @@ $("lanes").onclick = (e) => {
     }
   }
 };
-$("export").onclick = () => {
+document.addEventListener(
+  "toggle",
+  async (e) => {
+    const card = e.target.closest?.("details.event");
+    if (!card || !card.open || card.dataset.detailsLoaded) return;
+    card.dataset.detailsLoaded = "loading";
+    const details = card.querySelector("[data-event-details]");
+    if (details) details.textContent = "正在读取 trace 详情…";
+    try {
+      const trace = await loadTraceDetails(card.dataset.traceId);
+      if (!trace || !details) return;
+      card.dataset.detailsLoaded = "true";
+      details.textContent = eventDetails(trace);
+    } catch (error) {
+      card.dataset.detailsLoaded = "";
+      if (details) details.textContent = "读取失败：" + error.message;
+    }
+  },
+  true,
+);
+$("conversation").onclick = async (e) => {
+  const button = e.target.closest("[data-trace-details]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await loadTraceDetails(button.dataset.traceDetails);
+    render();
+  } catch (error) {
+    button.disabled = false;
+    $("error").textContent = error.message;
+  }
+};
+$("export").onclick = async () => {
   if (!job) return;
+  if (!isDemo) {
+    try {
+      await Promise.all((job.trace || []).map((trace) => loadTraceDetails(trace.id)));
+    } catch (error) {
+      $("error").textContent = "导出失败：" + error.message;
+      return;
+    }
+  }
   const url = URL.createObjectURL(
     new Blob([JSON.stringify(job, null, 2)], { type: "application/json" }),
   );

@@ -102,15 +102,149 @@ func (s *MySQLStore) Save(job *model.ReviewJob) error {
 
 func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 	var row model.DBReviewJob
-	query := s.db.Where("public_id = ?", id).
-		Preload("Comments").
-		Preload("Traces", func(db *gorm.DB) *gorm.DB {
-			return db.Order("started_at asc, id asc")
+	query := s.db.Model(&model.DBReviewJob{}).
+		Select(reviewJobColumns()).
+		Where("public_id = ?", id).
+		Preload("Comments", func(db *gorm.DB) *gorm.DB {
+			return db.Select(reviewCommentColumns())
 		}).
-		Preload("Todos")
+		Preload("Traces", func(db *gorm.DB) *gorm.DB {
+			return db.Select(reviewTraceMetadataColumns()).Order("started_at asc, id asc")
+		}).
+		Preload("Todos", func(db *gorm.DB) *gorm.DB {
+			return db.Select(reviewTodoColumns())
+		})
 	if query.First(&row).Error != nil {
 		return nil, false
 	}
+	job := reviewJobFromDB(row)
+	var messages []model.DBTeamMessage
+	if err := s.db.Select("message_id", "from_agent", "to_agent", "message_type", "job_id", "content", "created_at").
+		Where("job_id = ?", id).Order("created_at asc").Find(&messages).Error; err == nil {
+		for _, message := range messages {
+			job.TeamEvents = append(job.TeamEvents, model.TeamEvent{
+				ID:      message.MessageID,
+				From:    message.FromAgent,
+				To:      message.ToAgent,
+				Type:    message.MessageType,
+				TaskID:  message.JobID,
+				Content: message.Content,
+				At:      message.CreatedAt,
+			})
+		}
+	}
+	return job, true
+}
+
+func (s *MySQLStore) GetReviewEventSnapshot(id string, afterVersion int64, afterTraceCursor uint) (*ReviewEventSnapshot, bool, error) {
+	var row model.DBReviewJob
+	err := s.db.Model(&model.DBReviewJob{}).
+		Select(reviewJobColumns()).
+		Where("public_id = ?", id).
+		First(&row).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	snapshot := &ReviewEventSnapshot{Version: row.Version, TraceCursor: afterTraceCursor}
+	if row.Version <= afterVersion {
+		return snapshot, true, nil
+	}
+
+	job := reviewJobFromDB(row)
+	var comments []model.DBReviewComment
+	if err := s.db.Select(reviewCommentColumns()).Where("job_id = ?", row.ID).Find(&comments).Error; err != nil {
+		return nil, false, err
+	}
+	for _, comment := range comments {
+		job.Comments = append(job.Comments, reviewCommentFromDB(comment))
+	}
+	var todos []model.DBTodoItem
+	if err := s.db.Select(reviewTodoColumns()).Where("job_id = ?", row.ID).Find(&todos).Error; err != nil {
+		return nil, false, err
+	}
+	for _, todo := range todos {
+		job.Todos = append(job.Todos, model.TodoItem{
+			Content: todo.Content,
+			Status:  todo.Status,
+			Order:   todo.SortOrder,
+		})
+	}
+	var traces []model.DBTraceEvent
+	if err := s.db.Select(reviewTraceMetadataColumns()).
+		Where("job_id = ? AND id > ?", row.ID, afterTraceCursor).
+		Order("id asc").Find(&traces).Error; err != nil {
+		return nil, false, err
+	}
+	for _, trace := range traces {
+		job.Trace = append(job.Trace, traceEventFromDB(trace, false))
+		if trace.ID > snapshot.TraceCursor {
+			snapshot.TraceCursor = trace.ID
+		}
+	}
+	snapshot.Job = job
+	snapshot.Changed = true
+	return snapshot, true, nil
+}
+
+func (s *MySQLStore) GetTraceDetails(id, traceID string) (*model.TraceEvent, bool, error) {
+	var job model.DBReviewJob
+	if err := s.db.Select("id").Where("public_id = ?", id).First(&job).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	var trace model.DBTraceEvent
+	err := s.db.Select(reviewTraceDetailColumns()).
+		Where("job_id = ? AND trace_id = ?", job.ID, traceID).
+		First(&trace).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	result := traceEventFromDB(trace, true)
+	return &result, true, nil
+}
+
+func reviewJobColumns() []string {
+	return []string{
+		"id", "public_id", "task_id", "background_task_id", "source_url", "status", "review_outcome",
+		"review_scope_json", "budget_micros", "spent_micros", "budget_cents", "spent_cents", "error_message",
+		"version", "created_at", "started_at", "finished_at", "updated_at",
+	}
+}
+
+func reviewCommentColumns() []string {
+	return []string{
+		"id", "job_id", "trace_id", "file", "line", "severity", "confidence", "body", "evidence", "trigger",
+		"impact", "suggestion", "verification_status", "verification_reason",
+	}
+}
+
+func reviewTraceMetadataColumns() []string {
+	return []string{
+		"id", "job_id", "trace_id", "parent_id", "kind", "status", "round", "retry_count", "input_tokens",
+		"output_tokens", "model", "cost_micros", "estimated_cost", "input_price_yuan_per_million",
+		"output_price_yuan_per_million", "finish_reason", "origin", "cache_hit", "tool_call_id", "tool_version",
+		"input_digest", "tool", "phase", "duration_ms", "started_at", "ended_at", "created_at",
+	}
+}
+
+func reviewTraceDetailColumns() []string {
+	columns := reviewTraceMetadataColumns()
+	return append(columns, "input", "output", "prompt", "model_reply")
+}
+
+func reviewTodoColumns() []string {
+	return []string{"id", "job_id", "content", "status", "sort_order"}
+}
+
+func reviewJobFromDB(row model.DBReviewJob) *model.ReviewJob {
 	startedAt := row.StartedAt
 	if startedAt == nil {
 		startedAt = &row.CreatedAt
@@ -147,57 +281,10 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 		_ = json.Unmarshal([]byte(row.ReviewScopeJSON), &job.ReviewScope)
 	}
 	for _, comment := range row.Comments {
-		job.Comments = append(job.Comments, model.ReviewComment{
-			File:               comment.File,
-			Line:               comment.Line,
-			Severity:           comment.Severity,
-			Confidence:         comment.Confidence,
-			Body:               comment.Body,
-			Evidence:           comment.Evidence,
-			Trigger:            comment.Trigger,
-			Impact:             comment.Impact,
-			Suggestion:         comment.Suggestion,
-			VerificationStatus: comment.VerificationStatus,
-			VerificationReason: comment.VerificationReason,
-			TraceID:            comment.TraceID,
-		})
+		job.Comments = append(job.Comments, reviewCommentFromDB(comment))
 	}
 	for _, trace := range row.Traces {
-		traceStartedAt := trace.StartedAt
-		if traceStartedAt == nil {
-			traceStartedAt = &trace.CreatedAt
-		}
-		job.Trace = append(job.Trace, model.TraceEvent{
-			ID:                        trace.TraceID,
-			ParentID:                  trace.ParentID,
-			Kind:                      trace.Kind,
-			Status:                    trace.Status,
-			Round:                     trace.Round,
-			RetryCount:                trace.RetryCount,
-			InputTokens:               trace.InputTokens,
-			OutputTokens:              trace.OutputTokens,
-			Model:                     trace.Model,
-			CostMicros:                trace.CostMicros,
-			EstimatedCost:             trace.EstimatedCost,
-			InputPriceYuanPerMillion:  trace.InputPriceYuanPerMillion,
-			OutputPriceYuanPerMillion: trace.OutputPriceYuanPerMillion,
-			FinishReason:              trace.FinishReason,
-			Origin:                    trace.Origin,
-			CacheHit:                  trace.CacheHit,
-			ToolCallID:                trace.ToolCallID,
-			ToolVersion:               trace.ToolVersion,
-			InputDigest:               trace.InputDigest,
-			Tool:                      trace.Tool,
-			Input:                     trace.Input,
-			Output:                    trace.Output,
-			Prompt:                    trace.Prompt,
-			ModelReply:                trace.ModelReply,
-			DurationMs:                trace.DurationMs,
-			StartedAt:                 *traceStartedAt,
-			EndedAt:                   trace.EndedAt,
-			At:                        trace.CreatedAt,
-			Phase:                     trace.Phase,
-		})
+		job.Trace = append(job.Trace, traceEventFromDB(trace, false))
 	}
 	for _, todo := range row.Todos {
 		job.Todos = append(job.Todos, model.TodoItem{
@@ -206,21 +293,65 @@ func (s *MySQLStore) Get(id string) (*model.ReviewJob, bool) {
 			Order:   todo.SortOrder,
 		})
 	}
-	var messages []model.DBTeamMessage
-	if err := s.db.Where("job_id = ?", id).Order("created_at asc").Find(&messages).Error; err == nil {
-		for _, message := range messages {
-			job.TeamEvents = append(job.TeamEvents, model.TeamEvent{
-				ID:      message.MessageID,
-				From:    message.FromAgent,
-				To:      message.ToAgent,
-				Type:    message.MessageType,
-				TaskID:  message.JobID,
-				Content: message.Content,
-				At:      message.CreatedAt,
-			})
-		}
+	return job
+}
+
+func reviewCommentFromDB(comment model.DBReviewComment) model.ReviewComment {
+	return model.ReviewComment{
+		File:               comment.File,
+		Line:               comment.Line,
+		Severity:           comment.Severity,
+		Confidence:         comment.Confidence,
+		Body:               comment.Body,
+		Evidence:           comment.Evidence,
+		Trigger:            comment.Trigger,
+		Impact:             comment.Impact,
+		Suggestion:         comment.Suggestion,
+		VerificationStatus: comment.VerificationStatus,
+		VerificationReason: comment.VerificationReason,
+		TraceID:            comment.TraceID,
 	}
-	return job, true
+}
+
+func traceEventFromDB(trace model.DBTraceEvent, includeDetails bool) model.TraceEvent {
+	traceStartedAt := trace.StartedAt
+	if traceStartedAt == nil {
+		traceStartedAt = &trace.CreatedAt
+	}
+	event := model.TraceEvent{
+		ID:                        trace.TraceID,
+		ParentID:                  trace.ParentID,
+		Kind:                      trace.Kind,
+		Status:                    trace.Status,
+		Round:                     trace.Round,
+		RetryCount:                trace.RetryCount,
+		InputTokens:               trace.InputTokens,
+		OutputTokens:              trace.OutputTokens,
+		Model:                     trace.Model,
+		CostMicros:                trace.CostMicros,
+		EstimatedCost:             trace.EstimatedCost,
+		InputPriceYuanPerMillion:  trace.InputPriceYuanPerMillion,
+		OutputPriceYuanPerMillion: trace.OutputPriceYuanPerMillion,
+		FinishReason:              trace.FinishReason,
+		Origin:                    trace.Origin,
+		CacheHit:                  trace.CacheHit,
+		ToolCallID:                trace.ToolCallID,
+		ToolVersion:               trace.ToolVersion,
+		InputDigest:               trace.InputDigest,
+		Tool:                      trace.Tool,
+		DurationMs:                trace.DurationMs,
+		StartedAt:                 *traceStartedAt,
+		EndedAt:                   trace.EndedAt,
+		At:                        trace.CreatedAt,
+		Phase:                     trace.Phase,
+	}
+	if includeDetails {
+		event.Input = trace.Input
+		event.Output = trace.Output
+		event.Prompt = trace.Prompt
+		event.ModelReply = trace.ModelReply
+	}
+	return event
 }
 
 func (s *MySQLStore) RecordToolCall(jobPublicID, traceID, tool, status, input, output, callErr string, durationMs int64) error {

@@ -3,6 +3,7 @@ package logic
 import (
 	"CR-Agent/internal/model"
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -11,6 +12,27 @@ import (
 )
 
 var filePattern = regexp.MustCompile(`^diff --git a/(.+) b/(.+)$`)
+
+func normalizeReviewFindingsJSON(raw string) (string, []ReviewFinding, error) {
+	findings, err := parseFindingsStrict(raw)
+	if err != nil {
+		return "", nil, fmt.Errorf("finding JSON 无效：%w", err)
+	}
+	if len(findings) == 0 {
+		return "", nil, fmt.Errorf("finding JSON 不能为空数组")
+	}
+
+	encoded, err := json.Marshal(findings)
+	if err != nil {
+		return "", nil, fmt.Errorf("finding JSON 规范化失败：%w", err)
+	}
+	normalized := sanitizeModelReply(string(encoded))
+	safeFindings, err := parseFindingsStrict(normalized)
+	if err != nil {
+		return "", nil, fmt.Errorf("finding JSON 脱敏后无效：%w", err)
+	}
+	return normalized, safeFindings, nil
+}
 
 func parseDiffTool(_ context.Context, in ToolInput) (ToolResult, error) {
 	files := []string{}

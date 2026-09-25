@@ -76,6 +76,9 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		// Summaries and memory extraction do not need side-effecting tools.
 		harness.tools = map[string]harnessTool{}
 	}
+	if setup, ok := ctx.Value(reviewFindingJSONToolSetupKey{}).(func(*ReviewHarness)); ok {
+		setup(harness)
+	}
 	harness.Model = func(ctx context.Context, messages []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
 		var bound modeloptions.ToolCallingChatModel = chat
 		if len(tools) > 0 {

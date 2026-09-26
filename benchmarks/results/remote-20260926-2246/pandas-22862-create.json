@@ -1,0 +1,83 @@
+﻿{
+    "id":  "c479ee48b69f60f1",
+    "task_id":  "task_fb86abef",
+    "background_task_id":  "bg_0824f942",
+    "status":  "queued",
+    "review_scope":  {
+                         "files_reviewed":  0,
+                         "added_lines":  0,
+                         "tests_ran":  false,
+                         "checks":  [
+
+                                    ]
+                     },
+    "source":  "https://github.com/pandas-dev/pandas/pull/22862",
+    "comments":  [
+
+                 ],
+    "todos":  [
+                  {
+                      "content":  "扫描并解析代码变更",
+                      "status":  "pending",
+                      "order":  0
+                  },
+                  {
+                      "content":  "执行单 Agent 代码审查",
+                      "status":  "pending",
+                      "order":  1
+                  },
+                  {
+                      "content":  "核对代码证据、第二轮复核并去重审查发现",
+                      "status":  "pending",
+                      "order":  2
+                  }
+              ],
+    "trace":  [
+                  {
+                      "id":  "a831b3df67cdca33",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_create",
+                      "input":  "代码审查: https://github.com/pandas-dev/pandas/pull/22862",
+                      "output":  "task_fb86abef",
+                      "at":  "2026-09-26T14:46:11.765122809Z",
+                      "started_at":  "2026-09-26T14:46:11.707155334Z",
+                      "ended_at":  "2026-09-26T14:46:11.765122809Z",
+                      "duration_ms":  57,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "fcd5e6d6f569bcd1",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_claim",
+                      "input":  "task_fb86abef",
+                      "output":  "owner=review-agent",
+                      "at":  "2026-09-26T14:46:11.978157935Z",
+                      "started_at":  "2026-09-26T14:46:11.765241395Z",
+                      "ended_at":  "2026-09-26T14:46:11.978157935Z",
+                      "duration_ms":  212,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "65ef2227438f754b",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "background_create",
+                      "input":  "代码审查",
+                      "output":  "bg_0824f942",
+                      "at":  "2026-09-26T14:46:12.025142041Z",
+                      "started_at":  "2026-09-26T14:46:11.978299359Z",
+                      "ended_at":  "2026-09-26T14:46:12.025142041Z",
+                      "duration_ms":  46,
+                      "phase":  "background"
+                  }
+              ],
+    "team_events":  [
+
+                    ],
+    "budget_yuan":  10,
+    "spent_yuan":  0,
+    "started_at":  "2026-09-26T14:46:11.707032952Z",
+    "updated_at":  "2026-09-26T14:46:11.707032952Z"
+}

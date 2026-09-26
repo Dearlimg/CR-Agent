@@ -1,0 +1,82 @@
+﻿{
+    "job_id":  "c1478a47faa6b058",
+    "case":  "gin-4224",
+    "fetched":  "2026-09-26T22:58:11.9168324+08:00",
+    "tool_events":  5,
+    "details":  {
+                    "561a31b45eb3ee96":  {
+                                             "id":  "561a31b45eb3ee96",
+                                             "kind":  "tool",
+                                             "status":  "succeeded",
+                                             "origin":  "orchestrator",
+                                             "tool":  "diff_fetcher",
+                                             "input":  "https://github.com/gin-gonic/gin/pull/4224",
+                                             "output":  "diff_bytes=670",
+                                             "at":  "2026-09-26T22:46:14.53+08:00",
+                                             "started_at":  "2026-09-26T22:46:13.931+08:00",
+                                             "ended_at":  "2026-09-26T22:46:14.53+08:00",
+                                             "duration_ms":  599,
+                                             "phase":  "action"
+                                         },
+                    "7b1717e50d606053":  {
+                                             "id":  "7b1717e50d606053",
+                                             "kind":  "tool",
+                                             "status":  "succeeded",
+                                             "origin":  "model",
+                                             "tool_call_id":  "call_01_7MmvXOuqqcyi4Bg4yxya0456",
+                                             "tool":  "get_review_context",
+                                             "input":  "{\"query\": \"AsciiJSON\", \"file\": \"render/json.go\"}",
+                                             "output":  "固定提交源码 1911860538/gin@f936e6225985cd529891e68323d9664582341f00；文件数=1；命中段=6\nfile: render/json.go; match line: 40; range: 28-52\n28 | // SecureJSON contains the given interface object and its prefix.\n29 | type SecureJSON struct {\n30 | \tPrefix string\n31 | \tData   any\n32 | }\n33 | \n34 | // JsonpJSON contains the given interface object its callback.\n35 | type JsonpJSON struct {\n36 | \tCallback string\n37 | \tData     any\n38 | }\n39 | \n40 | // AsciiJSON contains the given interface object.\n41 | type AsciiJSON struct {\n42 | \tData any\n43 | }\n44 | \n45 | // PureJSON contains the given interface object.\n46 | type PureJSON struct {\n47 | \tData any\n48 | }\n49 | \n50 | var (\n51 | \tjsonContentType      = []string{\"application/json; charset=utf-8\"}\n52 | \tjsonpContentType     = []string{\"application/javascript; charset=utf-8\"}\nfile: render/json.go; match line: 41; range: 29-53\n29 | type SecureJSON struct {\n30 | \tPrefix string\n31 | \tData   any\n32 | }\n33 | \n34 | // JsonpJSON contains the given interface object its callback.\n35 | type JsonpJSON struct {\n36 | \tCallback string\n37 | \tData     any\n38 | }\n39 | \n40 | // AsciiJSON contains the given interface object.\n41 | type AsciiJSON struct {\n42 | \tData any\n43 | }\n44 | \n45 | // PureJSON contains the given interface object.\n46 | type PureJSON struct {\n47 | \tData any\n48 | }\n49 | \n50 | var (\n51 | \tjsonContentType      = []string{\"application/json; charset=utf-8\"}\n52 | \tjsonpContentType     = []string{\"application/javascript; charset=utf-8\"}\n53 | \tjsonASCIIContentType = []string{\"application/json\"}\nfile: render/json.go; match line: 154; range: 142-166\n142 | \tif _, err = w.Write(bytesconv.StringToBytes(\");\")); err != nil {\n143 | \t\treturn err\n144 | \t}\n145 | \n146 | \treturn nil\n147 | }\n148 | \n149 | // WriteContentType (JsonpJSON) writes Javascript ContentType.\n150 | func (r JsonpJSON) WriteContentType(w http.ResponseWriter) {\n151 | \twriteContentType(w, jsonpContentType)\n152 | }\n153 | \n154 | // Render (AsciiJSON) marshals the given interface object and writes it with custom ContentType.\n155 | func (r AsciiJSON) Render(w http.ResponseWriter) error {\n156 | \tr.WriteContentType(w)\n157 | \tret, err := json.Marshal(r.Data)\n158 | \tif err != nil {\n159 | \t\treturn err\n160 | \t}\n161 | \n162 | \tvar buffer bytes.Buffer\n163 | \tescapeBuf := make([]byte, 0, 6) // Preallocate 6 bytes for Unicode escape sequences\n164 | \n165 | \tfor _, r := range bytesconv.BytesToString(ret) {\n166 | \t\tif r \u003e unicode.MaxASCII {\nfile: render/json.go; match line: 155; range: 143-167\n143 | \t\treturn err\n144 | \t}\n145 | \n146 | \treturn nil\n147 | }\n148 | \n149 | // WriteContentType (JsonpJSON) writes Javascript ContentType.\n150 | func (r JsonpJSON) WriteContentType(w http.ResponseWriter) {\n151 | \twriteContentType(w, jsonpContentType)\n152 | }\n153 | \n154 | // Render (AsciiJSON) marshals the given interface object and writes it with custom ContentType.\n155 | func (r AsciiJSON) Render(w http.ResponseWriter) error {\n156 | \tr.WriteContentType(w)\n157 | \tret, err := json.Marshal(r.Data)\n158 | \tif err != nil {\n159 | \t\treturn err\n160 | \t}\n161 | \n162 | \tvar buffer bytes.Buffer\n163 | \tescapeBuf := make([]byte, 0, 6) // Preallocate 6 bytes for Unicode escape sequences\n164 | \n165 | \tfor _, r := range bytesconv.BytesToString(ret) {\n166 | \t\tif r \u003e unicode.MaxASCII {\n167 | \t\t\tescapeBuf = fmt.Appendf(escapeBuf[:0], \"\\\\u%04x\", r) // Reuse escapeBuf\nfile: render/json.go; match line: 178; range: 166-190\n166 | \t\tif r \u003e unicode.MaxASCII {\n167 | \t\t\tescapeBuf = fmt.Appendf(escapeBuf[:0], \"\\\\u%04x\", r) // Reuse escapeBuf\n168 | \t\t\tbuffer.Write(escapeBuf)\n169 | \t\t} else {\n170 | \t\t\tbuffer.WriteByte(byte(r))\n171 | \t\t}\n172 | \t}\n173 | \n174 | \t_, err = w.Write(buffer.Bytes())\n175 | \treturn err\n176 | }\n177 | \n178 | // WriteContentType (AsciiJSON) writes JSON ContentType.\n179 | func (r AsciiJSON) WriteContentType(w http.ResponseWriter) {\n180 | \twriteContentType(w, jsonASCIIContentType)\n181 | }\n182 | \n183 | // Render (PureJSON) writes custom ContentType and encodes the given interface object.\n184 | func (r PureJSON) Render(w http.ResponseWriter) error {\n185 | \tr.WriteContentType(w)\n186 | \tencoder := json.NewEncoder(w)\n187 | \tencoder.SetEscapeHTML(false)\n188 | \treturn encoder.Encode(r.Data)\n189 | }\n190 | \nfile: render/json.go; match line: 179; range: 167-191\n167 | \t\t\tescapeBuf = fmt.Appendf(escapeBuf[:0], \"\\\\u%04x\", r) // Reuse escapeBuf\n168 | \t\t\tbuffer.Write(escapeBuf)\n169 | \t\t} else {\n170 | \t\t\tbuffer.WriteByte(byte(r))\n171 | \t\t}\n172 | \t}\n173 | \n174 | \t_, err = w.Write(buffer.Bytes())\n175 | \treturn err\n176 | }\n177 | \n178 | // WriteContentType (AsciiJSON) writes JSON ContentType.\n179 | func (r AsciiJSON) WriteContentType(w http.ResponseWriter) {\n180 | \twriteContentType(w, jsonASCIIContentType)\n181 | }\n182 | \n183 | // Render (PureJSON) writes custom ContentType and encodes the given interface object.\n184 | func (r PureJSON) Render(w http.ResponseWriter) error {\n185 | \tr.WriteContentType(w)\n186 | \tencoder := json.NewEncoder(w)\n187 | \tencoder.SetEscapeHTML(false)\n188 | \treturn encoder.Encode(r.Data)\n189 | }\n190 | \n191 | // WriteContentType (PureJSON) writes custom ContentType.\n",
+                                             "at":  "2026-09-26T22:46:18.266+08:00",
+                                             "started_at":  "2026-09-26T22:46:18.265+08:00",
+                                             "ended_at":  "2026-09-26T22:46:18.266+08:00",
+                                             "duration_ms":  1,
+                                             "phase":  "harness"
+                                         },
+                    "8bb162e3f59d8f2e":  {
+                                             "id":  "8bb162e3f59d8f2e",
+                                             "kind":  "tool",
+                                             "status":  "succeeded",
+                                             "origin":  "orchestrator",
+                                             "tool":  "source_context_prepare",
+                                             "input":  "准备首轮按需读取 PR 源码",
+                                             "output":  "固定 head 源码工具已准备，可按需拉取文件",
+                                             "at":  "2026-09-26T22:46:15.716+08:00",
+                                             "started_at":  "2026-09-26T22:46:15.253+08:00",
+                                             "ended_at":  "2026-09-26T22:46:15.716+08:00",
+                                             "duration_ms":  463,
+                                             "phase":  "review"
+                                         },
+                    "9cb0c587bf26e3f9":  {
+                                             "id":  "9cb0c587bf26e3f9",
+                                             "kind":  "tool",
+                                             "status":  "succeeded",
+                                             "origin":  "model",
+                                             "tool_call_id":  "call_00_Tgeaf5K4VlpauvrnbKmW8665",
+                                             "tool":  "get_review_context",
+                                             "input":  "{\"file\": \"render/json.go\", \"start_line\": 130, \"end_line\": 200}",
+                                             "output":  "固定提交源码 1911860538/gin@f936e6225985cd529891e68323d9664582341f00；file: render/json.go；lines: 130-195\n130 | \tif _, err = w.Write(bytesconv.StringToBytes(callback)); err != nil {\n131 | \t\treturn err\n132 | \t}\n133 | \n134 | \tif _, err = w.Write(bytesconv.StringToBytes(\"(\")); err != nil {\n135 | \t\treturn err\n136 | \t}\n137 | \n138 | \tif _, err = w.Write(ret); err != nil {\n139 | \t\treturn err\n140 | \t}\n141 | \n142 | \tif _, err = w.Write(bytesconv.StringToBytes(\");\")); err != nil {\n143 | \t\treturn err\n144 | \t}\n145 | \n146 | \treturn nil\n147 | }\n148 | \n149 | // WriteContentType (JsonpJSON) writes Javascript ContentType.\n150 | func (r JsonpJSON) WriteContentType(w http.ResponseWriter) {\n151 | \twriteContentType(w, jsonpContentType)\n152 | }\n153 | \n154 | // Render (AsciiJSON) marshals the given interface object and writes it with custom ContentType.\n155 | func (r AsciiJSON) Render(w http.ResponseWriter) error {\n156 | \tr.WriteContentType(w)\n157 | \tret, err := json.Marshal(r.Data)\n158 | \tif err != nil {\n159 | \t\treturn err\n160 | \t}\n161 | \n162 | \tvar buffer bytes.Buffer\n163 | \tescapeBuf := make([]byte, 0, 6) // Preallocate 6 bytes for Unicode escape sequences\n164 | \n165 | \tfor _, r := range bytesconv.BytesToString(ret) {\n166 | \t\tif r \u003e unicode.MaxASCII {\n167 | \t\t\tescapeBuf = fmt.Appendf(escapeBuf[:0], \"\\\\u%04x\", r) // Reuse escapeBuf\n168 | \t\t\tbuffer.Write(escapeBuf)\n169 | \t\t} else {\n170 | \t\t\tbuffer.WriteByte(byte(r))\n171 | \t\t}\n172 | \t}\n173 | \n174 | \t_, err = w.Write(buffer.Bytes())\n175 | \treturn err\n176 | }\n177 | \n178 | // WriteContentType (AsciiJSON) writes JSON ContentType.\n179 | func (r AsciiJSON) WriteContentType(w http.ResponseWriter) {\n180 | \twriteContentType(w, jsonASCIIContentType)\n181 | }\n182 | \n183 | // Render (PureJSON) writes custom ContentType and encodes the given interface object.\n184 | func (r PureJSON) Render(w http.ResponseWriter) error {\n185 | \tr.WriteContentType(w)\n186 | \tencoder := json.NewEncoder(w)\n187 | \tencoder.SetEscapeHTML(false)\n188 | \treturn encoder.Encode(r.Data)\n189 | }\n190 | \n191 | // WriteContentType (PureJSON) writes custom ContentType.\n192 | func (r PureJSON) WriteContentType(w http.ResponseWriter) {\n193 | \twriteContentType(w, jsonContentType)\n194 | }\n195 | \n",
+                                             "at":  "2026-09-26T22:46:18.187+08:00",
+                                             "started_at":  "2026-09-26T22:46:17.789+08:00",
+                                             "ended_at":  "2026-09-26T22:46:18.187+08:00",
+                                             "duration_ms":  398,
+                                             "phase":  "harness"
+                                         },
+                    "313552efb8e3bc89":  {
+                                             "id":  "313552efb8e3bc89",
+                                             "kind":  "tool",
+                                             "status":  "succeeded",
+                                             "origin":  "orchestrator",
+                                             "tool_version":  "review-preflight-v2",
+                                             "input_digest":  "d7ed721dbc76c80675f740c6179e60db0b105153c7db0c7906f442fd0838fbc1",
+                                             "tool":  "preflight_analysis",
+                                             "input":  "解析 diff、扫描密钥并执行一次确定性检查",
+                                             "output":  "files=1 diff_added_lines=2 dependency_files=0 secret_findings=0 analysis_cache_hit=false",
+                                             "at":  "2026-09-26T22:46:14.679+08:00",
+                                             "started_at":  "2026-09-26T22:46:14.678+08:00",
+                                             "ended_at":  "2026-09-26T22:46:14.679+08:00",
+                                             "duration_ms":  1,
+                                             "phase":  "action"
+                                         }
+                }
+}

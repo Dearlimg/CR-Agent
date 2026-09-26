@@ -14,6 +14,7 @@ import (
 type reviewModelProvider struct {
 	chat                *openai.ChatModel
 	pricing             reviewModelPricing
+	maxOutputTokens     int
 	useDeepSeekThinking bool
 }
 
@@ -58,6 +59,7 @@ func newReviewModelRouter(ctx context.Context, cfg Config) (*reviewModelRouter, 
 	primaryProvider := &reviewModelProvider{
 		chat:                primary,
 		pricing:             primaryPricing,
+		maxOutputTokens:     deepSeekMaxOutputTokens,
 		useDeepSeekThinking: true,
 	}
 	router := &reviewModelRouter{
@@ -80,7 +82,8 @@ func newReviewModelRouter(ctx context.Context, cfg Config) (*reviewModelRouter, 
 		return nil, fmt.Errorf("初始化备用模型失败: %w", err)
 	}
 	router.fallback = &reviewModelProvider{
-		chat: fallback,
+		chat:            fallback,
+		maxOutputTokens: cfg.ModelMaxOutputTokens,
 		pricing: reviewModelPricing{
 			modelName:   cfg.ReviewFallbackModel,
 			inputPrice:  cfg.ReviewFallbackInputPriceYuanPerMillion,
@@ -152,6 +155,10 @@ func generateReviewModelRequest(
 	request reviewModelRequest,
 ) (*schema.Message, error) {
 	callProvider := func(provider *reviewModelProvider) (*schema.Message, error) {
+		outputTokens := request.budget
+		if provider.maxOutputTokens > 0 && outputTokens > provider.maxOutputTokens {
+			outputTokens = provider.maxOutputTokens
+		}
 		var bound modeloptions.ToolCallingChatModel = provider.chat
 		if len(request.tools) > 0 {
 			var err error
@@ -174,7 +181,7 @@ func generateReviewModelRequest(
 				request.traceName,
 				request.round,
 				attempt,
-				request.budget,
+				outputTokens,
 				request.inputTokens,
 				provider.pricing,
 				func(allowedTokens int) (*schema.Message, error) {

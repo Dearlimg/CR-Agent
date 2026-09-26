@@ -13,6 +13,8 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+const deepSeekMaxOutputTokens = 393216
+
 // EinoReviewAgent binds Eino inference to the host-owned model/tool loop.
 // Service-provided setup supplies job-scoped tools and trace recording.
 func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, error) {
@@ -30,13 +32,7 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		outputBudget = defaultModelMaxOutputTokens
 	}
 	if isReviewPrompt(ctx) {
-		reviewBudget := cfg.ReviewMaxOutputTokens
-		if reviewBudget <= 0 {
-			reviewBudget = defaultReviewMaxOutputTokens
-		}
-		if outputBudget > reviewBudget {
-			outputBudget = reviewBudget
-		}
+		outputBudget = deepSeekMaxOutputTokens
 	}
 	round := 0
 	nextRound := func() int {
@@ -183,21 +179,14 @@ func generateWithinLengthBudgetFallback(
 		return reply, nil
 	}
 
-	for _, recovery := range []struct {
-		findings int
-		tokens   int
-	}{
-		{findings: 5, tokens: 8192},
-		{findings: 2, tokens: 4096},
-	} {
+	for _, maxFindings := range []int{5, 2} {
 		concise := &schema.Message{
 			Role: schema.User,
-			Content: fmt.Sprintf("上一轮输出被长度限制截断。请不要调用工具，直接给出精简的最终结论。最多保留 %d 条证据充分、优先级最高的问题；没有充分证据时输出 []。", recovery.findings) +
+			Content: fmt.Sprintf("上一轮输出被长度限制截断。请不要调用工具，直接给出精简的最终结论。最多保留 %d 条证据充分、优先级最高的问题；没有充分证据时输出 []。", maxFindings) +
 				"只输出 JSON 数组，每项包含 file、line、severity、confidence、body、evidence、trigger、impact、suggestion 字段。",
 		}
 		input := append(append([]*schema.Message{}, messages...), concise)
-		tokenBudget := min(budget, recovery.tokens)
-		reply, err = fallbackGenerate(input, tokenBudget)
+		reply, err = fallbackGenerate(input, budget)
 		if err != nil {
 			return nil, err
 		}

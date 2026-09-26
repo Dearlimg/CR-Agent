@@ -10,7 +10,7 @@
 
 - 用户以 `budget_yuan` 为一次 MR/PR 的总上限；省略时使用 `REVIEW_BUDGET_YUAN`，默认 ¥10。
 - 每条模型请求记录模型名、输入/输出 token、费率快照和折算费用；重试、目标评估和 finding 复核共用同一个任务额度。
-- 请求前按输入内容字节数加协议开销估算输入 token 上界，并为输出 `max_tokens` 预留费用；剩余额度不足时停止后续模型调用。成功响应后按 API 回报 token 核算；缺少 usage 的响应按已预留金额保守记账。
+- 请求前按输入内容字节数加协议开销估算输入 token 上界，并为输出 `max_tokens` 预留费用；剩余额度不足时停止后续模型调用。主模型 DeepSeek 审查请求使用服务商允许的最大输出上限 393,216，实际请求上限仍可能因剩余任务预算而降低。成功响应后按 API 回报 token 核算；缺少 usage 的响应按已预留金额保守记账。
 - 金额内部按百万分之一元保存，避免把低价模型的单次成本粗略取整到“分”。界面展示“已用 / 上限”，trace 保留每次请求的成本和费率。
 - 默认模型使用 `deepseek-flash`（DeepSeek-V4.1-Flash），审查请求开启 high 思考强度。默认费率按高峰时段、输入缓存未命中的 Flash 价格估算，并以保守汇率 ¥7/USD 折算：输入 ¥2.1 / 百万 token、输出 ¥8.4 / 百万 token。服务读取 `REVIEW_INPUT_PRICE_YUAN_PER_MILLION` 和 `REVIEW_OUTPUT_PRICE_YUAN_PER_MILLION`，价格调整时可配置更新。缓存命中和低峰价格更低；以 DeepSeek 返回的 usage 计量 token 数。[DeepSeek 模型与定价](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/), [DeepSeek 思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)
 

@@ -14,12 +14,11 @@ import (
 )
 
 const (
-	defaultModelMaxOutputTokens  = 65536
-	defaultReviewMaxOutputTokens = 16384
-	defaultContextCharLimit      = 500000
-	defaultToolResultBudget      = 400000
-	defaultLargeResultCharLimit  = 60000
-	defaultContextMaxMessages    = 100
+	defaultModelMaxOutputTokens = 65536
+	defaultContextCharLimit     = 500000
+	defaultToolResultBudget     = 400000
+	defaultLargeResultCharLimit = 60000
+	defaultContextMaxMessages   = 100
 )
 
 var quotedCredentialValuePattern = regexp.MustCompile(
@@ -44,7 +43,6 @@ type Config struct {
 	TeamMaxConcurrency                      int
 	ModelMaxRetries                         int
 	ModelMaxOutputTokens                    int
-	ReviewMaxOutputTokens                   int
 	ModelRetryBaseMs                        int
 	CronPollIntervalMs                      int
 	MemoryMaxRecall                         int
@@ -104,7 +102,6 @@ func LoadConfig() (Config, error) {
 		TeamMaxConcurrency:                      intEnv(b, "AGENT_TEAM_MAX_CONCURRENCY", 2),
 		ModelMaxRetries:                         intEnv(b, "MODEL_MAX_RETRIES", 2),
 		ModelMaxOutputTokens:                    intEnv(b, "MODEL_MAX_OUTPUT_TOKENS", defaultModelMaxOutputTokens),
-		ReviewMaxOutputTokens:                   intEnv(b, "REVIEW_MAX_OUTPUT_TOKENS", defaultReviewMaxOutputTokens),
 		ModelRetryBaseMs:                        intEnv(b, "MODEL_RETRY_BASE_MS", 500),
 		CronPollIntervalMs:                      intEnv(b, "CRON_POLL_INTERVAL_MS", 1000),
 		MemoryMaxRecall:                         intEnv(b, "MEMORY_MAX_RECALL", 5),

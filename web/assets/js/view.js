@@ -232,6 +232,7 @@ function renderOutcome() {
   const checkNames = {
     conflict_marker_check: "冲突标记检查",
     static_check: "静态提示检查",
+    secret_scan: "疑似密钥扫描",
     syntax_check: "语法检查",
     format_check: "格式检查",
     finding_verification: "证据与第二轮复核",
@@ -240,6 +241,7 @@ function renderOutcome() {
     passed: "通过",
     failed: "失败",
     hint: "有提示",
+    found: "疑似命中，需人工确认",
     not_run: "未运行",
     not_needed: "无需执行",
     incomplete: "未完成",

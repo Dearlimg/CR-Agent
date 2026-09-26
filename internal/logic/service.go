@@ -293,8 +293,8 @@ func preflightIncompleteReason(artifacts ReviewArtifacts) string {
 			failedChecks++
 		}
 	}
-	if failedChecks > 0 || len(artifacts.SecretFindings) > 0 {
-		return fmt.Sprintf("前置检查发现 %d 项失败、%d 个疑似敏感信息命中，需人工确认。", failedChecks, len(artifacts.SecretFindings))
+	if failedChecks > 0 {
+		return fmt.Sprintf("前置检查发现 %d 项失败，需人工确认。", failedChecks)
 	}
 	return ""
 }

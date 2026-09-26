@@ -17,16 +17,22 @@ import (
 
 func TestReviewPipelineReanchorsAndRecordsThreeWayVerdict(t *testing.T) {
 	for _, test := range []struct {
-		verdict  string
-		status   string
-		outcome  string
-		comments int
+		verdict    string
+		status     string
+		outcome    string
+		comments   int
+		secretScan bool
 	}{
 		{verdict: findingConfirmed, status: "completed", outcome: "completed_with_findings", comments: 1},
+		{verdict: findingConfirmed, status: "completed", outcome: "completed_with_findings", comments: 1, secretScan: true},
 		{verdict: findingRejected, status: "completed", outcome: "completed_no_findings", comments: 0},
 		{verdict: findingInconclusive, status: "completed_with_warnings", outcome: "incomplete", comments: 0},
 	} {
-		t.Run(test.verdict, func(t *testing.T) {
+		name := string(test.verdict)
+		if test.secretScan {
+			name += "_with_secret_scan_hit"
+		}
+		t.Run(name, func(t *testing.T) {
 			var calls atomic.Int32
 			var verificationPrompt string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +78,10 @@ func TestReviewPipelineReanchorsAndRecordsThreeWayVerdict(t *testing.T) {
 			}
 			diff := "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n" +
 				"@@ -0,0 +10,2 @@\n+placeholder()\n+bug()\n"
+			if test.secretScan {
+				diff += "diff --git a/config.txt b/config.txt\n--- /dev/null\n+++ b/config.txt\n" +
+					"@@ -0,0 +1 @@\n+api_key = \"definitely-fake-value-123\"\n"
+			}
 			service.run(context.Background(), job, model.ReviewRequest{Diff: diff})
 			if job.Status != test.status || job.ReviewOutcome != test.outcome || len(job.Comments) != test.comments {
 				t.Fatalf("status=%q outcome=%q comments=%d error=%q", job.Status, job.ReviewOutcome, len(job.Comments), job.Error)
@@ -82,6 +92,12 @@ func TestReviewPipelineReanchorsAndRecordsThreeWayVerdict(t *testing.T) {
 			}
 			if test.comments == 1 && job.Comments[0].Line != 11 {
 				t.Fatalf("published comment still uses hallucinated line: %#v", job.Comments[0])
+			}
+			if test.secretScan {
+				if job.Error != "" || reviewCheckStatus(job.ReviewScope, "secret_scan") != "found" ||
+					reviewCheckStatus(job.ReviewScope, "finding_verification") != "passed" {
+					t.Fatalf("secret scan changed review completion: error=%q scope=%#v", job.Error, job.ReviewScope)
+				}
 			}
 			if test.verdict == findingInconclusive {
 				if !strings.Contains(job.Error, "缺少判定") ||
@@ -319,6 +335,15 @@ func reviewCheckMessage(scope model.ReviewScope, name string) string {
 	for _, check := range scope.Checks {
 		if check.Name == name {
 			return check.Message
+		}
+	}
+	return ""
+}
+
+func reviewCheckStatus(scope model.ReviewScope, name string) string {
+	for _, check := range scope.Checks {
+		if check.Name == name {
+			return check.Status
 		}
 	}
 	return ""

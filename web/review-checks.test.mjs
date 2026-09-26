@@ -33,3 +33,23 @@ test("historical compiler and sandbox checks are hidden in UI, trace, and export
   assert.equal(result.hidden, true);
   assert.equal(result.contextHidden, false);
 });
+
+test("secret scan hit stays visible without changing a completed review conclusion", () => {
+  const inputJob = {
+    status: "completed", review_outcome: "completed_with_findings",
+    comments: [{}], review_scope: {
+      files_reviewed: 1, added_lines: 1,
+      checks: [{ name: "secret_scan", status: "found", message: "疑似密钥命中=1" }],
+    },
+  };
+  const result = vm.runInNewContext(source + `
+    job = inputJob;
+    ({html: renderOutcome(), markdown: renderReviewMarkdown(job)})`,
+    { inputJob, URL, Date });
+  for (const text of [result.html, result.markdown]) {
+    assert.ok(text.includes("审查完成"));
+    assert.ok(text.includes("疑似密钥扫描"));
+    assert.ok(text.includes("疑似命中，需人工确认"));
+    assert.ok(!text.includes("审查未完成"));
+  }
+});

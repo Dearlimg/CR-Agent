@@ -33,3 +33,5 @@
 验证覆盖四种结论、结构化字段校验、脱敏、JSON 工具修复和检查点恢复。模拟测试证明协议与分流行为，不证明真实模型召回率提升；质量变化仍需同一批真实 PR 的重复评测。
 
 当前 GitLab MR 和直接粘贴 diff 没有固定提交源码读取路径；这些审查仍可用 diff 复核，依赖仓库外上下文的候选会如实标记为待定。真实模型的结论仍需人工验证。
+
+后续改动（2026-09-26 落地）：plausible 疑点不再静默扣留，合并为一条不锚定代码行的待确认评论（`second_pass_review_plausible`，正文含机制、待核实前提与建议），结论改为 `completed_with_pending`（属成功完成）。confirmed 与 plausible 仍严格分流，未把 plausible 映射为 confirmed；inconclusive 与证据不足仍保持 `completed_with_warnings / incomplete`。

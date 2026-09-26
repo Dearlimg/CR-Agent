@@ -101,6 +101,11 @@ Todo 是单次审查的执行清单；Task 是跨会话保留的任务图。生�
 `completed_with_warnings` 或 `failed`；检查点尚未到 `completed` 时，Lead 任务保持
 `in_progress`，可通过恢复入口继续执行。
 
+第二轮复核判定为“有依据待核实”（plausible）的疑点不会静默丢弃：它们会合并为一条
+不锚定具体代码行的待确认评论（`verification_status=second_pass_review_plausible`），
+列出机制、待核实前提与核实建议。仅含待确认疑点时审查结论为 `completed_with_pending`，
+仍属成功完成；confirmed 结论继续逐行发布为已核验问题。
+
 模型调用对 EOF、连接中断、超时、限流和 5xx 做有限指数退避重试。少于 4 个变更文件、少于 300 条 diff 新增行，且没有跨文件依赖变更的任务由一个主审查 Agent 完成；其余任务运行三个专项 Agent 和最终汇总。团队默认最多同时运行 2
 个专项调用。专项调用失败但最终汇总成功时，Job 状态为
 `completed_with_warnings`，不会伪装成完全成功。

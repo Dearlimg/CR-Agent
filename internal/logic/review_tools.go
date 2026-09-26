@@ -122,6 +122,72 @@ func verifiedComments(findings []ReviewFinding, artifacts ReviewArtifacts, trace
 	return out
 }
 
+// pendingVerificationComment merges plausible findings into one unanchored
+// PR-level comment. An empty File marks it as a pending-confirmation question
+// to the author, never an inline defect claim; only confirmed findings become
+// anchored comments.
+func pendingVerificationComment(results []checkpointVerification, testsRan bool, traceID string) *model.ReviewComment {
+	items := make([]checkpointVerification, 0, len(results))
+	for _, result := range results {
+		if result.Verdict == findingPlausible {
+			items = append(items, result)
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	severityRank := map[string]int{"high": 0, "medium": 1, "low": 2}
+	confidenceRank := map[string]int{"high": 0, "medium": 1, "low": 2}
+	severity, confidence := "low", "high"
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "以下 %d 个疑点有代码依据，但第二轮复核仍有待核实前提，未作为缺陷报告；请确认前提是否成立：", len(items))
+	for i, item := range items {
+		finding := item.Finding
+		if rank := severityRank[strings.ToLower(finding.Severity)]; rank < severityRank[severity] {
+			severity = strings.ToLower(finding.Severity)
+		}
+		itemConfidence := strings.ToLower(finding.Confidence)
+		assumptions := []string{}
+		if item.Assessment != nil {
+			itemConfidence = strings.ToLower(item.Assessment.Confidence)
+			for _, assumption := range item.Assessment.Assumptions {
+				if trimmed := strings.TrimSpace(assumption); trimmed != "" {
+					assumptions = append(assumptions, redactFindingText(trimmed))
+				}
+			}
+		}
+		if rank, ok := confidenceRank[itemConfidence]; ok && rank > confidenceRank[confidence] {
+			confidence = itemConfidence
+		}
+		fmt.Fprintf(&builder, "\n\n%d. %s:%d %s", i+1, finding.File, finding.Line, redactFindingText(strings.TrimSpace(finding.Body)))
+		if len(assumptions) > 0 {
+			fmt.Fprintf(&builder, "\n待核实前提：%s", strings.Join(assumptions, "；"))
+		}
+		if suggestion := strings.TrimSpace(finding.Suggestion); suggestion != "" {
+			fmt.Fprintf(&builder, "\n建议：%s", redactFindingText(suggestion))
+		}
+	}
+	coverage := "以上内容不是缺陷指控；前提确认后才构成缺陷。"
+	if !testsRan {
+		coverage = "本轮未运行测试；以上内容不是缺陷指控，前提确认后才构成缺陷。"
+	}
+	builder.WriteString("\n\n覆盖说明：" + coverage)
+	commentTraceID := items[0].TraceID
+	if commentTraceID == "" {
+		commentTraceID = traceID
+	}
+	return &model.ReviewComment{
+		File:               "",
+		Line:               0,
+		Severity:           severity,
+		Confidence:         confidence,
+		Body:               builder.String(),
+		VerificationStatus: "second_pass_review_plausible",
+		VerificationReason: "有代码依据的疑点汇总；复核未发现反证，前提待人工确认。",
+		TraceID:            commentTraceID,
+	}
+}
+
 func validateFindingEvidence(findings []ReviewFinding, diff string) ([]ReviewFinding, int) {
 	added := addedLineContent(diff)
 	verified := make([]ReviewFinding, 0, len(findings))

@@ -26,7 +26,7 @@ func TestReviewPipelineReanchorsAndRecordsFourWayVerdict(t *testing.T) {
 		{verdict: findingConfirmed, status: "completed", outcome: "completed_with_findings", comments: 1},
 		{verdict: findingConfirmed, status: "completed", outcome: "completed_with_findings", comments: 1, secretScan: true},
 		{verdict: findingRejected, status: "completed", outcome: "completed_no_findings", comments: 0},
-		{verdict: findingPlausible, status: "completed_with_warnings", outcome: "incomplete", comments: 0},
+		{verdict: findingPlausible, status: "completed", outcome: "completed_with_pending", comments: 1},
 		{verdict: findingInconclusive, status: "completed_with_warnings", outcome: "incomplete", comments: 0},
 	} {
 		name := string(test.verdict)
@@ -98,7 +98,7 @@ func TestReviewPipelineReanchorsAndRecordsFourWayVerdict(t *testing.T) {
 				!strings.Contains(verificationPrompt, "11 +bug()") {
 				t.Fatalf("verification did not use corrected line: calls=%d prompt=%q", calls.Load(), verificationPrompt)
 			}
-			if test.comments == 1 && job.Comments[0].Line != 11 {
+			if test.verdict == findingConfirmed && job.Comments[0].Line != 11 {
 				t.Fatalf("published comment still uses hallucinated line: %#v", job.Comments[0])
 			}
 			checkpoint, err := loadReviewCheckpoint(job)
@@ -116,8 +116,15 @@ func TestReviewPipelineReanchorsAndRecordsFourWayVerdict(t *testing.T) {
 				t.Fatalf("verifier confidence not applied: %#v", job.Comments[0])
 			}
 			if test.verdict == findingPlausible {
-				if !strings.Contains(job.Error, "前提待核实") || len(saved.Assessment.Assumptions) == 0 {
-					t.Fatalf("conditional risk lost its pending premise: error=%q assessment=%#v", job.Error, saved.Assessment)
+				if len(saved.Assessment.Assumptions) == 0 {
+					t.Fatalf("conditional risk lost its pending premise: %#v", saved.Assessment)
+				}
+				summary := job.Comments[0]
+				if job.Error != "" || summary.File != "" || summary.Line != 0 ||
+					summary.VerificationStatus != "second_pass_review_plausible" ||
+					!strings.Contains(summary.Body, "待核实前提") ||
+					!strings.Contains(summary.Body, saved.Assessment.Assumptions[0]) {
+					t.Fatalf("plausible finding not published as pending summary: error=%q comment=%#v", job.Error, summary)
 				}
 				if !strings.Contains(reviewCheckMessage(job.ReviewScope, "finding_verification"), "有根据待核实=1") {
 					t.Fatalf("plausible verdict was collapsed into another category: %#v", job.ReviewScope)
@@ -140,7 +147,7 @@ func TestReviewPipelineReanchorsAndRecordsFourWayVerdict(t *testing.T) {
 			if calls.Load() != wantCalls || len(job.Comments) != test.comments {
 				t.Fatalf("resume reran verification or changed publication: calls=%d comments=%#v", calls.Load(), job.Comments)
 			}
-			if test.comments == 1 {
+			if test.verdict == findingConfirmed {
 				comment := job.Comments[0]
 				if comment.VerificationReason != saved.Assessment.Reason || comment.TraceID != saved.TraceID {
 					t.Fatalf("resume lost assessment metadata: %#v", comment)

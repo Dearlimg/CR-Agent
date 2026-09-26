@@ -517,9 +517,9 @@ func (s *Service) finishCheckpointedReview(
 	saveCheckpoint func(string) error,
 ) {
 	confirmed := make([]ReviewFinding, 0, len(checkpoint.VerificationResults))
+	plausibleResults := make([]checkpointVerification, 0, len(checkpoint.VerificationResults))
 	rejectedByVerifier := 0
 	inconclusive := 0
-	plausible := 0
 	for _, result := range checkpoint.VerificationResults {
 		switch result.Verdict {
 		case string(findingConfirmed):
@@ -532,7 +532,7 @@ func (s *Service) finishCheckpointedReview(
 			}
 			confirmed = append(confirmed, finding)
 		case findingPlausible:
-			plausible++
+			plausibleResults = append(plausibleResults, result)
 		case string(findingRejected):
 			rejectedByVerifier++
 		case string(findingInconclusive):
@@ -540,17 +540,25 @@ func (s *Service) finishCheckpointedReview(
 		}
 	}
 	job.Comments = verifiedComments(confirmed, checkpoint.Artifacts, checkpoint.ModelTraceID)
+	confirmedCount := len(job.Comments)
+	pendingSummary := pendingVerificationComment(plausibleResults, job.ReviewScope.TestsRan, checkpoint.ModelTraceID)
+	if pendingSummary != nil {
+		job.Comments = append(job.Comments, *pendingSummary)
+	}
 	verificationStatus := "passed"
 	verificationMessage := fmt.Sprintf(
 		"候选=%d；证据匹配=%d；第二轮复核确认=%d；第二轮复核排除=%d；有根据待核实=%d；证据待定=%d",
 		len(checkpoint.Candidates)+checkpoint.RejectedEvidence,
 		len(checkpoint.Candidates),
-		len(job.Comments),
+		confirmedCount,
 		rejectedByVerifier,
-		plausible,
+		len(plausibleResults),
 		inconclusive,
 	)
-	hasUnresolvedFindings := checkpoint.RejectedEvidence > 0 || plausible > 0 || inconclusive > 0
+	if pendingSummary != nil {
+		verificationMessage += "；待确认评论=1"
+	}
+	hasUnresolvedFindings := checkpoint.RejectedEvidence > 0 || inconclusive > 0
 	verificationIncomplete := checkpoint.IncompleteReason != "" ||
 		checkpoint.LastVerificationError != "" || hasUnresolvedFindings
 	if len(checkpoint.Candidates)+checkpoint.RejectedEvidence == 0 && checkpoint.IncompleteReason == "" {
@@ -573,9 +581,6 @@ func (s *Service) finishCheckpointedReview(
 	if checkpoint.IncompleteReason == "" && inconclusive > 0 {
 		checkpoint.IncompleteReason = "部分候选问题缺少判定所需的代码上下文，审查未能完整核验。"
 	}
-	if checkpoint.IncompleteReason == "" && plausible > 0 {
-		checkpoint.IncompleteReason = "存在有代码依据的条件性风险，尚有明确前提待核实。"
-	}
 	if checkpoint.IncompleteReason != "" || checkpoint.LastVerificationError != "" {
 		checkpoint.FinalStatus = "completed_with_warnings"
 		checkpoint.FinalOutcome = "incomplete"
@@ -584,9 +589,13 @@ func (s *Service) finishCheckpointedReview(
 			checkpoint.FinalError = checkpoint.LastVerificationError
 		}
 	} else if len(job.Comments) > 0 {
-		checkpoint.FinalOutcome = "completed_with_findings"
 		checkpoint.FinalStatus = "completed"
 		checkpoint.FinalError = ""
+		if confirmedCount > 0 {
+			checkpoint.FinalOutcome = "completed_with_findings"
+		} else {
+			checkpoint.FinalOutcome = "completed_with_pending"
+		}
 	} else {
 		checkpoint.FinalOutcome = "completed_no_findings"
 		checkpoint.FinalStatus = "completed"

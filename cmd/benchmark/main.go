@@ -467,7 +467,8 @@ func runCase(service *logic.Service, sample testCase, timeout time.Duration) cas
 func actionableFindings(comments []model.ReviewComment) []model.ReviewComment {
 	findings := make([]model.ReviewComment, 0, len(comments))
 	for _, comment := range comments {
-		if comment.Severity == "info" || strings.Contains(comment.Body, "未发现需要评论的问题") {
+		// Unanchored comments are pending-confirmation summaries, not defect claims.
+		if comment.Severity == "info" || comment.File == "" || strings.Contains(comment.Body, "未发现需要评论的问题") {
 			continue
 		}
 		findings = append(findings, comment)

@@ -221,10 +221,15 @@ function renderOutcome() {
       ? scope.checks.filter((check) => !["automated_tests", "typecheck", "syntax_check", "format_check"].includes(check.name))
       : [],
     outcome = job.review_outcome;
+  const pendingCount = (job.comments || []).filter((c) => !c.file).length;
   const titles = {
     completed_no_findings: "本次审查完成：未发现需要评论的问题。",
     completed_with_findings:
-      "本次审查完成：发现 " + (job.comments || []).length + " 个已核验问题。",
+      "本次审查完成：发现 " +
+      ((job.comments || []).length - pendingCount) +
+      " 个已核验问题。",
+    completed_with_pending:
+      "本次审查完成：" + pendingCount + " 个疑点待确认，未作为缺陷报告。",
     incomplete: "审查未完成",
     failed: "审查失败",
   };
@@ -315,7 +320,7 @@ function render() {
   $("export").disabled = !job;
   $("export-json").disabled = !job;
   for (const id of ["send", "new", "demo"]) $(id).disabled = busy;
-  $("finding-count").textContent = comments.length;
+  $("finding-count").textContent = comments.filter((c) => c.file).length;
   markup("findings").html =
     comments
       .map(
@@ -323,24 +328,28 @@ function render() {
           '<article class="comment"><span class="badge">' +
           esc(severityLabel(c.severity)) +
           "</span> <b>" +
-          esc(c.file) +
-          ":" +
-          esc(c.line) +
+          esc(c.file ? c.file + ":" + c.line : "整体审查 · 待确认疑点") +
           "</b><p>" +
           esc(c.body) +
-          '</p><div class="small muted"><b>证据</b><pre>' +
-          esc(c.evidence || "无") +
-          "</pre><b>触发条件</b><p>" +
-          esc(c.trigger || "无") +
-          "</p><b>影响</b><p>" +
-          esc(c.impact || "无") +
-          "</p><b>修复建议</b><p>" +
-          esc(c.suggestion || "无") +
-          "</p><b>核验结果</b><p>" +
+          "</p>" +
+          (c.file
+            ? '<div class="small muted"><b>证据</b><pre>' +
+              esc(c.evidence || "无") +
+              "</pre><b>触发条件</b><p>" +
+              esc(c.trigger || "无") +
+              "</p><b>影响</b><p>" +
+              esc(c.impact || "无") +
+              "</p><b>修复建议</b><p>" +
+              esc(c.suggestion || "无") +
+              "</p>"
+            : "") +
+          '<div class="small muted"><b>核验结果</b><p>' +
           esc(
             c.verification_status === "second_pass_review_passed"
               ? "第二轮模型复核通过：" + (c.verification_reason || "")
-              : c.verification_status || "未提供",
+              : c.verification_status === "second_pass_review_plausible"
+                ? "复核待确认：" + (c.verification_reason || "")
+                : c.verification_status || "未提供",
           ) +
           "</p>置信度 " +
           esc(confidenceLabel(c.confidence)) +

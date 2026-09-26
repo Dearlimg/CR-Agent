@@ -57,6 +57,10 @@ function reviewConclusion(job) {
   switch (job.review_outcome) {
     case "completed_with_findings":
       return `审查完成，发现 ${count} 个已核验问题。`;
+    case "completed_with_pending": {
+      const pending = (job.comments || []).filter((c) => !c.file).length;
+      return `审查完成，有 ${pending} 个待确认疑点，未作为缺陷报告；前提经人工确认后才构成缺陷。`;
+    }
     case "completed_no_findings":
       return "审查完成，未发现需要评论的问题；这表示本次审查未核验出问题，不代表代码绝对没有缺陷。";
     case "incomplete":
@@ -107,6 +111,7 @@ function verificationLabel(value) {
   return (
     {
       second_pass_review_passed: "第二轮模型复核通过",
+      second_pass_review_plausible: "复核待确认（前提待人工核实）",
       confirmed: "已确认",
       rejected: "已拒绝",
       inconclusive: "证据不足，结论待定",
@@ -160,15 +165,18 @@ function renderReviewMarkdown(job) {
     lines.push("- 当前任务没有提供检查明细。");
   }
 
+  const confirmed = comments.filter((c) => c.file);
+  const pending = comments.filter((c) => !c.file);
+
   lines.push("", "## 已核验问题", "");
-  if (!comments.length) {
+  if (!confirmed.length) {
     lines.push(
       job.review_outcome === "completed_no_findings"
         ? "本次审查没有已核验的问题。"
         : "当前没有已核验的问题。",
     );
   } else {
-    comments.forEach((comment, index) => {
+    confirmed.forEach((comment, index) => {
       const location =
         inlineCode(comment.file || "未提供") + ":" + (comment.line || 0);
       lines.push(
@@ -193,6 +201,23 @@ function renderReviewMarkdown(job) {
         );
       }
       lines.push("", `核验结果：${verificationLabel(comment.verification_status)}`);
+      if (comment.verification_reason) {
+        lines.push("", "**核验说明**", "", markdownQuote(comment.verification_reason));
+      }
+      lines.push("");
+    });
+  }
+
+  if (pending.length) {
+    lines.push("", "## 待确认疑点（未作为缺陷报告）", "");
+    pending.forEach((comment, index) => {
+      lines.push(
+        `### ${index + 1}. [${reviewSeverityLabel(comment.severity)}] 整体审查`,
+        "",
+        comment.body ? markdownQuote(comment.body) : "问题描述未提供。",
+        "",
+        `核验结果：${verificationLabel(comment.verification_status)}`,
+      );
       if (comment.verification_reason) {
         lines.push("", "**核验说明**", "", markdownQuote(comment.verification_reason));
       }

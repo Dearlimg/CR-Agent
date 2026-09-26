@@ -296,7 +296,7 @@ func (h *ReviewHarness) RunEnvelope(ctx context.Context, prompt PromptEnvelope) 
 		if connected := h.MCP.ConnectedServers(); len(connected) > 0 {
 			system += "\n已连接 MCP: " + strings.Join(connected, ", ")
 		}
-		input := h.modelInput(system, messages)
+		input := sanitizeModelMessages(h.modelInput(system, messages))
 		reply, err := h.Model(ctx, input, infos)
 		if err != nil && h.Compactor != nil && isContextOverflow(err) {
 			if len(messages) == 1 {
@@ -313,7 +313,7 @@ func (h *ReviewHarness) RunEnvelope(ctx context.Context, prompt PromptEnvelope) 
 			}
 			messages = compacted
 			input = h.modelInput(system, messages)
-			reply, err = h.Model(ctx, input, infos)
+			reply, err = h.Model(ctx, sanitizeModelMessages(input), infos)
 		}
 		if err != nil {
 			return "", err

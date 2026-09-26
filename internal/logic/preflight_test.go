@@ -75,6 +75,16 @@ func TestRedactionPreservesPatchStructureAndModelJSON(t *testing.T) {
 	}
 }
 
+func TestSanitizeDiffPreservesLinesAroundPrivateKey(t *testing.T) {
+	diff := "diff --git a/key.pem b/key.pem\n+++ b/key.pem\n@@ -0,0 +1,4 @@\n" +
+		"+-----BEGIN PRIVATE KEY-----\n+synthetic-private-key-body\n+-----END PRIVATE KEY-----\n+safe line\n"
+	safe := sanitizeDiff(diff)
+	if strings.Count(safe, "\n") != strings.Count(diff, "\n") || strings.Contains(safe, "synthetic-private-key-body") ||
+		!strings.Contains(safe, "+safe line") {
+		t.Fatalf("private key redaction damaged patch structure: %q", safe)
+	}
+}
+
 func TestNewGoFileDoesNotRunCompilerOrFormatter(t *testing.T) {
 	diff := "diff --git a/new.go b/new.go\nnew file mode 100644\n" +
 		"--- /dev/null\n+++ b/new.go\n@@ -0,0 +1,2 @@\n+package main\n+func f(){ }\n"

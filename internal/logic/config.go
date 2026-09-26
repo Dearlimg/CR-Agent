@@ -30,6 +30,9 @@ var bareCredentialValuePattern = regexp.MustCompile(
 )
 
 var bearerCredentialValuePattern = regexp.MustCompile(`(?i)(\bBearer\s+)([A-Za-z0-9._~+/-]+)`)
+var privateKeyBlockPattern = regexp.MustCompile(`(?s)-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----`)
+var credentialURLPattern = regexp.MustCompile(`(?i)(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps)://[^\s"'<>]+`)
+var mysqlDSNPattern = regexp.MustCompile(`(?i)\b[A-Za-z0-9._-]+:[^\s@"']+@tcp\([^\s)]+\)/[^\s"']*`)
 
 type Config struct {
 	Port                                    string
@@ -169,6 +172,11 @@ func floatEnv(get func(string, string) string, key string, fallback float64) flo
 	return value
 }
 func redactReviewInput(s string) string {
+	s = privateKeyBlockPattern.ReplaceAllStringFunc(s, func(block string) string {
+		return "[REDACTED]" + strings.Repeat("\n", strings.Count(block, "\n"))
+	})
+	s = credentialURLPattern.ReplaceAllString(s, "[REDACTED]")
+	s = mysqlDSNPattern.ReplaceAllString(s, "[REDACTED]")
 	s = quotedCredentialValuePattern.ReplaceAllString(s, "${1}${2}[REDACTED]${4}")
 	s = bearerCredentialValuePattern.ReplaceAllString(s, "${1}[REDACTED]")
 	s = bareCredentialValuePattern.ReplaceAllStringFunc(s, func(match string) string {

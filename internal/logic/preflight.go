@@ -18,7 +18,7 @@ const preflightVersion = "review-preflight-v2"
 
 var hunkPattern = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 var credentialPattern = regexp.MustCompile(`(?i)(?:api[_-]?key|secret|password|token|authorization)\s*[:=]\s*["']?[A-Za-z0-9_\-/+=]{8,}`)
-var providerTokenPattern = regexp.MustCompile(`(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,})`)
+var providerTokenPattern = regexp.MustCompile(`(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[A-Z0-9]{16})`)
 
 type ChangedFile struct {
 	Path       string `json:"path"`
@@ -379,7 +379,25 @@ func scanRawDiff(ctx context.Context, diff string) ([]SecretFinding, error) {
 func sanitizeDiff(diff string) string {
 	diff = normalizeDiffLineEndings(diff)
 	lines := strings.Split(diff, "\n")
+	inPrivateKey := false
 	for index, line := range lines {
+		if inPrivateKey || strings.Contains(line, "-----BEGIN PRIVATE KEY-----") ||
+			strings.Contains(line, "-----BEGIN RSA PRIVATE KEY-----") ||
+			strings.Contains(line, "-----BEGIN EC PRIVATE KEY-----") ||
+			strings.Contains(line, "-----BEGIN OPENSSH PRIVATE KEY-----") {
+			if strings.Contains(line, "-----BEGIN ") {
+				inPrivateKey = true
+			}
+			if strings.Contains(line, "-----END ") {
+				inPrivateKey = false
+			}
+			prefix := ""
+			if len(line) > 0 && (line[0] == '+' || line[0] == '-' || line[0] == ' ') {
+				prefix = line[:1]
+			}
+			lines[index] = prefix + "[REDACTED]"
+			continue
+		}
 		if strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "--- ") ||
 			strings.HasPrefix(line, "+++ ") || strings.HasPrefix(line, "@@ ") {
 			lines[index] = redactFindingText(line)

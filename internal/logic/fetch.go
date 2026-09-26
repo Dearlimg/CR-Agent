@@ -119,16 +119,43 @@ func gitlabWebDiff(u *url.URL) (diffTarget, bool) {
 }
 
 func downloadDiff(ctx context.Context, target diffTarget, cfg Config) (string, error) {
+	return downloadDiffWithClient(ctx, target, cfg, newDiffHTTPClient())
+}
+
+func newDiffHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			if !trustedGitHubDiffHost(req.URL) {
+				req.Header.Del("Authorization")
+			}
+			return nil
+		},
+	}
+}
+
+func trustedGitHubDiffHost(u *url.URL) bool {
+	if u == nil || u.Scheme != "https" || u.Port() != "" {
+		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "github.com", "api.github.com":
+		return true
+	default:
+		return false
+	}
+}
+
+func downloadDiffWithClient(ctx context.Context, target diffTarget, cfg Config, client *http.Client) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.url, nil)
 	if err != nil {
 		return "", fmt.Errorf("抓取 diff 失败: %w", err)
 	}
 	req.Header.Set("Accept", target.accept)
 	req.Header.Set("User-Agent", userAgent)
-	if cfg.GitHubToken != "" {
+	if cfg.GitHubToken != "" && trustedGitHubDiffHost(req.URL) {
 		req.Header.Set("Authorization", "Bearer "+cfg.GitHubToken)
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("抓取 diff 失败: %w", err)

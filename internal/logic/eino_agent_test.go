@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -130,6 +131,51 @@ func TestObservedModelRequestRecordsSanitizedInputAndRawReply(t *testing.T) {
 	}
 	if !strings.Contains(trace.ModelReply, "MALFORMED_REPLY_MARKER") || !strings.Contains(trace.ModelReply, "finish_reason") {
 		t.Fatalf("trace omitted raw model reply metadata: %s", trace.ModelReply)
+	}
+}
+
+func TestProviderWireRequestRedactsSyntheticCredentials(t *testing.T) {
+	secrets := []string{
+		"synthetic-private-key-wire-body",
+		"synthetic-multiline-config-value",
+		"synthetic-uri-password",
+		"glpat-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456",
+	}
+	input := "-----BEGIN PRIVATE KEY-----\n" + secrets[0] + "\n-----END PRIVATE KEY-----\n" +
+		"settings:\n  client_secret: " + secrets[1] + "\n" +
+		"postgres://user:" + secrets[2] + "@db.example.test/app\n" + secrets[3]
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		for _, secret := range secrets {
+			if strings.Contains(string(body), secret) {
+				t.Errorf("synthetic credential reached provider HTTP body: %q", secret)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "test", "object": "chat.completion",
+			"choices": []any{map[string]any{
+				"index": 0, "message": map[string]any{"role": "assistant", "content": "[]"}, "finish_reason": "stop",
+			}},
+		})
+	}))
+	defer server.Close()
+	cfg := Config{DeepSeekAPIKey: "synthetic-provider-key", DeepSeekBaseURL: server.URL}
+	router, err := newReviewModelRouter(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = generateReviewModelRequest(context.Background(), cfg, router, reviewModelRequest{
+		traceName: "wire-redaction", budget: 1024,
+		messages: []*schema.Message{{Role: schema.User, Content: input}},
+	})
+	if err != nil || calls != 1 {
+		t.Fatalf("provider calls=%d err=%v", calls, err)
 	}
 }
 

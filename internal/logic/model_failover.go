@@ -35,6 +35,25 @@ type reviewModelRequest struct {
 	tools       []*schema.ToolInfo
 }
 
+// sanitizeModelMessages is the final content boundary before provider inference.
+// A copy keeps raw tool evidence available for local processing without forwarding it.
+func sanitizeModelMessages(messages []*schema.Message) []*schema.Message {
+	safe := make([]*schema.Message, len(messages))
+	for index, message := range messages {
+		if message == nil {
+			continue
+		}
+		copy := *message
+		copy.Content = redactReviewInput(copy.Content)
+		copy.ToolCalls = append([]schema.ToolCall{}, message.ToolCalls...)
+		for callIndex := range copy.ToolCalls {
+			copy.ToolCalls[callIndex].Function.Arguments = redactTraceText(copy.ToolCalls[callIndex].Function.Arguments)
+		}
+		safe[index] = &copy
+	}
+	return safe
+}
+
 func newReviewModelRouter(ctx context.Context, cfg Config) (*reviewModelRouter, error) {
 	primary, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 		APIKey:  cfg.DeepSeekAPIKey,
@@ -175,7 +194,7 @@ func generateReviewModelRequest(
 		return retryHarnessInference(ctx, cfg, func() (*schema.Message, error) {
 			attempt := *retryCount
 			*retryCount = attempt + 1
-			providerMessages := messagesForModelProvider(request.messages, provider)
+			providerMessages := sanitizeModelMessages(messagesForModelProvider(request.messages, provider))
 			return observedBudgetedModelRequest(ctx, observedModelCall{
 				name:                  request.traceName,
 				round:                 request.round,

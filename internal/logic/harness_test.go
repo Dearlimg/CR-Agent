@@ -663,6 +663,50 @@ func TestReviewPromptContextPreservesCodeWhileMaskingCredentialValues(t *testing
 	}
 }
 
+func TestReviewModelExitRedactsSyntheticCredentialShapes(t *testing.T) {
+	credentials := []string{
+		"synthetic-private-key-body-123456789",
+		"synthetic-config-secret-987654321",
+		"synthetic-db-password-54321",
+		"glpat-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456",
+		"xoxb-123456789012-123456789012-abcdefghij",
+		"AKIAABCDEFGHIJKLMNOP",
+		"synthetic-mysql-password-24680",
+		"ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456",
+		"sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456",
+	}
+	prompt := "diff --git a/config.txt b/config.txt\n+++ b/config.txt\n@@ -0,0 +1,8 @@\n" +
+		"+-----BEGIN PRIVATE KEY-----\n+" + credentials[0] + "\n+-----END PRIVATE KEY-----\n" +
+		"+settings:\n+  client_secret: " + credentials[1] + "\n" +
+		"+DATABASE_URL=postgres://user:" + credentials[2] + "@db.example.test/app\n" +
+		"+gitlab=" + credentials[3] + "\n+slack=" + credentials[4] + "\n+aws=" + credentials[5] + "\n" +
+		"+MYSQL_DSN=user:" + credentials[6] + "@tcp(db.example.test:3306)/app\n" +
+		"+github=" + credentials[7] + "\n+provider=" + credentials[8] + "\n"
+	harness := newReviewHarness()
+	harness.tools = NewToolRegistry()
+	called := false
+	harness.Model = func(_ context.Context, messages []*schema.Message, _ []*schema.ToolInfo) (*schema.Message, error) {
+		called = true
+		for _, message := range messages {
+			if message == nil {
+				continue
+			}
+			for _, credential := range credentials {
+				if strings.Contains(message.Content, credential) {
+					t.Errorf("synthetic credential reached model request: %q", credential)
+				}
+			}
+		}
+		return &schema.Message{Role: schema.Assistant, Content: "done"}, nil
+	}
+	if _, err := harness.Run(withReviewPrompt(context.Background()), prompt); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("model request was not observed")
+	}
+}
+
 func TestReviewHarnessDispatchesNewToolFromSharedMetadata(t *testing.T) {
 	h := newReviewHarness()
 	var received string

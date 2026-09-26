@@ -1,0 +1,1576 @@
+diff --git a/doc/source/user_guide/basics.rst b/doc/source/user_guide/basics.rst
+index 055b43bc1e59b..0621cd20b8df9 100644
+--- a/doc/source/user_guide/basics.rst
++++ b/doc/source/user_guide/basics.rst
+@@ -1781,6 +1781,31 @@ used to sort a pandas object by its index levels.
+    # Series
+    unsorted_df['three'].sort_index()
+ 
++.. _basics.sort_index_key:
++
++.. versionadded:: 1.1.0
++
++Sorting by index also supports a ``key`` parameter that takes a callable
++function to apply to the index being sorted. For `MultiIndex` objects,
++the key is applied per-level to the levels specified by `level`.
++
++.. ipython:: python
++
++   s1 = pd.DataFrame({
++       "a": ['B', 'a', 'C'],
++       "b": [1, 2, 3],
++       "c": [2, 3, 4]
++   }).set_index(list("ab"))
++   s1
++
++.. ipython:: python
++
++   s1.sort_index(level="a")
++   s1.sort_index(level="a", key=lambda idx: idx.str.lower())
++
++For information on key sorting by value, see :ref:`value sorting
++<basics.sort_value_key>`.
++
+ .. _basics.sort_values:
+ 
+ By values
+@@ -1813,6 +1838,39 @@ argument:
+    s.sort_values()
+    s.sort_values(na_position='first')
+ 
++.. _basics.sort_value_key:
++
++.. versionadded:: 1.1.0
++
++Sorting also supports a ``key`` parameter that takes a callable function
++to apply to the values being sorted.
++
++.. ipython:: python
++
++   s1 = pd.Series(['B', 'a', 'C'])
++
++.. ipython:: python
++
++   s1.sort_values()
++   s1.sort_values(key=lambda x: x.str.lower())
++
++`key` will be given the :class:`Series` of values and should return a ``Series``
++or array of the same shape with the transformed values. For `DataFrame` objects,
++the key is applied per column, so the key should still expect a Series and return
++a Series, e.g.
++
++.. ipython:: python
++
++   df = pd.DataFrame({"a": ['B', 'a', 'C'], "b": [1, 2, 3]})
++
++.. ipython:: python
++
++   df.sort_values(by='a')
++   df.sort_values(by='a', key=lambda col: col.str.lower())
++
++The name or type of each column can be used to apply different functions to
++different columns.
++
+ .. _basics.sort_indexes_and_values:
+ 
+ By indexes and values
+diff --git a/doc/source/whatsnew/v1.1.0.rst b/doc/source/whatsnew/v1.1.0.rst
+index 719178a67459d..08d20af314110 100644
+--- a/doc/source/whatsnew/v1.1.0.rst
++++ b/doc/source/whatsnew/v1.1.0.rst
+@@ -36,6 +36,53 @@ For example:
+    ser["2014"]
+    ser.loc["May 2015"]
+ 
++.. _whatsnew_110.key_sorting:
++
++Sorting with keys
++^^^^^^^^^^^^^^^^^
++
++We've added a ``key`` argument to the DataFrame and Series sorting methods, including
++:meth:`DataFrame.sort_values`, :meth:`DataFrame.sort_index`, :meth:`Series.sort_values`,
++and :meth:`Series.sort_index`. The ``key`` can be any callable function which is applied
++column-by-column to each column used for sorting, before sorting is performed (:issue:`27237`).
++See :ref:`sort_values with keys <basics.sort_value_key>` and :ref:`sort_index with keys
++<basics.sort_index_key>` for more information.
++
++.. ipython:: python
++
++   s = pd.Series(['C', 'a', 'B'])
++   s
++
++.. ipython:: python
++
++   s.sort_values()
++
++
++Note how this is sorted with capital letters first. If we apply the :meth:`Series.str.lower`
++method, we get
++
++.. ipython:: python
++
++   s.sort_values(key=lambda x: x.str.lower())
++
++
++When applied to a `DataFrame`, they key is applied per-column to all columns or a subset if
++`by` is specified, e.g.
++
++.. ipython:: python
++
++   df = pd.DataFrame({'a': ['C', 'C', 'a', 'a', 'B', 'B'],
++                      'b': [1, 2, 3, 4, 5, 6]})
++   df
++
++.. ipython:: python
++
++   df.sort_values(by=['a'], key=lambda col: col.str.lower())
++
++
++For more details, see examples and documentation in :meth:`DataFrame.sort_values`,
++:meth:`Series.sort_values`, and :meth:`~DataFrame.sort_index`.
++
+ .. _whatsnew_110.timestamp_fold_support:
+ 
+ Fold argument support in Timestamp constructor
+diff --git a/pandas/_typing.py b/pandas/_typing.py
+index 850f10bd7f811..d225b845970cc 100644
+--- a/pandas/_typing.py
++++ b/pandas/_typing.py
+@@ -75,7 +75,13 @@
+ 
+ # to maintain type information across generic functions and parametrization
+ T = TypeVar("T")
++
+ # used in decorators to preserve the signature of the function it decorates
+ # see https://mypy.readthedocs.io/en/stable/generics.html#declaring-decorators
+ FuncType = Callable[..., Any]
+ F = TypeVar("F", bound=FuncType)
++
++# types of vectorized key functions for DataFrame::sort_values and
++# DataFrame::sort_index, among others
++ValueKeyFunc = Optional[Callable[["Series"], Union["Series", AnyArrayLike]]]
++IndexKeyFunc = Optional[Callable[["Index"], Union["Index", AnyArrayLike]]]
+diff --git a/pandas/conftest.py b/pandas/conftest.py
+index 0adbaf6a112cf..16b6d40645547 100644
+--- a/pandas/conftest.py
++++ b/pandas/conftest.py
+@@ -1189,3 +1189,12 @@ def tick_classes(request):
+     Fixture for Tick based datetime offsets available for a time series.
+     """
+     return request.param
++
++
++@pytest.fixture(params=[None, lambda x: x])
++def sort_by_key(request):
++    """
++    Simple fixture for testing keys in sorting methods.
++    Tests None (no key) and the identity key.
++    """
++    return request.param
+diff --git a/pandas/core/arrays/categorical.py b/pandas/core/arrays/categorical.py
+index 48f62fe888b9a..a091476640e07 100644
+--- a/pandas/core/arrays/categorical.py
++++ b/pandas/core/arrays/categorical.py
+@@ -1495,7 +1495,9 @@ def argsort(self, ascending=True, kind="quicksort", **kwargs):
+         """
+         return super().argsort(ascending=ascending, kind=kind, **kwargs)
+ 
+-    def sort_values(self, inplace=False, ascending=True, na_position="last"):
++    def sort_values(
++        self, inplace: bool = False, ascending: bool = True, na_position: str = "last",
++    ):
+         """
+         Sort the Categorical by category value returning a new
+         Categorical by default.
+diff --git a/pandas/core/frame.py b/pandas/core/frame.py
+index d68cadbc75675..5810e86f2c8b1 100644
+--- a/pandas/core/frame.py
++++ b/pandas/core/frame.py
+@@ -47,9 +47,11 @@
+     Axis,
+     Dtype,
+     FilePathOrBuffer,
++    IndexKeyFunc,
+     Label,
+     Level,
+     Renamer,
++    ValueKeyFunc,
+ )
+ from pandas.compat import PY37
+ from pandas.compat._optional import import_optional_dependency
+@@ -139,6 +141,7 @@
+ )
+ from pandas.core.ops.missing import dispatch_fill_zeros
+ from pandas.core.series import Series
++from pandas.core.sorting import ensure_key_mapped
+ 
+ from pandas.io.common import get_filepath_or_buffer
+ from pandas.io.formats import console, format as fmt
+@@ -5054,10 +5057,10 @@ def f(vals):
+ 
+     # ----------------------------------------------------------------------
+     # Sorting
+-
++    # TODO: Just move the sort_values doc here.
+     @Substitution(**_shared_doc_kwargs)
+     @Appender(NDFrame.sort_values.__doc__)
+-    def sort_values(
++    def sort_values(  # type: ignore[override] # NOQA # issue 27237
+         self,
+         by,
+         axis=0,
+@@ -5066,6 +5069,7 @@ def sort_values(
+         kind="quicksort",
+         na_position="last",
+         ignore_index=False,
++        key: ValueKeyFunc = None,
+     ):
+         inplace = validate_bool_kwarg(inplace, "inplace")
+         axis = self._get_axis_number(axis)
+@@ -5080,7 +5084,14 @@ def sort_values(
+             from pandas.core.sorting import lexsort_indexer
+ 
+             keys = [self._get_label_or_level_values(x, axis=axis) for x in by]
+-            indexer = lexsort_indexer(keys, orders=ascending, na_position=na_position)
++
++            # need to rewrap columns in Series to apply key function
++            if key is not None:
++                keys = [Series(k, name=name) for (k, name) in zip(keys, by)]
++
++            indexer = lexsort_indexer(
++                keys, orders=ascending, na_position=na_position, key=key
++            )
+             indexer = ensure_platform_int(indexer)
+         else:
+             from pandas.core.sorting import nargsort
+@@ -5088,11 +5099,15 @@ def sort_values(
+             by = by[0]
+             k = self._get_label_or_level_values(by, axis=axis)
+ 
++            # need to rewrap column in Series to apply key function
++            if key is not None:
++                k = Series(k, name=by)
++
+             if isinstance(ascending, (tuple, list)):
+                 ascending = ascending[0]
+ 
+             indexer = nargsort(
+-                k, kind=kind, ascending=ascending, na_position=na_position
++                k, kind=kind, ascending=ascending, na_position=na_position, key=key
+             )
+ 
+         new_data = self._mgr.take(
+@@ -5118,6 +5133,7 @@ def sort_index(
+         na_position: str = "last",
+         sort_remaining: bool = True,
+         ignore_index: bool = False,
++        key: IndexKeyFunc = None,
+     ):
+         """
+         Sort object by labels (along an axis).
+@@ -5153,6 +5169,16 @@ def sort_index(
+ 
+             .. versionadded:: 1.0.0
+ 
++        key : callable, optional
++            If not None, apply the key function to the index values
++            before sorting. This is similar to the `key` argument in the
++            builtin :meth:`sorted` function, with the notable difference that
++            this `key` function should be *vectorized*. It should expect an
++            ``Index`` and return an ``Index`` of the same shape. For MultiIndex
++            inputs, the key is applied *per level*.
++
++            .. versionadded:: 1.1.0
++
+         Returns
+         -------
+         DataFrame
+@@ -5186,6 +5212,17 @@ def sort_index(
+         100  1
+         29   2
+         1    4
++
++        A key function can be specified which is applied to the index before
++        sorting. For a ``MultiIndex`` this is applied to each level separately.
++
++        >>> df = pd.DataFrame({"a": [1, 2, 3, 4]}, index=['A', 'b', 'C', 'd'])
++        >>> df.sort_index(key=lambda x: x.str.lower())
++           a
++        A  1
++        b  2
++        C  3
++        d  4
+         """
+         # TODO: this can be combined with Series.sort_index impl as
+         # almost identical
+@@ -5194,12 +5231,12 @@ def sort_index(
+ 
+         axis = self._get_axis_number(axis)
+         labels = self._get_axis(axis)
++        labels = ensure_key_mapped(labels, key, levels=level)
+ 
+         # make sure that the axis is lexsorted to start
+         # if not we need to reconstruct to get the correct indexer
+         labels = labels._sort_levels_monotonic()
+         if level is not None:
+-
+             new_axis, indexer = labels.sortlevel(
+                 level, ascending=ascending, sort_remaining=sort_remaining
+             )
+diff --git a/pandas/core/generic.py b/pandas/core/generic.py
+index ed421718c400d..b550857252466 100644
+--- a/pandas/core/generic.py
++++ b/pandas/core/generic.py
+@@ -39,6 +39,7 @@
+     Label,
+     Level,
+     Renamer,
++    ValueKeyFunc,
+ )
+ from pandas.compat import set_function_name
+ from pandas.compat._optional import import_optional_dependency
+@@ -4109,6 +4110,7 @@ def sort_values(
+         kind: str = "quicksort",
+         na_position: str = "last",
+         ignore_index: bool_t = False,
++        key: ValueKeyFunc = None,
+     ):
+         """
+         Sort by the values along either axis.
+@@ -4136,70 +4138,97 @@ def sort_values(
+ 
+              .. versionadded:: 1.0.0
+ 
++        key : callable, optional
++            Apply the key function to the values
++            before sorting. This is similar to the `key` argument in the
++            builtin :meth:`sorted` function, with the notable difference that
++            this `key` function should be *vectorized*. It should expect a
++            ``Series`` and return a Series with the same shape as the input.
++            It will be applied to each column in `by` independently.
++
++            .. versionadded:: 1.1.0
++
+         Returns
+         -------
+-        sorted_obj : DataFrame or None
++        DataFrame or None
+             DataFrame with sorted values if inplace=False, None otherwise.
+ 
++        See Also
++        --------
++        DataFrame.sort_index : Sort a DataFrame by the index.
++        Series.sort_values : Similar method for a Series.
++
+         Examples
+         --------
+         >>> df = pd.DataFrame({
+         ...     'col1': ['A', 'A', 'B', np.nan, 'D', 'C'],
+         ...     'col2': [2, 1, 9, 8, 7, 4],
+         ...     'col3': [0, 1, 9, 4, 2, 3],
++        ...     'col4': ['a', 'B', 'c', 'D', 'e', 'F']
+         ... })
+         >>> df
+-            col1 col2 col3
+-        0   A    2    0
+-        1   A    1    1
+-        2   B    9    9
+-        3   NaN  8    4
+-        4   D    7    2
+-        5   C    4    3
++          col1  col2  col3 col4
++        0    A     2     0    a
++        1    A     1     1    B
++        2    B     9     9    c
++        3  NaN     8     4    D
++        4    D     7     2    e
++        5    C     4     3    F
+ 
+         Sort by col1
+ 
+         >>> df.sort_values(by=['col1'])
+-            col1 col2 col3
+-        0   A    2    0
+-        1   A    1    1
+-        2   B    9    9
+-        5   C    4    3
+-        4   D    7    2
+-        3   NaN  8    4
++          col1  col2  col3 col4
++        0    A     2     0    a
++        1    A     1     1    B
++        2    B     9     9    c
++        5    C     4     3    F
++        4    D     7     2    e
++        3  NaN     8     4    D
+ 
+         Sort by multiple columns
+ 
+         >>> df.sort_values(by=['col1', 'col2'])
+-            col1 col2 col3
+-        1   A    1    1
+-        0   A    2    0
+-        2   B    9    9
+-        5   C    4    3
+-        4   D    7    2
+-        3   NaN  8    4
++          col1  col2  col3 col4
++        1    A     1     1    B
++        0    A     2     0    a
++        2    B     9     9    c
++        5    C     4     3    F
++        4    D     7     2    e
++        3  NaN     8     4    D
+ 
+         Sort Descending
+ 
+         >>> df.sort_values(by='col1', ascending=False)
+-            col1 col2 col3
+-        4   D    7    2
+-        5   C    4    3
+-        2   B    9    9
+-        0   A    2    0
+-        1   A    1    1
+-        3   NaN  8    4
++          col1  col2  col3 col4
++        4    D     7     2    e
++        5    C     4     3    F
++        2    B     9     9    c
++        0    A     2     0    a
++        1    A     1     1    B
++        3  NaN     8     4    D
+ 
+         Putting NAs first
+ 
+         >>> df.sort_values(by='col1', ascending=False, na_position='first')
+-            col1 col2 col3
+-        3   NaN  8    4
+-        4   D    7    2
+-        5   C    4    3
+-        2   B    9    9
+-        0   A    2    0
+-        1   A    1    1
++          col1  col2  col3 col4
++        3  NaN     8     4    D
++        4    D     7     2    e
++        5    C     4     3    F
++        2    B     9     9    c
++        0    A     2     0    a
++        1    A     1     1    B
++
++        Sorting with a key function
++
++        >>> df.sort_values(by='col4', key=lambda col: col.str.lower())
++           col1  col2  col3 col4
++        0    A     2     0    a
++        1    A     1     1    B
++        2    B     9     9    c
++        3  NaN     8     4    D
++        4    D     7     2    e
++        5    C     4     3    F
+         """
+         raise AbstractMethodError(self)
+ 
+diff --git a/pandas/core/groupby/generic.py b/pandas/core/groupby/generic.py
+index 18752cdc1642e..28d7c669726b5 100644
+--- a/pandas/core/groupby/generic.py
++++ b/pandas/core/groupby/generic.py
+@@ -350,7 +350,7 @@ def _aggregate_multiple_funcs(self, arg):
+         return DataFrame(results, columns=columns)
+ 
+     def _wrap_series_output(
+-        self, output: Mapping[base.OutputKey, Union[Series, np.ndarray]], index: Index
++        self, output: Mapping[base.OutputKey, Union[Series, np.ndarray]], index: Index,
+     ) -> Union[Series, DataFrame]:
+         """
+         Wraps the output of a SeriesGroupBy operation into the expected result.
+diff --git a/pandas/core/indexes/base.py b/pandas/core/indexes/base.py
+index 4bc5599297066..4254fafa8bb3a 100644
+--- a/pandas/core/indexes/base.py
++++ b/pandas/core/indexes/base.py
+@@ -2,7 +2,7 @@
+ from datetime import datetime
+ import operator
+ from textwrap import dedent
+-from typing import TYPE_CHECKING, Any, FrozenSet, Hashable, Union
++from typing import TYPE_CHECKING, Any, Callable, FrozenSet, Hashable, Optional, Union
+ import warnings
+ 
+ import numpy as np
+@@ -76,6 +76,7 @@
+ import pandas.core.missing as missing
+ from pandas.core.ops import get_op_result_name
+ from pandas.core.ops.invalid import make_invalid_op
++from pandas.core.sorting import ensure_key_mapped
+ from pandas.core.strings import StringMethods
+ 
+ from pandas.io.formats.printing import (
+@@ -282,7 +283,7 @@ def _outer_indexer(self, left, right):
+     # Constructors
+ 
+     def __new__(
+-        cls, data=None, dtype=None, copy=False, name=None, tupleize_cols=True, **kwargs,
++        cls, data=None, dtype=None, copy=False, name=None, tupleize_cols=True, **kwargs
+     ) -> "Index":
+ 
+         from pandas.core.indexes.range import RangeIndex
+@@ -4359,7 +4360,9 @@ def asof_locs(self, where, mask):
+ 
+         return result
+ 
+-    def sort_values(self, return_indexer: bool = False, ascending: bool = True):
++    def sort_values(
++        self, return_indexer=False, ascending=True, key: Optional[Callable] = None
++    ):
+         """
+         Return a sorted copy of the index.
+ 
+@@ -4372,6 +4375,14 @@ def sort_values(self, return_indexer: bool = False, ascending: bool = True):
+             Should the indices that would sort the index be returned.
+         ascending : bool, default True
+             Should the index values be sorted in an ascending order.
++        key : callable, optional
++            If not None, apply the key function to the index values
++            before sorting. This is similar to the `key` argument in the
++            builtin :meth:`sorted` function, with the notable difference that
++            this `key` function should be *vectorized*. It should expect an
++            ``Index`` and return an ``Index`` of the same shape.
++
++            .. versionadded:: 1.1.0
+ 
+         Returns
+         -------
+@@ -4402,7 +4413,9 @@ def sort_values(self, return_indexer: bool = False, ascending: bool = True):
+         >>> idx.sort_values(ascending=False, return_indexer=True)
+         (Int64Index([1000, 100, 10, 1], dtype='int64'), array([3, 1, 0, 2]))
+         """
+-        _as = self.argsort()
++        idx = ensure_key_mapped(self, key)
++
++        _as = idx.argsort()
+         if not ascending:
+             _as = _as[::-1]
+ 
+@@ -4513,8 +4526,10 @@ def argsort(self, *args, **kwargs) -> np.ndarray:
+         Index(['a', 'b', 'c', 'd'], dtype='object')
+         """
+         result = self.asi8
++
+         if result is None:
+             result = np.array(self)
++
+         return result.argsort(*args, **kwargs)
+ 
+     def get_value(self, series: "Series", key):
+diff --git a/pandas/core/indexes/datetimelike.py b/pandas/core/indexes/datetimelike.py
+index ae119e72e37e1..8295ca13c33b1 100644
+--- a/pandas/core/indexes/datetimelike.py
++++ b/pandas/core/indexes/datetimelike.py
+@@ -42,6 +42,7 @@
+ )
+ from pandas.core.indexes.numeric import Int64Index
+ from pandas.core.ops import get_op_result_name
++from pandas.core.sorting import ensure_key_mapped
+ from pandas.core.tools.timedeltas import to_timedelta
+ 
+ from pandas.tseries.frequencies import DateOffset
+@@ -183,36 +184,21 @@ def __contains__(self, key: Any) -> bool:
+             is_scalar(res) or isinstance(res, slice) or (is_list_like(res) and len(res))
+         )
+ 
+-    def sort_values(self, return_indexer=False, ascending=True):
++    def sort_values(self, return_indexer=False, ascending=True, key=None):
+         """
+         Return sorted copy of Index.
+         """
++        idx = ensure_key_mapped(self, key)
++
++        _as = idx.argsort()
++        if not ascending:
++            _as = _as[::-1]
++        sorted_index = self.take(_as)
++
+         if return_indexer:
+-            _as = self.argsort()
+-            if not ascending:
+-                _as = _as[::-1]
+-            sorted_index = self.take(_as)
+             return sorted_index, _as
+         else:
+-            # NB: using asi8 instead of _data matters in numpy 1.18
+-            #  because the treatment of NaT has been changed to put NaT last
+-            #  instead of first.
+-            sorted_values = np.sort(self.asi8)
+-
+-            freq = self.freq
+-            if freq is not None and not is_period_dtype(self):
+-                if freq.n > 0 and not ascending:
+-                    freq = freq * -1
+-                elif freq.n < 0 and ascending:
+-                    freq = freq * -1
+-
+-            if not ascending:
+-                sorted_values = sorted_values[::-1]
+-
+-            arr = type(self._data)._simple_new(
+-                sorted_values, dtype=self.dtype, freq=freq
+-            )
+-            return type(self)._simple_new(arr, name=self.name)
++            return sorted_index
+ 
+     @Appender(_index_shared_docs["take"] % _index_doc_kwargs)
+     def take(self, indices, axis=0, allow_fill=True, fill_value=None, **kwargs):
+diff --git a/pandas/core/series.py b/pandas/core/series.py
+index 7c08fd0e67a8a..eb409b432f89c 100644
+--- a/pandas/core/series.py
++++ b/pandas/core/series.py
+@@ -23,7 +23,7 @@
+ from pandas._config import get_option
+ 
+ from pandas._libs import lib, properties, reshape, tslibs
+-from pandas._typing import ArrayLike, Axis, DtypeObj, Label
++from pandas._typing import ArrayLike, Axis, DtypeObj, IndexKeyFunc, Label, ValueKeyFunc
+ from pandas.compat.numpy import function as nv
+ from pandas.util._decorators import Appender, Substitution, doc
+ from pandas.util._validators import validate_bool_kwarg, validate_percentile
+@@ -89,6 +89,7 @@
+ from pandas.core.indexes.timedeltas import TimedeltaIndex
+ from pandas.core.indexing import check_bool_indexer
+ from pandas.core.internals import SingleBlockManager
++from pandas.core.sorting import ensure_key_mapped
+ from pandas.core.strings import StringMethods
+ from pandas.core.tools.datetimes import to_datetime
+ 
+@@ -2865,6 +2866,7 @@ def sort_values(
+         kind: str = "quicksort",
+         na_position: str = "last",
+         ignore_index: bool = False,
++        key: ValueKeyFunc = None,
+     ):
+         """
+         Sort by the values.
+@@ -2888,9 +2890,18 @@ def sort_values(
+             Argument 'first' puts NaNs at the beginning, 'last' puts NaNs at
+             the end.
+         ignore_index : bool, default False
+-             If True, the resulting axis will be labeled 0, 1, …, n - 1.
++            If True, the resulting axis will be labeled 0, 1, …, n - 1.
++
++            .. versionadded:: 1.0.0
+ 
+-             .. versionadded:: 1.0.0
++        key : callable, optional
++            If not None, apply the key function to the series values
++            before sorting. This is similar to the `key` argument in the
++            builtin :meth:`sorted` function, with the notable difference that
++            this `key` function should be *vectorized*. It should expect a
++            ``Series`` and return an array-like.
++
++            .. versionadded:: 1.1.0
+ 
+         Returns
+         -------
+@@ -2973,6 +2984,48 @@ def sort_values(
+         2    d
+         0    z
+         dtype: object
++
++        Sort using a key function. Your `key` function will be
++        given the ``Series`` of values and should return an array-like.
++
++        >>> s = pd.Series(['a', 'B', 'c', 'D', 'e'])
++        >>> s.sort_values()
++        1    B
++        3    D
++        0    a
++        2    c
++        4    e
++        dtype: object
++        >>> s.sort_values(key=lambda x: x.str.lower())
++        0    a
++        1    B
++        2    c
++        3    D
++        4    e
++        dtype: object
++
++        NumPy ufuncs work well here. For example, we can
++        sort by the ``sin`` of the value
++
++        >>> s = pd.Series([-4, -2, 0, 2, 4])
++        >>> s.sort_values(key=np.sin)
++        1   -2
++        4    4
++        2    0
++        0   -4
++        3    2
++        dtype: int64
++
++        More complicated user-defined functions can be used,
++        as long as they expect a Series and return an array-like
++
++        >>> s.sort_values(key=lambda x: (np.tan(x.cumsum())))
++        0   -4
++        3    2
++        4    4
++        1   -2
++        2    0
++        dtype: int64
+         """
+         inplace = validate_bool_kwarg(inplace, "inplace")
+         # Validate the axis parameter
+@@ -2986,6 +3039,9 @@ def sort_values(
+             )
+ 
+         def _try_kind_sort(arr):
++            arr = ensure_key_mapped(arr, key)
++            arr = getattr(arr, "_values", arr)
++
+             # easier to ask forgiveness than permission
+             try:
+                 # if kind==mergesort, it can fail for object dtype
+@@ -3003,7 +3059,7 @@ def _try_kind_sort(arr):
+         good = ~bad
+         idx = ibase.default_index(len(self))
+ 
+-        argsorted = _try_kind_sort(arr[good])
++        argsorted = _try_kind_sort(self[good])
+ 
+         if is_list_like(ascending):
+             if len(ascending) != 1:
+@@ -3049,6 +3105,7 @@ def sort_index(
+         na_position: str = "last",
+         sort_remaining: bool = True,
+         ignore_index: bool = False,
++        key: IndexKeyFunc = None,
+     ):
+         """
+         Sort Series by index labels.
+@@ -3083,6 +3140,15 @@ def sort_index(
+ 
+             .. versionadded:: 1.0.0
+ 
++        key : callable, optional
++            If not None, apply the key function to the index values
++            before sorting. This is similar to the `key` argument in the
++            builtin :meth:`sorted` function, with the notable difference that
++            this `key` function should be *vectorized*. It should expect an
++            ``Index`` and return an ``Index`` of the same shape.
++
++            .. versionadded:: 1.1.0
++
+         Returns
+         -------
+         Series
+@@ -3164,22 +3230,35 @@ def sort_index(
+         baz  two    5
+         bar  two    7
+         dtype: int64
++
++        Apply a key function before sorting
++
++        >>> s = pd.Series([1, 2, 3, 4], index=['A', 'b', 'C', 'd'])
++        >>> s.sort_index(key=lambda x : x.str.lower())
++        A    1
++        b    2
++        C    3
++        d    4
++        dtype: int64
+         """
++
+         # TODO: this can be combined with DataFrame.sort_index impl as
+         # almost identical
+         inplace = validate_bool_kwarg(inplace, "inplace")
+         # Validate the axis parameter
+         self._get_axis_number(axis)
+-        index = self.index
++        index = ensure_key_mapped(self.index, key, levels=level)
+ 
+         if level is not None:
+             new_index, indexer = index.sortlevel(
+                 level, ascending=ascending, sort_remaining=sort_remaining
+             )
++
+         elif isinstance(index, MultiIndex):
+             from pandas.core.sorting import lexsort_indexer
+ 
+             labels = index._sort_levels_monotonic()
++
+             indexer = lexsort_indexer(
+                 labels._get_codes_for_sorting(),
+                 orders=ascending,
+@@ -3203,7 +3282,7 @@ def sort_index(
+             )
+ 
+         indexer = ensure_platform_int(indexer)
+-        new_index = index.take(indexer)
++        new_index = self.index.take(indexer)
+         new_index = new_index._sort_levels_monotonic()
+ 
+         new_values = self._values.take(indexer)
+diff --git a/pandas/core/sorting.py b/pandas/core/sorting.py
+index 5496eca46b992..69d55978724af 100644
+--- a/pandas/core/sorting.py
++++ b/pandas/core/sorting.py
+@@ -1,4 +1,6 @@
+ """ miscellaneous sorting / groupby utilities """
++from typing import Callable, Optional
++
+ import numpy as np
+ 
+ from pandas._libs import algos, hashtable, lib
+@@ -10,6 +12,7 @@
+     is_categorical_dtype,
+     is_extension_array_dtype,
+ )
++from pandas.core.dtypes.generic import ABCMultiIndex
+ from pandas.core.dtypes.missing import isna
+ 
+ import pandas.core.algorithms as algorithms
+@@ -189,11 +192,28 @@ def indexer_from_factorized(labels, shape, compress: bool = True):
+     return get_group_index_sorter(ids, ngroups)
+ 
+ 
+-def lexsort_indexer(keys, orders=None, na_position: str = "last"):
++def lexsort_indexer(
++    keys, orders=None, na_position: str = "last", key: Optional[Callable] = None
++):
+     """
++    Performs lexical sorting on a set of keys
++
+     Parameters
+     ----------
++    keys : sequence of arrays
++        Sequence of ndarrays to be sorted by the indexer
++    orders : boolean or list of booleans, optional
++        Determines the sorting order for each element in keys. If a list,
++        it must be the same length as keys. This determines whether the
++        corresponding element in keys should be sorted in ascending
++        (True) or descending (False) order. if bool, applied to all
++        elements as above. if None, defaults to True.
+     na_position : {'first', 'last'}, default 'last'
++        Determines placement of NA elements in the sorted list ("last" or "first")
++    key : Callable, optional
++        Callable key function applied to every element in keys before sorting
++
++        .. versionadded:: 1.0.0
+     """
+     from pandas.core.arrays import Categorical
+ 
+@@ -204,15 +224,16 @@ def lexsort_indexer(keys, orders=None, na_position: str = "last"):
+     elif orders is None:
+         orders = [True] * len(keys)
+ 
+-    for key, order in zip(keys, orders):
++    keys = [ensure_key_mapped(k, key) for k in keys]
+ 
++    for k, order in zip(keys, orders):
+         # we are already a Categorical
+-        if is_categorical_dtype(key):
+-            cat = key
++        if is_categorical_dtype(k):
++            cat = k
+ 
+         # create the Categorical
+         else:
+-            cat = Categorical(key, ordered=True)
++            cat = Categorical(k, ordered=True)
+ 
+         if na_position not in ["last", "first"]:
+             raise ValueError(f"invalid na_position: {na_position}")
+@@ -241,21 +262,33 @@ def lexsort_indexer(keys, orders=None, na_position: str = "last"):
+ 
+ 
+ def nargsort(
+-    items, kind: str = "quicksort", ascending: bool = True, na_position: str = "last"
++    items,
++    kind: str = "quicksort",
++    ascending: bool = True,
++    na_position: str = "last",
++    key: Optional[Callable] = None,
+ ):
+     """
+     Intended to be a drop-in replacement for np.argsort which handles NaNs.
+ 
+-    Adds ascending and na_position parameters.
++    Adds ascending, na_position, and key parameters.
+ 
+-    (GH #6399, #5231)
++    (GH #6399, #5231, #27237)
+ 
+     Parameters
+     ----------
+     kind : str, default 'quicksort'
+     ascending : bool, default True
+     na_position : {'first', 'last'}, default 'last'
++    key : Optional[Callable], default None
+     """
++
++    if key is not None:
++        items = ensure_key_mapped(items, key)
++        return nargsort(
++            items, kind=kind, ascending=ascending, na_position=na_position, key=None
++        )
++
+     items = extract_array(items)
+     mask = np.asarray(isna(items))
+ 
+@@ -267,6 +300,7 @@ def nargsort(
+     idx = np.arange(len(items))
+     non_nans = items[~mask]
+     non_nan_idx = idx[~mask]
++
+     nan_idx = np.nonzero(mask)[0]
+     if not ascending:
+         non_nans = non_nans[::-1]
+@@ -285,6 +319,102 @@ def nargsort(
+     return indexer
+ 
+ 
++def ensure_key_mapped_multiindex(index, key: Callable, level=None):
++    """
++    Returns a new MultiIndex in which key has been applied
++    to all levels specified in level (or all levels if level
++    is None). Used for key sorting for MultiIndex.
++
++    Parameters
++    ----------
++    index : MultiIndex
++        Index to which to apply the key function on the
++        specified levels.
++    key : Callable
++        Function that takes an Index and returns an Index of
++        the same shape. This key is applied to each level
++        separately. The name of the level can be used to
++        distinguish different levels for application.
++    level : list-like, int or str, default None
++        Level or list of levels to apply the key function to.
++        If None, key function is applied to all levels. Other
++        levels are left unchanged.
++
++    Returns
++    -------
++    labels : MultiIndex
++        Resulting MultiIndex with modified levels.
++    """
++    from pandas.core.indexes.api import MultiIndex
++
++    if level is not None:
++        if isinstance(level, (str, int)):
++            sort_levels = [level]
++        else:
++            sort_levels = level
++
++        sort_levels = [index._get_level_number(lev) for lev in sort_levels]
++    else:
++        sort_levels = list(range(index.nlevels))  # satisfies mypy
++
++    mapped = [
++        ensure_key_mapped(index._get_level_values(level), key)
++        if level in sort_levels
++        else index._get_level_values(level)
++        for level in range(index.nlevels)
++    ]
++
++    labels = MultiIndex.from_arrays(mapped)
++
++    return labels
++
++
++def ensure_key_mapped(values, key: Optional[Callable], levels=None):
++    """
++    Applies a callable key function to the values function and checks
++    that the resulting value has the same shape. Can be called on Index
++    subclasses, Series, DataFrames, or ndarrays.
++
++    Parameters
++    ----------
++    values : Series, DataFrame, Index subclass, or ndarray
++    key : Optional[Callable], key to be called on the values array
++    levels : Optional[List], if values is a MultiIndex, list of levels to
++    apply the key to.
++    """
++    from pandas.core.indexes.api import Index
++
++    if not key:
++        return values.copy()
++
++    if isinstance(values, ABCMultiIndex):
++        return ensure_key_mapped_multiindex(values, key, level=levels)
++
++    result = key(values.copy())
++    if len(result) != len(values):
++        raise ValueError(
++            "User-provided `key` function must not change the shape of the array."
++        )
++
++    try:
++        if isinstance(
++            values, Index
++        ):  # convert to a new Index subclass, not necessarily the same
++            result = Index(result)
++        else:
++            type_of_values = type(values)
++            result = type_of_values(result)  # try to revert to original type otherwise
++    except TypeError:
++        raise TypeError(
++            "User-provided `key` function returned an invalid type {} \
++            which could not be converted to {}.".format(
++                type(result), type(values)
++            )
++        )
++
++    return result
++
++
+ class _KeyMapper:
+     """
+     Map compressed group id -> key tuple.
+diff --git a/pandas/tests/extension/base/methods.py b/pandas/tests/extension/base/methods.py
+index 22e53dbc89f01..9c465e264d8a1 100644
+--- a/pandas/tests/extension/base/methods.py
++++ b/pandas/tests/extension/base/methods.py
+@@ -76,9 +76,9 @@ def test_nargsort(self, data_missing_for_sorting, na_position, expected):
+         tm.assert_numpy_array_equal(result, expected)
+ 
+     @pytest.mark.parametrize("ascending", [True, False])
+-    def test_sort_values(self, data_for_sorting, ascending):
++    def test_sort_values(self, data_for_sorting, ascending, sort_by_key):
+         ser = pd.Series(data_for_sorting)
+-        result = ser.sort_values(ascending=ascending)
++        result = ser.sort_values(ascending=ascending, key=sort_by_key)
+         expected = ser.iloc[[2, 0, 1]]
+         if not ascending:
+             expected = expected[::-1]
+@@ -86,9 +86,11 @@ def test_sort_values(self, data_for_sorting, ascending):
+         self.assert_series_equal(result, expected)
+ 
+     @pytest.mark.parametrize("ascending", [True, False])
+-    def test_sort_values_missing(self, data_missing_for_sorting, ascending):
++    def test_sort_values_missing(
++        self, data_missing_for_sorting, ascending, sort_by_key
++    ):
+         ser = pd.Series(data_missing_for_sorting)
+-        result = ser.sort_values(ascending=ascending)
++        result = ser.sort_values(ascending=ascending, key=sort_by_key)
+         if ascending:
+             expected = ser.iloc[[2, 0, 1]]
+         else:
+diff --git a/pandas/tests/extension/json/test_json.py b/pandas/tests/extension/json/test_json.py
+index d086896fb09c3..06b59aaeff68d 100644
+--- a/pandas/tests/extension/json/test_json.py
++++ b/pandas/tests/extension/json/test_json.py
+@@ -205,12 +205,16 @@ def test_argsort_missing(self, data_missing_for_sorting):
+         super().test_argsort_missing(data_missing_for_sorting)
+ 
+     @pytest.mark.parametrize("ascending", [True, False])
+-    def test_sort_values(self, data_for_sorting, ascending):
+-        super().test_sort_values(data_for_sorting, ascending)
++    def test_sort_values(self, data_for_sorting, ascending, sort_by_key):
++        super().test_sort_values(data_for_sorting, ascending, sort_by_key)
+ 
+     @pytest.mark.parametrize("ascending", [True, False])
+-    def test_sort_values_missing(self, data_missing_for_sorting, ascending):
+-        super().test_sort_values_missing(data_missing_for_sorting, ascending)
++    def test_sort_values_missing(
++        self, data_missing_for_sorting, ascending, sort_by_key
++    ):
++        super().test_sort_values_missing(
++            data_missing_for_sorting, ascending, sort_by_key
++        )
+ 
+     @pytest.mark.skip(reason="combine for JSONArray not supported")
+     def test_combine_le(self, data_repeated):
+diff --git a/pandas/tests/frame/methods/test_sort_index.py b/pandas/tests/frame/methods/test_sort_index.py
+index b8eb3494353a9..543d87485d3c4 100644
+--- a/pandas/tests/frame/methods/test_sort_index.py
++++ b/pandas/tests/frame/methods/test_sort_index.py
+@@ -656,3 +656,81 @@ def test_sort_index_level_mixed(self):
+             sorted_before.drop([("foo", "three")], axis=1),
+             sorted_after.drop([("foo", "three")], axis=1),
+         )
++
++
++class TestDataFrameSortIndexKey:
++    def test_sort_multi_index_key(self):
++        # GH 25775, testing that sorting by index works with a multi-index.
++        df = DataFrame(
++            {"a": [3, 1, 2], "b": [0, 0, 0], "c": [0, 1, 2], "d": list("abc")}
++        ).set_index(list("abc"))
++
++        result = df.sort_index(level=list("ac"), key=lambda x: x)
++
++        expected = DataFrame(
++            {"a": [1, 2, 3], "b": [0, 0, 0], "c": [1, 2, 0], "d": list("bca")}
++        ).set_index(list("abc"))
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_index(level=list("ac"), key=lambda x: -x)
++        expected = DataFrame(
++            {"a": [3, 2, 1], "b": [0, 0, 0], "c": [0, 2, 1], "d": list("acb")}
++        ).set_index(list("abc"))
++
++        tm.assert_frame_equal(result, expected)
++
++    def test_sort_index_key(self):  # issue 27237
++        df = DataFrame(np.arange(6, dtype="int64"), index=list("aaBBca"))
++
++        result = df.sort_index()
++        expected = df.iloc[[2, 3, 0, 1, 5, 4]]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_index(key=lambda x: x.str.lower())
++        expected = df.iloc[[0, 1, 5, 2, 3, 4]]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_index(key=lambda x: x.str.lower(), ascending=False)
++        expected = df.iloc[[4, 2, 3, 0, 1, 5]]
++        tm.assert_frame_equal(result, expected)
++
++    def test_sort_index_key_int(self):
++        df = DataFrame(np.arange(6, dtype="int64"), index=np.arange(6, dtype="int64"))
++
++        result = df.sort_index()
++        tm.assert_frame_equal(result, df)
++
++        result = df.sort_index(key=lambda x: -x)
++        expected = df.sort_index(ascending=False)
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_index(key=lambda x: 2 * x)
++        tm.assert_frame_equal(result, df)
++
++    def test_sort_multi_index_key_str(self):
++        # GH 25775, testing that sorting by index works with a multi-index.
++        df = DataFrame(
++            {"a": ["B", "a", "C"], "b": [0, 1, 0], "c": list("abc"), "d": [0, 1, 2]}
++        ).set_index(list("abc"))
++
++        result = df.sort_index(level="a", key=lambda x: x.str.lower())
++
++        expected = DataFrame(
++            {"a": ["a", "B", "C"], "b": [1, 0, 0], "c": list("bac"), "d": [1, 0, 2]}
++        ).set_index(list("abc"))
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_index(
++            level=list("abc"),  # can refer to names
++            key=lambda x: x.str.lower() if x.name in ["a", "c"] else -x,
++        )
++
++        expected = DataFrame(
++            {"a": ["a", "B", "C"], "b": [1, 0, 0], "c": list("bac"), "d": [1, 0, 2]}
++        ).set_index(list("abc"))
++        tm.assert_frame_equal(result, expected)
++
++    def test_changes_length_raises(self):
++        df = pd.DataFrame({"A": [1, 2, 3]})
++        with pytest.raises(ValueError, match="change the shape"):
++            df.sort_index(key=lambda x: x[:1])
+diff --git a/pandas/tests/frame/methods/test_sort_values.py b/pandas/tests/frame/methods/test_sort_values.py
+index 3d3bb98f80ac5..1275da01eace9 100644
+--- a/pandas/tests/frame/methods/test_sort_values.py
++++ b/pandas/tests/frame/methods/test_sort_values.py
+@@ -341,6 +341,25 @@ def test_sort_values_nat_values_in_int_column(self):
+         df_sorted = df.sort_values(["datetime", "float"], ascending=False)
+         tm.assert_frame_equal(df_sorted, df)
+ 
++    def test_sort_nat(self):
++        # GH 16836
++
++        d1 = [Timestamp(x) for x in ["2016-01-01", "2015-01-01", np.nan, "2016-01-01"]]
++        d2 = [
++            Timestamp(x)
++            for x in ["2017-01-01", "2014-01-01", "2016-01-01", "2015-01-01"]
++        ]
++        df = pd.DataFrame({"a": d1, "b": d2}, index=[0, 1, 2, 3])
++
++        d3 = [Timestamp(x) for x in ["2015-01-01", "2016-01-01", "2016-01-01", np.nan]]
++        d4 = [
++            Timestamp(x)
++            for x in ["2014-01-01", "2015-01-01", "2017-01-01", "2016-01-01"]
++        ]
++        expected = pd.DataFrame({"a": d3, "b": d4}, index=[1, 3, 0, 2])
++        sorted_df = df.sort_values(by=["a", "b"])
++        tm.assert_frame_equal(sorted_df, expected)
++
+     def test_sort_values_na_position_with_categories(self):
+         # GH#22556
+         # Positioning missing value properly when column is Categorical.
+@@ -516,3 +535,146 @@ def test_sort_values_nat_na_position_default(self):
+         )
+         result = expected.sort_values(["A", "date"])
+         tm.assert_frame_equal(result, expected)
++
++
++class TestDataFrameSortKey:  # test key sorting (issue 27237)
++    def test_sort_values_inplace_key(self, sort_by_key):
++        frame = DataFrame(
++            np.random.randn(4, 4), index=[1, 2, 3, 4], columns=["A", "B", "C", "D"]
++        )
++
++        sorted_df = frame.copy()
++        sorted_df.sort_values(by="A", inplace=True, key=sort_by_key)
++        expected = frame.sort_values(by="A", key=sort_by_key)
++        tm.assert_frame_equal(sorted_df, expected)
++
++        sorted_df = frame.copy()
++        sorted_df.sort_values(by=1, axis=1, inplace=True, key=sort_by_key)
++        expected = frame.sort_values(by=1, axis=1, key=sort_by_key)
++        tm.assert_frame_equal(sorted_df, expected)
++
++        sorted_df = frame.copy()
++        sorted_df.sort_values(by="A", ascending=False, inplace=True, key=sort_by_key)
++        expected = frame.sort_values(by="A", ascending=False, key=sort_by_key)
++        tm.assert_frame_equal(sorted_df, expected)
++
++        sorted_df = frame.copy()
++        sorted_df.sort_values(
++            by=["A", "B"], ascending=False, inplace=True, key=sort_by_key
++        )
++        expected = frame.sort_values(by=["A", "B"], ascending=False, key=sort_by_key)
++        tm.assert_frame_equal(sorted_df, expected)
++
++    def test_sort_values_key(self):
++        df = DataFrame(np.array([0, 5, np.nan, 3, 2, np.nan]))
++
++        result = df.sort_values(0)
++        expected = df.iloc[[0, 4, 3, 1, 2, 5]]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_values(0, key=lambda x: x + 5)
++        expected = df.iloc[[0, 4, 3, 1, 2, 5]]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_values(0, key=lambda x: -x, ascending=False)
++        expected = df.iloc[[0, 4, 3, 1, 2, 5]]
++        tm.assert_frame_equal(result, expected)
++
++    def test_sort_values_by_key(self):
++        df = DataFrame(
++            {
++                "a": np.array([0, 3, np.nan, 3, 2, np.nan]),
++                "b": np.array([0, 2, np.nan, 5, 2, np.nan]),
++            }
++        )
++
++        result = df.sort_values("a", key=lambda x: -x)
++        expected = df.iloc[[1, 3, 4, 0, 2, 5]]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_values(by=["a", "b"], key=lambda x: -x)
++        expected = df.iloc[[3, 1, 4, 0, 2, 5]]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_values(by=["a", "b"], key=lambda x: -x, ascending=False)
++        expected = df.iloc[[0, 4, 1, 3, 2, 5]]
++        tm.assert_frame_equal(result, expected)
++
++    def test_sort_values_by_key_by_name(self):
++        df = DataFrame(
++            {
++                "a": np.array([0, 3, np.nan, 3, 2, np.nan]),
++                "b": np.array([0, 2, np.nan, 5, 2, np.nan]),
++            }
++        )
++
++        def key(col):
++            if col.name == "a":
++                return -col
++            else:
++                return col
++
++        result = df.sort_values(by="a", key=key)
++        expected = df.iloc[[1, 3, 4, 0, 2, 5]]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_values(by=["a"], key=key)
++        expected = df.iloc[[1, 3, 4, 0, 2, 5]]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_values(by="b", key=key)
++        expected = df.iloc[[0, 1, 4, 3, 2, 5]]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_values(by=["a", "b"], key=key)
++        expected = df.iloc[[1, 3, 4, 0, 2, 5]]
++        tm.assert_frame_equal(result, expected)
++
++    def test_sort_values_key_string(self):
++        df = DataFrame(np.array([["hello", "goodbye"], ["hello", "Hello"]]))
++
++        result = df.sort_values(1)
++        expected = df[::-1]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_values([0, 1], key=lambda col: col.str.lower())
++        tm.assert_frame_equal(result, df)
++
++        result = df.sort_values(
++            [0, 1], key=lambda col: col.str.lower(), ascending=False
++        )
++        expected = df.sort_values(1, key=lambda col: col.str.lower(), ascending=False)
++        tm.assert_frame_equal(result, expected)
++
++    def test_sort_values_key_empty(self, sort_by_key):
++        df = DataFrame(np.array([]))
++
++        df.sort_values(0, key=sort_by_key)
++        df.sort_index(key=sort_by_key)
++
++    def test_changes_length_raises(self):
++        df = pd.DataFrame({"A": [1, 2, 3]})
++        with pytest.raises(ValueError, match="change the shape"):
++            df.sort_values("A", key=lambda x: x[:1])
++
++    def test_sort_values_key_axes(self):
++        df = DataFrame({0: ["Hello", "goodbye"], 1: [0, 1]})
++
++        result = df.sort_values(0, key=lambda col: col.str.lower())
++        expected = df[::-1]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_values(1, key=lambda col: -col)
++        expected = df[::-1]
++        tm.assert_frame_equal(result, expected)
++
++    def test_sort_values_key_dict_axis(self):
++        df = DataFrame({0: ["Hello", 0], 1: ["goodbye", 1]})
++
++        result = df.sort_values(0, key=lambda col: col.str.lower(), axis=1)
++        expected = df.loc[:, ::-1]
++        tm.assert_frame_equal(result, expected)
++
++        result = df.sort_values(1, key=lambda col: -col, axis=1)
++        expected = df.loc[:, ::-1]
++        tm.assert_frame_equal(result, expected)
+diff --git a/pandas/tests/indexing/multiindex/test_sorted.py b/pandas/tests/indexing/multiindex/test_sorted.py
+index 4bec0f429a34e..fdeb3ce95b0bb 100644
+--- a/pandas/tests/indexing/multiindex/test_sorted.py
++++ b/pandas/tests/indexing/multiindex/test_sorted.py
+@@ -1,5 +1,6 @@
+ import numpy as np
+ from numpy.random import randn
++import pytest
+ 
+ from pandas import DataFrame, MultiIndex, Series
+ import pandas._testing as tm
+@@ -28,7 +29,8 @@ def test_getitem_slice_not_sorted(self, multiindex_dataframe_random_data):
+         expected = df.reindex(columns=df.columns[:3])
+         tm.assert_frame_equal(result, expected)
+ 
+-    def test_frame_getitem_not_sorted2(self):
++    @pytest.mark.parametrize("key", [None, lambda x: x])
++    def test_frame_getitem_not_sorted2(self, key):
+         # 13431
+         df = DataFrame(
+             {
+@@ -47,15 +49,37 @@ def test_frame_getitem_not_sorted2(self):
+         assert not df2.index.is_monotonic
+ 
+         assert df2_original.index.equals(df2.index)
+-        expected = df2.sort_index()
++        expected = df2.sort_index(key=key)
+         assert expected.index.is_lexsorted()
+         assert expected.index.is_monotonic
+ 
+-        result = df2.sort_index(level=0)
++        result = df2.sort_index(level=0, key=key)
+         assert result.index.is_lexsorted()
+         assert result.index.is_monotonic
+         tm.assert_frame_equal(result, expected)
+ 
++    def test_sort_values_key(self, multiindex_dataframe_random_data):
++        arrays = [
++            ["bar", "bar", "baz", "baz", "qux", "qux", "foo", "foo"],
++            ["one", "two", "one", "two", "one", "two", "one", "two"],
++        ]
++        tuples = zip(*arrays)
++        index = MultiIndex.from_tuples(tuples)
++        index = index.sort_values(  # sort by third letter
++            key=lambda x: x.map(lambda entry: entry[2])
++        )
++        result = DataFrame(range(8), index=index)
++
++        arrays = [
++            ["foo", "foo", "bar", "bar", "qux", "qux", "baz", "baz"],
++            ["one", "two", "one", "two", "one", "two", "one", "two"],
++        ]
++        tuples = zip(*arrays)
++        index = MultiIndex.from_tuples(tuples)
++        expected = DataFrame(range(8), index=index)
++
++        tm.assert_frame_equal(result, expected)
++
+     def test_frame_getitem_not_sorted(self, multiindex_dataframe_random_data):
+         frame = multiindex_dataframe_random_data
+         df = frame.T
+diff --git a/pandas/tests/series/methods/test_sort_index.py b/pandas/tests/series/methods/test_sort_index.py
+index 39f872394d16b..6c6be1506255a 100644
+--- a/pandas/tests/series/methods/test_sort_index.py
++++ b/pandas/tests/series/methods/test_sort_index.py
+@@ -3,7 +3,7 @@
+ import numpy as np
+ import pytest
+ 
+-from pandas import IntervalIndex, MultiIndex, Series
++from pandas import DatetimeIndex, IntervalIndex, MultiIndex, Series
+ import pandas._testing as tm
+ 
+ 
+@@ -198,3 +198,119 @@ def test_sort_index_ascending_list(self):
+         result = ser.sort_index(level=["third", "first"], ascending=[False, True])
+         expected = ser.iloc[[0, 4, 1, 5, 2, 6, 3, 7]]
+         tm.assert_series_equal(result, expected)
++
++
++class TestSeriesSortIndexKey:
++    def test_sort_index_multiindex_key(self):
++        mi = MultiIndex.from_tuples([[1, 1, 3], [1, 1, 1]], names=list("ABC"))
++        s = Series([1, 2], mi)
++        backwards = s.iloc[[1, 0]]
++
++        result = s.sort_index(level="C", key=lambda x: -x)
++        tm.assert_series_equal(s, result)
++
++        result = s.sort_index(level="C", key=lambda x: x)  # nothing happens
++        tm.assert_series_equal(backwards, result)
++
++    def test_sort_index_multiindex_key_multi_level(self):
++        mi = MultiIndex.from_tuples([[1, 1, 3], [1, 1, 1]], names=list("ABC"))
++        s = Series([1, 2], mi)
++        backwards = s.iloc[[1, 0]]
++
++        result = s.sort_index(level=["A", "C"], key=lambda x: -x)
++        tm.assert_series_equal(s, result)
++
++        result = s.sort_index(level=["A", "C"], key=lambda x: x)  # nothing happens
++        tm.assert_series_equal(backwards, result)
++
++    def test_sort_index_key(self):
++        series = Series(np.arange(6, dtype="int64"), index=list("aaBBca"))
++
++        result = series.sort_index()
++        expected = series.iloc[[2, 3, 0, 1, 5, 4]]
++        tm.assert_series_equal(result, expected)
++
++        result = series.sort_index(key=lambda x: x.str.lower())
++        expected = series.iloc[[0, 1, 5, 2, 3, 4]]
++        tm.assert_series_equal(result, expected)
++
++        result = series.sort_index(key=lambda x: x.str.lower(), ascending=False)
++        expected = series.iloc[[4, 2, 3, 0, 1, 5]]
++        tm.assert_series_equal(result, expected)
++
++    def test_sort_index_key_int(self):
++        series = Series(np.arange(6, dtype="int64"), index=np.arange(6, dtype="int64"))
++
++        result = series.sort_index()
++        tm.assert_series_equal(result, series)
++
++        result = series.sort_index(key=lambda x: -x)
++        expected = series.sort_index(ascending=False)
++        tm.assert_series_equal(result, expected)
++
++        result = series.sort_index(key=lambda x: 2 * x)
++        tm.assert_series_equal(result, series)
++
++    def test_sort_index_kind_key(self, sort_by_key):
++        # GH #14444 & #13589:  Add support for sort algo choosing
++        series = Series(index=[3, 2, 1, 4, 3], dtype=object)
++        expected_series = Series(index=[1, 2, 3, 3, 4], dtype=object)
++
++        index_sorted_series = series.sort_index(kind="mergesort", key=sort_by_key)
++        tm.assert_series_equal(expected_series, index_sorted_series)
++
++        index_sorted_series = series.sort_index(kind="quicksort", key=sort_by_key)
++        tm.assert_series_equal(expected_series, index_sorted_series)
++
++        index_sorted_series = series.sort_index(kind="heapsort", key=sort_by_key)
++        tm.assert_series_equal(expected_series, index_sorted_series)
++
++    def test_sort_index_kind_neg_key(self):
++        # GH #14444 & #13589:  Add support for sort algo choosing
++        series = Series(index=[3, 2, 1, 4, 3], dtype=object)
++        expected_series = Series(index=[4, 3, 3, 2, 1], dtype=object)
++
++        index_sorted_series = series.sort_index(kind="mergesort", key=lambda x: -x)
++        tm.assert_series_equal(expected_series, index_sorted_series)
++
++        index_sorted_series = series.sort_index(kind="quicksort", key=lambda x: -x)
++        tm.assert_series_equal(expected_series, index_sorted_series)
++
++        index_sorted_series = series.sort_index(kind="heapsort", key=lambda x: -x)
++        tm.assert_series_equal(expected_series, index_sorted_series)
++
++    def test_sort_index_na_position_key(self, sort_by_key):
++        series = Series(index=[3, 2, 1, 4, 3, np.nan], dtype=object)
++        expected_series_first = Series(index=[np.nan, 1, 2, 3, 3, 4], dtype=object)
++
++        index_sorted_series = series.sort_index(na_position="first", key=sort_by_key)
++        tm.assert_series_equal(expected_series_first, index_sorted_series)
++
++        expected_series_last = Series(index=[1, 2, 3, 3, 4, np.nan], dtype=object)
++
++        index_sorted_series = series.sort_index(na_position="last", key=sort_by_key)
++        tm.assert_series_equal(expected_series_last, index_sorted_series)
++
++    def test_changes_length_raises(self):
++        s = Series([1, 2, 3])
++        with pytest.raises(ValueError, match="change the shape"):
++            s.sort_index(key=lambda x: x[:1])
++
++    def test_sort_values_key_type(self):
++        s = Series([1, 2, 3], DatetimeIndex(["2008-10-24", "2008-11-23", "2007-12-22"]))
++
++        result = s.sort_index(key=lambda x: x.month)
++        expected = s.iloc[[0, 1, 2]]
++        tm.assert_series_equal(result, expected)
++
++        result = s.sort_index(key=lambda x: x.day)
++        expected = s.iloc[[2, 1, 0]]
++        tm.assert_series_equal(result, expected)
++
++        result = s.sort_index(key=lambda x: x.year)
++        expected = s.iloc[[2, 0, 1]]
++        tm.assert_series_equal(result, expected)
++
++        result = s.sort_index(key=lambda x: x.month_name())
++        expected = s.iloc[[2, 1, 0]]
++        tm.assert_series_equal(result, expected)
+diff --git a/pandas/tests/series/methods/test_sort_values.py b/pandas/tests/series/methods/test_sort_values.py
+index caa2abd61af6a..b32c59b4daa0d 100644
+--- a/pandas/tests/series/methods/test_sort_values.py
++++ b/pandas/tests/series/methods/test_sort_values.py
+@@ -181,3 +181,31 @@ def test_sort_values_ignore_index(
+ 
+         tm.assert_series_equal(result_ser, expected)
+         tm.assert_series_equal(ser, Series(original_list))
++
++
++class TestSeriesSortingKey:
++    def test_sort_values_key(self):
++        series = Series(np.array(["Hello", "goodbye"]))
++
++        result = series.sort_values(0)
++        expected = series
++        tm.assert_series_equal(result, expected)
++
++        result = series.sort_values(0, key=lambda x: x.str.lower())
++        expected = series[::-1]
++        tm.assert_series_equal(result, expected)
++
++    def test_sort_values_key_nan(self):
++        series = Series(np.array([0, 5, np.nan, 3, 2, np.nan]))
++
++        result = series.sort_values(0)
++        expected = series.iloc[[0, 4, 3, 1, 2, 5]]
++        tm.assert_series_equal(result, expected)
++
++        result = series.sort_values(0, key=lambda x: x + 5)
++        expected = series.iloc[[0, 4, 3, 1, 2, 5]]
++        tm.assert_series_equal(result, expected)
++
++        result = series.sort_values(0, key=lambda x: -x, ascending=False)
++        expected = series.iloc[[0, 4, 3, 1, 2, 5]]
++        tm.assert_series_equal(result, expected)

@@ -188,21 +188,62 @@ func pendingVerificationComment(results []checkpointVerification, testsRan bool,
 	}
 }
 
-func validateFindingEvidence(findings []ReviewFinding, diff string) ([]ReviewFinding, int) {
-	added := addedLineContent(diff)
+// Evidence gate rejection reasons. A rejected finding contributes its primary
+// reason plus missing_field when any narrative field is empty, so the sum of
+// reasons can exceed the rejected count.
+const (
+	evidenceReasonMissingField    = "missing_field"
+	evidenceReasonUnknownFile     = "unknown_file"
+	evidenceReasonTextMismatch    = "text_mismatch"
+	evidenceReasonContextOnly     = "context_only"
+	evidenceReasonAmbiguousAnchor = "ambiguous_anchor"
+)
+
+// formatEvidenceRejections renders the rejection breakdown in a stable order
+// for the finding_verification check message.
+func formatEvidenceRejections(reasons map[string]int) string {
+	if len(reasons) == 0 {
+		return ""
+	}
+	order := []string{
+		evidenceReasonUnknownFile,
+		evidenceReasonTextMismatch,
+		evidenceReasonContextOnly,
+		evidenceReasonAmbiguousAnchor,
+		evidenceReasonMissingField,
+	}
+	parts := make([]string, 0, len(reasons))
+	for _, reason := range order {
+		if reasons[reason] > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", reason, reasons[reason]))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func validateFindingEvidence(findings []ReviewFinding, diff string) ([]ReviewFinding, int, map[string]int) {
+	added, context := diffLineContent(diff)
 	verified := make([]ReviewFinding, 0, len(findings))
 	rejected := 0
+	reasons := map[string]int{}
 	for _, finding := range findings {
 		file := strings.TrimSpace(finding.File)
-		line, evidence, evidenceMatches := locateAddedEvidence(
-			added[file], finding.Line, finding.Evidence,
-		)
+		line, evidence, reason := locateAddedEvidence(added, context, file, finding.Line, finding.Evidence)
 		complete := strings.TrimSpace(finding.Body) != "" &&
 			strings.TrimSpace(finding.Trigger) != "" &&
 			strings.TrimSpace(finding.Impact) != "" &&
 			strings.TrimSpace(finding.Suggestion) != ""
-		if !evidenceMatches || !complete {
+		if reason != "" {
 			rejected++
+			reasons[reason]++
+			if !complete {
+				reasons[evidenceReasonMissingField]++
+			}
+			continue
+		}
+		if !complete {
+			rejected++
+			reasons[evidenceReasonMissingField]++
 			continue
 		}
 		finding.File = file
@@ -210,33 +251,45 @@ func validateFindingEvidence(findings []ReviewFinding, diff string) ([]ReviewFin
 		finding.Evidence = evidence
 		verified = append(verified, finding)
 	}
-	return verified, rejected
+	return verified, rejected, reasons
 }
 
 // locateAddedEvidence keeps a valid anchor, or relocates it only when the quoted
-// block has exactly one match among the same file's added lines.
-func locateAddedEvidence(added map[int]string, reportedLine int, evidence string) (int, string, bool) {
-	if actual, ok := matchAddedEvidence(added, reportedLine, evidence); ok {
-		return reportedLine, actual, true
+// block has exactly one match among the same file's added lines. The returned
+// reason is empty on success and otherwise classifies the failure: the quoted
+// block may sit on unchanged context lines (context_only), match several added
+// positions (ambiguous_anchor), not exist in the file (unknown_file), or not
+// match any added line (text_mismatch).
+func locateAddedEvidence(added, context map[string]map[int]string, file string, reportedLine int, evidence string) (int, string, string) {
+	fileLines, hasFile := added[file]
+	if !hasFile {
+		return 0, "", evidenceReasonUnknownFile
 	}
-
+	if actual, ok := matchAddedEvidence(fileLines, reportedLine, evidence); ok {
+		return reportedLine, actual, ""
+	}
+	if contextLines := context[file]; contextLines != nil {
+		if _, ok := matchAddedEvidence(contextLines, reportedLine, evidence); ok {
+			return 0, "", evidenceReasonContextOnly
+		}
+	}
 	var matchedLine int
 	var matchedEvidence string
-	for line := range added {
-		actual, ok := matchAddedEvidence(added, line, evidence)
+	for line := range fileLines {
+		actual, ok := matchAddedEvidence(fileLines, line, evidence)
 		if !ok {
 			continue
 		}
 		if matchedLine != 0 {
-			return 0, "", false
+			return 0, "", evidenceReasonAmbiguousAnchor
 		}
 		matchedLine = line
 		matchedEvidence = actual
 	}
 	if matchedLine == 0 {
-		return 0, "", false
+		return 0, "", evidenceReasonTextMismatch
 	}
-	return matchedLine, matchedEvidence, true
+	return matchedLine, matchedEvidence, ""
 }
 
 func matchAddedEvidence(added map[int]string, startLine int, evidence string) (string, bool) {
@@ -257,8 +310,11 @@ func matchAddedEvidence(added map[int]string, startLine int, evidence string) (s
 	return strings.Join(actualLines, "\n"), true
 }
 
-func addedLineContent(diff string) map[string]map[int]string {
+// diffLineContent maps file -> new-side line number -> text, separately for
+// added lines and unchanged context lines.
+func diffLineContent(diff string) (map[string]map[int]string, map[string]map[int]string) {
 	added := map[string]map[int]string{}
+	context := map[string]map[int]string{}
 	file := ""
 	lineNumber := 0
 	if !strings.Contains(diff, "diff --git ") {
@@ -273,6 +329,9 @@ func addedLineContent(diff string) map[string]map[int]string {
 			lineNumber = 0
 			if added[file] == nil {
 				added[file] = map[int]string{}
+			}
+			if context[file] == nil {
+				context[file] = map[int]string{}
 			}
 			continue
 		}
@@ -289,8 +348,14 @@ func addedLineContent(diff string) map[string]map[int]string {
 			continue
 		}
 		if strings.HasPrefix(line, " ") {
+			context[file][lineNumber] = strings.TrimPrefix(line, " ")
 			lineNumber++
 		}
 	}
+	return added, context
+}
+
+func addedLineContent(diff string) map[string]map[int]string {
+	added, _ := diffLineContent(diff)
 	return added
 }

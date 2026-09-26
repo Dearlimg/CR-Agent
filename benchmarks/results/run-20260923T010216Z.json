@@ -1,0 +1,421 @@
+{
+  "benchmark_version": "code-review-v1",
+  "started_at": "2026-09-23T01:02:16.0358396Z",
+  "finished_at": "2026-09-23T01:03:04.1114102Z",
+  "model": "deepseek-chat via configured endpoint",
+  "cases_requested": 6,
+  "cases_completed": 6,
+  "max_forwarded_calls": 48,
+  "max_output_tokens_per_call": 1024,
+  "results": [
+    {
+      "id": "nil-dereference",
+      "category": "correctness",
+      "status": "completed",
+      "duration_ms": 5774,
+      "expected": [
+        {
+          "file": "internal/user/name.go",
+          "line": 5,
+          "match_groups": [
+            [
+              "nil",
+              "空指针",
+              "空值"
+            ],
+            [
+              "panic",
+              "崩溃",
+              "解引用"
+            ]
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "file": "internal/user/name.go",
+          "line": 4,
+          "severity": "high",
+          "confidence": "high",
+          "body": "DisplayName 的 nil 判断写反了：profile == nil 时本应返回安全默认值，但该分支内仍访问 profile.Name，会对 nil 指针解引用并立即触发 panic，使兜底分支完全失效。函数入口显式检查 nil，说明调用方预期会传入 nil，因此任何以 nil Profile 调用 DisplayName 的路径（如用户资料未加载、查询无结果）都会导致进程崩溃。\n建议：将 nil 分支改为返回安全默认值，保留非 nil 分支返回 profile.Name，例如：if profile == nil { return \"\" }；若决定不保留 nil 兜底，则需删除该检查并同步修改调用点契约以要求非 nil。",
+          "trace_id": "36be24448d4ba2e5"
+        }
+      ],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "valid_changed_lines": 1,
+      "invalid_changed_lines": 0,
+      "trace_events": 27,
+      "complete_trace_events": 27,
+      "model_json_valid": true,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 5,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 5
+      }
+    },
+    {
+      "id": "off-by-one-slice",
+      "category": "correctness",
+      "status": "completed",
+      "duration_ms": 6221,
+      "expected": [
+        {
+          "file": "internal/page/page.go",
+          "line": 7,
+          "match_groups": [
+            [
+              "越界",
+              "panic",
+              "边界"
+            ],
+            [
+              "limit",
+              "长度",
+              "索引"
+            ]
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "file": "internal/page/page.go",
+          "line": 7,
+          "severity": "high",
+          "confidence": "high",
+          "body": "Take 在 limit \u003e= 0 时直接执行 values[:limit+1]，当 limit 大于等于 len(values) 时（例如 values 长度为 3、limit 为 3 或更大）切片上界越过 len(values)，触发运行时 panic（slice bounds out of range），导致调用方崩溃；这是调用方请求恰好等于或超过元素总数时可直接触发的崩溃路径，而非返回全部元素或空结果。\n建议：切片前先做边界收敛：if limit \u003c= 0 { return nil }; if limit \u003e len(values) { limit = len(values) }; return values[:limit]，确保切片上界不超过 len(values)。",
+          "trace_id": "dcc1bda7271ca036"
+        },
+        {
+          "file": "internal/page/page.go",
+          "line": 7,
+          "severity": "medium",
+          "confidence": "medium",
+          "body": "参数 limit 的语义与实现不一致：take 型函数通常返回最多 limit 个元素，但这里返回 limit+1 个元素，导致返回数量比调用方预期多一个，可能造成分页结果重复或数量错误。\n建议：明确契约：若 limit 表示最大返回数量，应返回 values[:limit]；若表示起始偏移，应重命名参数（如 offset）并在文档注释中说明其语义。",
+          "trace_id": "dcc1bda7271ca036"
+        }
+      ],
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "valid_changed_lines": 2,
+      "invalid_changed_lines": 0,
+      "trace_events": 26,
+      "complete_trace_events": 26,
+      "model_json_valid": true,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 4,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 4
+      }
+    },
+    {
+      "id": "map-concurrent-write",
+      "category": "concurrency",
+      "status": "completed",
+      "duration_ms": 9633,
+      "expected": [
+        {
+          "file": "internal/cache/cache.go",
+          "line": 8,
+          "match_groups": [
+            [
+              "并发",
+              "goroutine",
+              "协程",
+              "竞态"
+            ],
+            [
+              "map",
+              "映射"
+            ],
+            [
+              "锁",
+              "同步",
+              "fatal error"
+            ]
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "file": "internal/cache/cache.go",
+          "line": 8,
+          "severity": "high",
+          "confidence": "high",
+          "body": "PutAll 在循环内用 go func() 启动 goroutine：闭包捕获循环变量 key、value（Go 1.22 之前的循环变量语义），多个写入可能都使用同一个（最后一个）键值，造成键值错写；更严重的是所有 goroutine 都在无锁情况下并发写同一个 map entries。触发条件：values 含两个及以上元素时调用 PutAll。多个 goroutine 同时写普通 map 会触发运行时致命错误 fatal error: concurrent map writes（不可 recover），直接终止进程；同时闭包捕获问题会导致 PutAll 声称写入的全部键值实际只写入一个，造成数据丢失或缓存内容错误。\n建议：改为同步写入：for key, value := range values { entries[key] = value }；若确需并发，必须用 sync.Mutex 或 sync.Map 保护 entries，并把 key、value 作为参数传入闭包（go func(k, v string) { ... }(key, value)）以避免捕获循环变量。",
+          "trace_id": "cb724428d35b15d1"
+        },
+        {
+          "file": "internal/cache/cache.go",
+          "line": 4,
+          "severity": "medium",
+          "confidence": "high",
+          "body": "包级全局 map entries 没有任何同步保护，且 PutAll 返回后写入仍在后台异步进行，调用方无法获知写入是否完成；任何读取该 map 的路径（如 Get）都会与写入构成数据竞争，并发读写同一 map 同样会触发 fatal error。此外该缓存 API 没有生命周期或重置手段，测试与调用方无法隔离状态，在被多个请求复用时容易产生崩溃或脏读。\n建议：将缓存封装为带 sync.RWMutex 或 sync.Map 的结构体（如 type Cache struct { mu sync.RWMutex; m map[string]string }），通过构造函数返回实例并暴露读写方法，让 PutAll 同步完成写入后再返回，避免无保护的包级可变全局状态。",
+          "trace_id": "cb724428d35b15d1"
+        },
+        {
+          "file": "internal/cache/cache.go",
+          "line": 5,
+          "severity": "low",
+          "confidence": "medium",
+          "body": "新增导出的 PutAll 没有任何使用方或测试，且内部启动匿名 goroutine 后不提供完成信号，调用方无法等待写入结束，调用后立即读取缓存的代码会观察到不确定的空结果，测试也无法确定写入是否完成，形成可维护性与测试缺口。\n建议：为 PutAll 补单元测试，或改为同步实现使写入在返回时已完成；若保留异步语义，需返回可等待的完成信号（如 sync.WaitGroup 或 chan struct{}），让调用方和测试能够同步。",
+          "trace_id": "cb724428d35b15d1"
+        }
+      ],
+      "true_positives": 1,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "valid_changed_lines": 3,
+      "invalid_changed_lines": 0,
+      "trace_events": 29,
+      "complete_trace_events": 29,
+      "model_json_valid": true,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 6,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 6
+      }
+    },
+    {
+      "id": "sql-injection",
+      "category": "security",
+      "status": "completed",
+      "duration_ms": 8075,
+      "expected": [
+        {
+          "file": "internal/user/search.go",
+          "line": 4,
+          "match_groups": [
+            [
+              "SQL 注入",
+              "sql injection",
+              "注入"
+            ],
+            [
+              "参数化",
+              "占位符",
+              "预编译"
+            ]
+          ]
+        },
+        {
+          "file": "internal/user/search.go",
+          "line": 5,
+          "match_groups": [
+            [
+              "rows",
+              "结果集",
+              "查询结果"
+            ],
+            [
+              "未被消费",
+              "未消费",
+              "未读取",
+              "未返回"
+            ]
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "file": "internal/user/search.go",
+          "line": 4,
+          "severity": "high",
+          "confidence": "high",
+          "body": "name 通过 fmt.Sprintf 直接拼接进 SQL 文本，未做参数化也未转义。当 name 来自请求（如 \"' OR '1'='1\"）时，WHERE 条件被改写，可返回全部用户，或进一步注入 UNION/子查询、用注释符截断，造成越权读取/篡改 users 数据甚至绕过认证条件；同时合法输入（如含单引号的姓名 O'Brien）会导致 SQL 语法错误，使 db.Query 报错、搜索功能不可用。\n建议：改为参数化查询，如 db.Query(\"SELECT id FROM users WHERE name = ?\", name)，并按所用驱动改写占位符（Postgres 用 $1），删除 fmt.Sprintf 拼接。",
+          "trace_id": "31b2f06a03e4a003"
+        },
+        {
+          "file": "internal/user/search.go",
+          "line": 5,
+          "severity": "medium",
+          "confidence": "high",
+          "body": "查询结果集未被消费：函数在 defer rows.Close() 之后直接 return nil，未调用 rows.Next() 读取行，也未返回任何数据。调用方既拿不到匹配结果，也无法区分“无匹配”与“有匹配”，同时行上的错误（rows.Err()）被静默丢弃，只能延迟到 Close 时暴露。\n建议：遍历结果集并返回匹配的 id，例如将 rows.Next() 的 id 扫描到切片后返回 ([]int, error)，在循环后检查 rows.Err()，并按需把返回值签名从 error 调整为实际结果类型。",
+          "trace_id": "31b2f06a03e4a003"
+        }
+      ],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "valid_changed_lines": 2,
+      "invalid_changed_lines": 0,
+      "trace_events": 30,
+      "complete_trace_events": 30,
+      "model_json_valid": true,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 6,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 6
+      }
+    },
+    {
+      "id": "http-response-body-leak",
+      "category": "resource",
+      "status": "completed",
+      "duration_ms": 11461,
+      "expected": [
+        {
+          "file": "internal/client/fetch.go",
+          "line": 8,
+          "match_groups": [
+            [
+              "Body",
+              "响应体",
+              "response body"
+            ],
+            [
+              "Close",
+              "关闭"
+            ],
+            [
+              "连接",
+              "泄漏",
+              "资源"
+            ]
+          ]
+        },
+        {
+          "file": "internal/client/fetch.go",
+          "line": 3,
+          "match_groups": [
+            [
+              "import",
+              "导入"
+            ],
+            [
+              "编译",
+              "构建",
+              "build"
+            ]
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "file": "internal/client/fetch.go",
+          "line": 8,
+          "severity": "high",
+          "confidence": "high",
+          "body": "成功获取响应后从未关闭 resp.Body，且 Fetch 只返回 []byte 与 error，调用方无法访问 resp 自行关闭。因此每次成功调用都会泄漏一个空闲连接和文件描述符，在高频或长稳场景下会耗尽连接池与 fd，后续请求因无法获取连接而阻塞或报错。\n建议：在成功获取 resp 后立即 defer resp.Body.Close()，例如 resp, err := client.Get(url); if err != nil { return nil, err }; defer resp.Body.Close(); return io.ReadAll(resp.Body)。",
+          "trace_id": "cc89b91ea535d4ba"
+        },
+        {
+          "file": "internal/client/fetch.go",
+          "line": 6,
+          "severity": "medium",
+          "confidence": "medium",
+          "body": "未检查 HTTP 状态码，非 2xx 响应（如 404、500）的错误页内容会作为正常结果返回且 err 为 nil，调用方无法区分成功与失败，会静默地把错误数据当有效数据处理，造成难以定位的数据错误。\n建议：在读取 resp.Body 之前校验 resp.StatusCode，非 2xx 时返回包含状态码的错误，例如 if resp.StatusCode \u003c 200 || resp.StatusCode \u003e= 300 { return nil, fmt.Errorf(\"unexpected status: %s\", resp.Status) }。",
+          "trace_id": "cc89b91ea535d4ba"
+        },
+        {
+          "file": "internal/client/fetch.go",
+          "line": 8,
+          "severity": "medium",
+          "confidence": "medium",
+          "body": "io.ReadAll 的读取错误被直接丢弃，该路径没有返回任何错误，读取失败时调用方会收到 nil error 与不完整内容，无法感知读取失败。\n建议：显式返回读取错误：data, err := io.ReadAll(resp.Body); if err != nil { return nil, err }; return data, nil。",
+          "trace_id": "cc89b91ea535d4ba"
+        },
+        {
+          "file": "internal/client/fetch.go",
+          "line": 3,
+          "severity": "medium",
+          "confidence": "high",
+          "body": "文件使用了 http.Client 与 io.ReadAll，但 diff 中没有任何 import 声明，该包无法编译，属于本改动直接引入的构建中断。\n建议：补上 import 声明，例如 import ( \"io\"; \"net/http\" )（若涉及错误格式化还需 \"fmt\"）。",
+          "trace_id": "cc89b91ea535d4ba"
+        }
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "valid_changed_lines": 4,
+      "invalid_changed_lines": 0,
+      "trace_events": 31,
+      "complete_trace_events": 31,
+      "model_json_valid": true,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 6,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 6
+      }
+    },
+    {
+      "id": "path-traversal",
+      "category": "security",
+      "status": "completed",
+      "duration_ms": 6908,
+      "expected": [
+        {
+          "file": "internal/file/read.go",
+          "line": 4,
+          "match_groups": [
+            [
+              "路径穿越",
+              "path traversal",
+              "目录遍历"
+            ],
+            [
+              "..",
+              "逃逸",
+              "根目录",
+              "root"
+            ]
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "file": "internal/file/read.go",
+          "line": 4,
+          "severity": "high",
+          "confidence": "high",
+          "body": "`filepath.Join(root, name)` 只做路径拼接与清理，当 `name` 由调用方以不受信输入传入时，含 `..` 的相对路径（如 `../../etc/passwd`）或绝对路径可逃出 `root`，使 `Read` 读取任意文件；若上游把读取内容回显或返回给请求方，即造成任意文件读取/敏感信息泄露。`filepath.Join` 会清理路径但并不限制在 `root` 之内，因此拼接本身不构成包含性校验。\n建议：在读取前对最终路径做包含性校验，最小实现：先 `clean := filepath.Join(root, name)`，再用 `filepath.Rel(root, clean)` 检查结果不以 `..` 开头且不是绝对路径，不满足则直接返回错误；更稳妥的做法是基于已打开目录的 `os.Root`/`os.OpenRoot`（或 `openat` 语义）在目录内打开文件，从根本上避免符号链接与路径穿越逃逸。",
+          "trace_id": "bb1efde38b7ef81b"
+        }
+      ],
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "valid_changed_lines": 1,
+      "invalid_changed_lines": 0,
+      "trace_events": 30,
+      "complete_trace_events": 30,
+      "model_json_valid": true,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 6,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 6
+      }
+    }
+  ],
+  "true_positives": 8,
+  "false_positives": 5,
+  "false_negatives": 0,
+  "valid_changed_lines": 13,
+  "invalid_changed_lines": 0,
+  "trace_events": 173,
+  "complete_trace_events": 173,
+  "forwarded_requests": 33,
+  "budget_rejections": 0,
+  "reported_tokens": 0,
+  "responses_without_usage": 33,
+  "precision": 0.6153846153846154,
+  "recall": 1,
+  "f1": 0.761904761904762,
+  "valid_line_rate": 1,
+  "trace_completeness": 1,
+  "redaction_canary_leaked": false
+}

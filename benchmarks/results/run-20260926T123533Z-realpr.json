@@ -1,0 +1,149 @@
+{
+  "version": "real-pr-v1",
+  "manifest": "benchmarks/real_pr_v1.json",
+  "route": "real-pr",
+  "started_at": "2026-09-26T12:35:33.3838495Z",
+  "finished_at": "2026-09-26T12:36:30.3022352Z",
+  "model": "deepseek-flash via configured endpoint",
+  "judge_model": "deepseek-flash",
+  "cases_requested": 1,
+  "cases_completed": 1,
+  "max_forwarded_calls": 60,
+  "max_output_tokens_per_call": 2048,
+  "results": [
+    {
+      "id": "gin-2767",
+      "scenario": "bugfix",
+      "language": "Go",
+      "pr_url": "https://github.com/gin-gonic/gin/pull/2767",
+      "title": "fix #2762",
+      "status": "completed_with_warnings",
+      "duration_ms": 55039,
+      "references": [
+        {
+          "file": "tree.go",
+          "line": 413,
+          "body": "these names are a little too short and cryptic for my taste. mind making them longer? (i.e. `recordIndex`)",
+          "cid": 659322066,
+          "author": "rw-access",
+          "dimension": "readability",
+          "kind": "suggestion"
+        },
+        {
+          "file": "tree.go",
+          "line": 570,
+          "body": "// level 2 router not found and latestNode.wildChild is true",
+          "cid": 664093314,
+          "author": "rw-access",
+          "dimension": "maintainability",
+          "kind": "suggestion"
+        },
+        {
+          "file": "tree_test.go",
+          "line": 162,
+          "body": "can you add more routes with multiple params? I also want to confirm something like this: `/something/:paramname/thirdthing` and `/something/secondthing/test`. If someone does `GET /something/secondthing/thirdthing` that should have a 404, because `GET /something/secondthing` is explicitly created, it gets its own tree and won't ever fall back to `/something/:paramname`.",
+          "cid": 663143713,
+          "author": "rw-access",
+          "dimension": "testing",
+          "kind": "test"
+        }
+      ],
+      "findings": [],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "uncovered",
+          "reason": "The system produced no findings at all, so the human's request to rename the short/cryptic variables (e.g. matchNum -\u003e recordIndex) is not addressed."
+        },
+        {
+          "index": 1,
+          "verdict": "uncovered",
+          "reason": "No system findings exist, so the comment on the level-2-router/wildChild logic at line 570 is unaddressed."
+        },
+        {
+          "index": 2,
+          "verdict": "uncovered",
+          "reason": "No system findings exist; the request for more multi-param routes and the /something/:paramname/thirdthing vs /something/secondthing/test 404 behavior test is not addressed."
+        }
+      ],
+      "finding_verdicts": [],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 3,
+      "coverage_score": 0,
+      "matched_findings": 0,
+      "novel_findings": 0,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "valid_lines": 0,
+      "invalid_lines": 0,
+      "trace_events": 21,
+      "complete_trace_events": 21,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 8,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 8
+      }
+    }
+  ],
+  "total_reference_comments": 3,
+  "covered_reference_comments": 0,
+  "partial_reference_comments": 0,
+  "missed_reference_comments": 3,
+  "total_findings": 0,
+  "matched_findings": 0,
+  "novel_findings": 0,
+  "false_positive_findings": 0,
+  "nitpick_findings": 0,
+  "valid_lines": 0,
+  "invalid_lines": 0,
+  "trace_events": 21,
+  "complete_trace_events": 21,
+  "forwarded_requests": 8,
+  "budget_rejections": 0,
+  "reported_tokens": 0,
+  "responses_without_usage": 8,
+  "scored_pairs": 0,
+  "reference_coverage": 0,
+  "finding_precision": 0,
+  "valid_line_rate": 0,
+  "trace_completeness": 1,
+  "mean_accuracy": 0,
+  "mean_relevance": 0,
+  "mean_usefulness": 0,
+  "redaction_canary_leaked": false,
+  "dimension_coverage": {
+    "maintainability": {
+      "references": 1,
+      "covered_weight": 0,
+      "recall": 0
+    },
+    "readability": {
+      "references": 1,
+      "covered_weight": 0,
+      "recall": 0
+    },
+    "testing": {
+      "references": 1,
+      "covered_weight": 0,
+      "recall": 0
+    }
+  },
+  "scenario_metrics": {
+    "bugfix": {
+      "cases": 1,
+      "references": 3,
+      "covered_weight": 0,
+      "recall": 0,
+      "findings": 0,
+      "matched": 0,
+      "novel": 0,
+      "false_positives": 0,
+      "precision": 0
+    }
+  }
+}

@@ -1,0 +1,218 @@
+[
+  {
+    "id": 571725830,
+    "user": {
+      "login": "austinheap"
+    },
+    "body": "Seems worth applying some regex magic here?",
+    "path": "gin.go",
+    "line": null,
+    "original_line": 332,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 68,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -305,12 +314,35 @@ func iterate(path, method string, routes RoutesInfo, root *node) RoutesInfo {\n func (engine *Engine) Run(addr ...string) (err error) {\n \tdefer func() { debugPrintError(err) }()\n \n+\ttrustedCIDRs, err := engine.prepareCIDR()\n+\tif err != nil {\n+\t\treturn err\n+\t}\n+\tengine.trustedCIDRs = trustedCIDRs\n \taddress := resolveAddress(addr)\n \tdebugPrint(\"Listening and serving HTTP on %s\\n\", address)\n \terr = http.ListenAndServe(address, engine)\n \treturn\n }\n \n+func (engine *Engine) prepareCIDR() ([]*net.IPNet, error) {\n+\tif engine.TrustedProxies != nil {\n+\t\tcidr := make([]*net.IPNet, len(engine.TrustedProxies), 0)\n+\t\tfor _, trustedProxy := range engine.TrustedProxies {\n+\t\t\tif strings.Contains(trustedProxy, \"/\") {",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r571725830",
+    "created_at": "2021-02-08T00:26:02Z"
+  },
+  {
+    "id": 571726255,
+    "user": {
+      "login": "javierprovecho"
+    },
+    "body": "Maybe there are more corner cases that we originally thought. 😅 \r\n\r\nself-note: ipv6 compatibility (?)",
+    "path": "gin.go",
+    "line": null,
+    "original_line": 332,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 68,
+    "in_reply_to_id": 571725830,
+    "diff_hunk": "@@ -305,12 +314,35 @@ func iterate(path, method string, routes RoutesInfo, root *node) RoutesInfo {\n func (engine *Engine) Run(addr ...string) (err error) {\n \tdefer func() { debugPrintError(err) }()\n \n+\ttrustedCIDRs, err := engine.prepareCIDR()\n+\tif err != nil {\n+\t\treturn err\n+\t}\n+\tengine.trustedCIDRs = trustedCIDRs\n \taddress := resolveAddress(addr)\n \tdebugPrint(\"Listening and serving HTTP on %s\\n\", address)\n \terr = http.ListenAndServe(address, engine)\n \treturn\n }\n \n+func (engine *Engine) prepareCIDR() ([]*net.IPNet, error) {\n+\tif engine.TrustedProxies != nil {\n+\t\tcidr := make([]*net.IPNet, len(engine.TrustedProxies), 0)\n+\t\tfor _, trustedProxy := range engine.TrustedProxies {\n+\t\t\tif strings.Contains(trustedProxy, \"/\") {",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r571726255",
+    "created_at": "2021-02-08T00:28:29Z"
+  },
+  {
+    "id": 571749253,
+    "user": {
+      "login": "thinkerou"
+    },
+    "body": "should remove some unused tab/space, thanks!",
+    "path": "README.md",
+    "line": 2158,
+    "original_line": 2155,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 35,
+    "original_position": 39,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2117,6 +2117,43 @@ func main() {\n }\n ```\n \n+## Don't trust all proxies\n+\n+Gin lets you specify which headers to hold the real client IP (if any),\n+as well as specifying which proxies (or direct clients) you trust to\n+specify one of these headers.\n+\n+The `TrustedProxies` slice on your `gin.Engine` specifes the clients\n+truest to specify unspoofed client IP headers. Proxies can be specified\n+as IP's, CIDR's, or hostnames. Hostnames are resolved on each query,\n+such that changes in your proxy pool take effect immediately. The\n+hostname option is handy, but also costly, so only use if you have no\n+other option.\n+\n+```go\n+import (\n+    \"fmt\"\n+\n+    \"github.com/gin-gonic/gin\"\n+)\n+\n+func main() {\n+\n+\trouter := gin.Default()\n+\trouter.TrustedProxies = []string{\"192.168.1.2\"}\n+\n+    router.GET(\"/\", func(c *gin.Context) {\n+\n+\t\t// If the client is 192.168.1.2, use the X-Forwarded-For\n+\t\t// header to deduce the original client IP from the trust-\n+\t\t// worthy parts of that header.\n+\t\t// Otherwise, simply return the direct client IP\n+        fmt.Printf(\"ClientIP: %s\\n\", c.ClientIP())\n+    })\n+\n+    router.Run()\n+}",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r571749253",
+    "created_at": "2021-02-08T02:35:15Z"
+  },
+  {
+    "id": 571750863,
+    "user": {
+      "login": "thinkerou"
+    },
+    "body": "```\r\n\t\t\tif !cidr.Contains(remoteIP) {\r\n                             continue\r\n                         }\r\n\t\t\tfor _, headerName := range c.engine.RemoteIPHeaders {\r\n\t\t\t\tip, valid := validateHeader(c.requestHeader(headerName))\r\n\t\t\t\tif valid {\r\n\t\t\t\t\treturn ip\r\n\t\t\t\t}\r\n\t\t\t}\r\n```\r\nsuggestion, thanks!",
+    "path": "context.go",
+    "line": 776,
+    "original_line": 756,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 65,
+    "original_position": 38,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -746,11 +744,46 @@ func (c *Context) ClientIP() string {\n \t\t}\n \t}\n \n-\tif ip, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr)); err == nil {\n-\t\treturn ip\n+\tif c.shouldCheckIPHeaders() {\n+\t\tfor _, cidr := range c.engine.trustedCIDRs {\n+\t\t\tif cidr.Contains(remoteIP) {\n+\t\t\t\tfor _, headerName := range c.engine.RemoteIPHeaders {\n+\t\t\t\t\tip, valid := validateHeader(c.requestHeader(headerName))\n+\t\t\t\t\tif valid {\n+\t\t\t\t\t\treturn ip\n+\t\t\t\t\t}\n+\t\t\t\t}\n+\t\t\t}",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r571750863",
+    "created_at": "2021-02-08T02:41:59Z"
+  },
+  {
+    "id": 571751151,
+    "user": {
+      "login": "thinkerou"
+    },
+    "body": "use `return \"\", false`?",
+    "path": "context.go",
+    "line": null,
+    "original_line": 772,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 55,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -746,11 +744,46 @@ func (c *Context) ClientIP() string {\n \t\t}\n \t}\n \n-\tif ip, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr)); err == nil {\n-\t\treturn ip\n+\tif c.shouldCheckIPHeaders() {\n+\t\tfor _, cidr := range c.engine.trustedCIDRs {\n+\t\t\tif cidr.Contains(remoteIP) {\n+\t\t\t\tfor _, headerName := range c.engine.RemoteIPHeaders {\n+\t\t\t\t\tip, valid := validateHeader(c.requestHeader(headerName))\n+\t\t\t\t\tif valid {\n+\t\t\t\t\t\treturn ip\n+\t\t\t\t\t}\n+\t\t\t\t}\n+\t\t\t}\n+\t\t}\n \t}\n \n-\treturn \"\"\n+\treturn remoteIP.String()\n+}\n+\n+func (c *Context) shouldCheckIPHeaders() bool {\n+\treturn c.engine.ForwardedByClientIP \u0026\u0026\n+\t\tc.engine.RemoteIPHeaders != nil \u0026\u0026\n+\t\tlen(c.engine.RemoteIPHeaders) \u003e 0 \u0026\u0026\n+\t\tc.engine.trustedCIDRs != nil\n+}\n+\n+func validateHeader(header string) (clientIP string, valid bool) {\n+\tif header == \"\" {\n+\t\treturn",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r571751151",
+    "created_at": "2021-02-08T02:43:24Z"
+  },
+  {
+    "id": 572034739,
+    "user": {
+      "login": "manucorporat"
+    },
+    "body": "makes sense",
+    "path": "context.go",
+    "line": null,
+    "original_line": 772,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 55,
+    "in_reply_to_id": 571751151,
+    "diff_hunk": "@@ -746,11 +744,46 @@ func (c *Context) ClientIP() string {\n \t\t}\n \t}\n \n-\tif ip, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr)); err == nil {\n-\t\treturn ip\n+\tif c.shouldCheckIPHeaders() {\n+\t\tfor _, cidr := range c.engine.trustedCIDRs {\n+\t\t\tif cidr.Contains(remoteIP) {\n+\t\t\t\tfor _, headerName := range c.engine.RemoteIPHeaders {\n+\t\t\t\t\tip, valid := validateHeader(c.requestHeader(headerName))\n+\t\t\t\t\tif valid {\n+\t\t\t\t\t\treturn ip\n+\t\t\t\t\t}\n+\t\t\t\t}\n+\t\t\t}\n+\t\t}\n \t}\n \n-\treturn \"\"\n+\treturn remoteIP.String()\n+}\n+\n+func (c *Context) shouldCheckIPHeaders() bool {\n+\treturn c.engine.ForwardedByClientIP \u0026\u0026\n+\t\tc.engine.RemoteIPHeaders != nil \u0026\u0026\n+\t\tlen(c.engine.RemoteIPHeaders) \u003e 0 \u0026\u0026\n+\t\tc.engine.trustedCIDRs != nil\n+}\n+\n+func validateHeader(header string) (clientIP string, valid bool) {\n+\tif header == \"\" {\n+\t\treturn",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r572034739",
+    "created_at": "2021-02-08T13:11:29Z"
+  },
+  {
+    "id": 572035605,
+    "user": {
+      "login": "manucorporat"
+    },
+    "body": "refactored it a little bit, review again... now thee logic is better separated between validating the trusted proxy and parsing the header, also a nw AP\r\n\r\n```\r\nip, trusted = c.RemoteIP()\r\n```\r\n\r\nallows to even implement your own logic, or trust othe headers that might not be even related with IP!",
+    "path": "context.go",
+    "line": 776,
+    "original_line": 756,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 65,
+    "original_position": 38,
+    "in_reply_to_id": 571750863,
+    "diff_hunk": "@@ -746,11 +744,46 @@ func (c *Context) ClientIP() string {\n \t\t}\n \t}\n \n-\tif ip, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr)); err == nil {\n-\t\treturn ip\n+\tif c.shouldCheckIPHeaders() {\n+\t\tfor _, cidr := range c.engine.trustedCIDRs {\n+\t\t\tif cidr.Contains(remoteIP) {\n+\t\t\t\tfor _, headerName := range c.engine.RemoteIPHeaders {\n+\t\t\t\t\tip, valid := validateHeader(c.requestHeader(headerName))\n+\t\t\t\t\tif valid {\n+\t\t\t\t\t\treturn ip\n+\t\t\t\t\t}\n+\t\t\t\t}\n+\t\t\t}",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r572035605",
+    "created_at": "2021-02-08T13:12:55Z"
+  },
+  {
+    "id": 572035673,
+    "user": {
+      "login": "manucorporat"
+    },
+    "body": "good one",
+    "path": "README.md",
+    "line": 2158,
+    "original_line": 2155,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 35,
+    "original_position": 39,
+    "in_reply_to_id": 571749253,
+    "diff_hunk": "@@ -2117,6 +2117,43 @@ func main() {\n }\n ```\n \n+## Don't trust all proxies\n+\n+Gin lets you specify which headers to hold the real client IP (if any),\n+as well as specifying which proxies (or direct clients) you trust to\n+specify one of these headers.\n+\n+The `TrustedProxies` slice on your `gin.Engine` specifes the clients\n+truest to specify unspoofed client IP headers. Proxies can be specified\n+as IP's, CIDR's, or hostnames. Hostnames are resolved on each query,\n+such that changes in your proxy pool take effect immediately. The\n+hostname option is handy, but also costly, so only use if you have no\n+other option.\n+\n+```go\n+import (\n+    \"fmt\"\n+\n+    \"github.com/gin-gonic/gin\"\n+)\n+\n+func main() {\n+\n+\trouter := gin.Default()\n+\trouter.TrustedProxies = []string{\"192.168.1.2\"}\n+\n+    router.GET(\"/\", func(c *gin.Context) {\n+\n+\t\t// If the client is 192.168.1.2, use the X-Forwarded-For\n+\t\t// header to deduce the original client IP from the trust-\n+\t\t// worthy parts of that header.\n+\t\t// Otherwise, simply return the direct client IP\n+        fmt.Printf(\"ClientIP: %s\\n\", c.ClientIP())\n+    })\n+\n+    router.Run()\n+}",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r572035673",
+    "created_at": "2021-02-08T13:13:01Z"
+  },
+  {
+    "id": 573373500,
+    "user": {
+      "login": "javierprovecho"
+    },
+    "body": "@austinheap solved at https://github.com/gin-gonic/gin/pull/2632/commits/7e649c347fed4f4322d5a3eb893b8eff17c6d843",
+    "path": "gin.go",
+    "line": null,
+    "original_line": 332,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 68,
+    "in_reply_to_id": 571725830,
+    "diff_hunk": "@@ -305,12 +314,35 @@ func iterate(path, method string, routes RoutesInfo, root *node) RoutesInfo {\n func (engine *Engine) Run(addr ...string) (err error) {\n \tdefer func() { debugPrintError(err) }()\n \n+\ttrustedCIDRs, err := engine.prepareCIDR()\n+\tif err != nil {\n+\t\treturn err\n+\t}\n+\tengine.trustedCIDRs = trustedCIDRs\n \taddress := resolveAddress(addr)\n \tdebugPrint(\"Listening and serving HTTP on %s\\n\", address)\n \terr = http.ListenAndServe(address, engine)\n \treturn\n }\n \n+func (engine *Engine) prepareCIDR() ([]*net.IPNet, error) {\n+\tif engine.TrustedProxies != nil {\n+\t\tcidr := make([]*net.IPNet, len(engine.TrustedProxies), 0)\n+\t\tfor _, trustedProxy := range engine.TrustedProxies {\n+\t\t\tif strings.Contains(trustedProxy, \"/\") {",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r573373500",
+    "created_at": "2021-02-10T01:21:35Z"
+  },
+  {
+    "id": 602663013,
+    "user": {
+      "login": "thinkerou"
+    },
+    "body": "we call `prepareTrustedCIDr()` here",
+    "path": "context.go",
+    "line": null,
+    "original_line": 770,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 59,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -725,32 +725,84 @@ func (c *Context) ShouldBindBodyWith(obj interface{}, bb binding.BindingBody) (e\n \treturn bb.BindBody(body, obj)\n }\n \n-// ClientIP implements a best effort algorithm to return the real client IP, it parses\n-// X-Real-IP and X-Forwarded-For in order to work properly with reverse-proxies such us: nginx or haproxy.\n-// Use X-Forwarded-For before X-Real-Ip as nginx uses X-Real-Ip with the proxy's IP.\n+// ClientIP implements a best effort algorithm to return the real client IP.\n+// It called c.RemoteIP() under the hood, to check if the remote IP is a trusted proxy or not.\n+// If it's it will then try to parse the headers defined in Engine.RemoteIPHeaders (defaulting to [X-Forwarded-For, X-Real-Ip]).\n+// If the headers are nots syntactically valid OR the remote IP does not correspong to a trusted proxy,\n+// the remote IP (coming form Request.RemoteAddr) is returned.\n func (c *Context) ClientIP() string {\n-\tif c.engine.ForwardedByClientIP {\n-\t\tclientIP := c.requestHeader(\"X-Forwarded-For\")\n-\t\tclientIP = strings.TrimSpace(strings.Split(clientIP, \",\")[0])\n-\t\tif clientIP == \"\" {\n-\t\t\tclientIP = strings.TrimSpace(c.requestHeader(\"X-Real-Ip\"))\n+\tif c.engine.AppEngine {\n+\t\tif addr := c.requestHeader(\"X-Appengine-Remote-Addr\"); addr != \"\" {\n+\t\t\treturn addr\n \t\t}\n-\t\tif clientIP != \"\" {\n-\t\t\treturn clientIP\n+\t}\n+\n+\tremoteIP, trusted := c.RemoteIP()\n+\tif remoteIP == nil {\n+\t\treturn \"\"\n+\t}\n+\n+\tif trusted \u0026\u0026 c.engine.ForwardedByClientIP \u0026\u0026 c.engine.RemoteIPHeaders != nil {\n+\t\tfor _, headerName := range c.engine.RemoteIPHeaders {\n+\t\t\tip, valid := validateHeader(c.requestHeader(headerName))\n+\t\t\tif valid {\n+\t\t\t\treturn ip\n+\t\t\t}\n \t\t}\n \t}\n+\treturn remoteIP.String()\n+}\n \n-\tif c.engine.AppEngine {\n-\t\tif addr := c.requestHeader(\"X-Appengine-Remote-Addr\"); addr != \"\" {\n-\t\t\treturn addr\n+// RemoteIP parses the IP from Request.RemoteAddr, normalizes and returns the IP (without the port).\n+// It also checks if the remoteIP is a trusted proxy or not.\n+// In order to perform this validation, it will see if the IP is contained within at least one of the CIDR blocks\n+// defined in Engine.TrustedProxies\n+func (c *Context) RemoteIP() (net.IP, bool) {\n+\tip, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr))\n+\tif err != nil {\n+\t\treturn nil, false\n+\t}\n+\tremoteIP := net.ParseIP(ip)\n+\tif remoteIP == nil {\n+\t\treturn nil, false\n+\t}\n+\n+\ttrustedCIDRs, err := c.engine.prepareTrustedCIDRs()",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r602663013",
+    "created_at": "2021-03-27T03:35:46Z"
+  },
+  {
+    "id": 694639407,
+    "user": {
+      "login": "agmt"
+    },
+    "body": "If we trust proxy `40.40.40.40`, but not trust `30.30.30.30` (proxy it is or not), then ClientIP should be `30.30.30.30` as `20.20.20.20` was set by somebody untrusted.\r\nPlease do not forget that `X-Forwarded-For` is appended, so it should be processed right-to-left:\r\n```\r\nright-most IP address is the IP address of the most recent proxy and the left-most IP address is the IP address of the originating client.\r\n```",
+    "path": "context_test.go",
+    "line": 1433,
+    "original_line": 1433,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 34,
+    "original_position": 34,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1416,6 +1415,74 @@ func TestContextClientIP(t *testing.T) {\n \t// no port\n \tc.Request.RemoteAddr = \"50.50.50.50\"\n \tassert.Empty(t, c.ClientIP())\n+\n+\t// Tests exercising the TrustedProxies functionality\n+\tresetContextForClientIPTests(c)\n+\n+\t// No trusted proxies\n+\tc.engine.TrustedProxies = []string{}\n+\tc.engine.RemoteIPHeaders = []string{\"X-Forwarded-For\"}\n+\tassert.Equal(t, \"40.40.40.40\", c.ClientIP())\n+\n+\t// Last proxy is trusted, but the RemoteAddr is not\n+\tc.engine.TrustedProxies = []string{\"30.30.30.30\"}\n+\tassert.Equal(t, \"40.40.40.40\", c.ClientIP())\n+\n+\t// Only trust RemoteAddr\n+\tc.engine.TrustedProxies = []string{\"40.40.40.40\"}\n+\tassert.Equal(t, \"20.20.20.20\", c.ClientIP())",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r694639407",
+    "created_at": "2021-08-24T08:36:48Z"
+  },
+  {
+    "id": 694643333,
+    "user": {
+      "login": "agmt"
+    },
+    "body": "Do you expect that HTTP proxy running on `c.RemoteIP()` resets `X-Forwarded-For`? Because if it appends, then we can't inherit trustiness of `c.RemoteIP()` to all other proxies.",
+    "path": "context.go",
+    "line": 776,
+    "original_line": 756,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 65,
+    "original_position": 38,
+    "in_reply_to_id": 571750863,
+    "diff_hunk": "@@ -746,11 +744,46 @@ func (c *Context) ClientIP() string {\n \t\t}\n \t}\n \n-\tif ip, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr)); err == nil {\n-\t\treturn ip\n+\tif c.shouldCheckIPHeaders() {\n+\t\tfor _, cidr := range c.engine.trustedCIDRs {\n+\t\t\tif cidr.Contains(remoteIP) {\n+\t\t\t\tfor _, headerName := range c.engine.RemoteIPHeaders {\n+\t\t\t\t\tip, valid := validateHeader(c.requestHeader(headerName))\n+\t\t\t\t\tif valid {\n+\t\t\t\t\t\treturn ip\n+\t\t\t\t\t}\n+\t\t\t\t}\n+\t\t\t}",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2632#discussion_r694643333",
+    "created_at": "2021-08-24T08:41:51Z"
+  }
+]

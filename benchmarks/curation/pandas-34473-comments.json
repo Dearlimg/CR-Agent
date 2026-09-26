@@ -1,0 +1,1748 @@
+[
+  {
+    "id": 434706498,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "The implementation here should be pretty similar to the UTF8 case but remove the `Buffer_AppendCharUnchecked(enc, '\\\"');` lines. You also don't need the `enc-\u003eforceASCII` check and can just do `1Buffer_EscapeStringUnvalidated`",
+    "path": "pandas/_libs/src/ujson/lib/ultrajsonenc.c",
+    "line": 1111,
+    "original_line": 1119,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 5,
+    "original_position": 97,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1080,6 +1087,39 @@ void encode(JSOBJ obj, JSONObjectEncoder *enc, const char *name,\n         }\n \n         case JT_UTF8: {\n+            printf(\"case: JT_UTF8\\n\");\n+            value = enc-\u003egetStringValue(obj, \u0026tc, \u0026szlen);\n+            Buffer_Reserve(enc, RESERVE_STRING(szlen));\n+            if (enc-\u003eerrorMsg) {\n+                enc-\u003eendTypeContext(obj, \u0026tc);\n+                return;\n+            }\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+\n+            if (enc-\u003eforceASCII) {\n+                if (!Buffer_EscapeStringValidated(obj, enc, value,\n+                                                  value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            } else {\n+                if (!Buffer_EscapeStringUnvalidated(enc, value,\n+                                                    value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            }\n+\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+            break;\n+        }\n+\n+        case JT_BIGNUM: {",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r434706498",
+    "created_at": "2020-06-03T16:39:52Z"
+  },
+  {
+    "id": 434706919,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "You would want a pointer to a char here, but it's probably easiest to not add another struct member and just write to `cStr` for now",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 109,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 4,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -106,6 +106,8 @@ typedef struct __TypeContext {\n     double doubleValue;\n     JSINT64 longValue;\n \n+    char bigNum;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r434706919",
+    "created_at": "2020-06-03T16:40:32Z"
+  },
+  {
+    "id": 434715017,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "I think you will also need to define a function pointer for a callback that converts the object to a string representation\r\n\r\nSee:\r\n\r\nhttps://github.com/pandas-dev/pandas/blob/e79487d8e50a03be87188608cd1379330a4fd224/pandas/_libs/src/ujson/python/objToJSON.c#L2116\r\n\r\nAnd \r\n\r\nhttps://github.com/pandas-dev/pandas/blob/e79487d8e50a03be87188608cd1379330a4fd224/pandas/_libs/src/ujson/python/objToJSON.c#L1659\r\n\r\nAs examples",
+    "path": "pandas/_libs/src/ujson/lib/ultrajsonenc.c",
+    "line": 1111,
+    "original_line": 1119,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 5,
+    "original_position": 97,
+    "in_reply_to_id": 434706498,
+    "diff_hunk": "@@ -1080,6 +1087,39 @@ void encode(JSOBJ obj, JSONObjectEncoder *enc, const char *name,\n         }\n \n         case JT_UTF8: {\n+            printf(\"case: JT_UTF8\\n\");\n+            value = enc-\u003egetStringValue(obj, \u0026tc, \u0026szlen);\n+            Buffer_Reserve(enc, RESERVE_STRING(szlen));\n+            if (enc-\u003eerrorMsg) {\n+                enc-\u003eendTypeContext(obj, \u0026tc);\n+                return;\n+            }\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+\n+            if (enc-\u003eforceASCII) {\n+                if (!Buffer_EscapeStringValidated(obj, enc, value,\n+                                                  value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            } else {\n+                if (!Buffer_EscapeStringUnvalidated(enc, value,\n+                                                    value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            }\n+\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+            break;\n+        }\n+\n+        case JT_BIGNUM: {",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r434715017",
+    "created_at": "2020-06-03T16:53:04Z"
+  },
+  {
+    "id": 434877268,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Ok! Got rid of this",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 109,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 4,
+    "in_reply_to_id": 434706919,
+    "diff_hunk": "@@ -106,6 +106,8 @@ typedef struct __TypeContext {\n     double doubleValue;\n     JSINT64 longValue;\n \n+    char bigNum;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r434877268",
+    "created_at": "2020-06-03T21:49:09Z"
+  },
+  {
+    "id": 434894195,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "This would require fixing both to_json and read_json which could be a rather large PR. I think OK to just compare the output of to_json to the expected string for now",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 569,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 18,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -559,6 +560,14 @@ def test_encode_long_conversion(self):\n         assert output == json.dumps(long_input)\n         assert long_input == ujson.decode(output)\n \n+    def test_dumps_ints_larger_than_maxsize(self):\n+        # GH34395\n+        big_num = sys.maxsize + 1\n+        encoding = ujson.dumps(big_num)\n+\n+        assert encoding == json.dumps(big_num)\n+        assert ujson.loads(encoding) == big_num",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r434894195",
+    "created_at": "2020-06-03T22:33:01Z"
+  },
+  {
+    "id": 435331036,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Yea you need to modify the outLen pointer to let the serializer know how many bytes it should write out",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2133,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2128,12 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc) {\n+    // Question (arw2019): is this function right? \n+    // Do I need the outLen argument for example?",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r435331036",
+    "created_at": "2020-06-04T15:05:48Z"
+  },
+  {
+    "id": 435331391,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Do this in the `Object_getBigNumStringValue` function you have defined",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1639,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 6,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1635,7 +1635,9 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n \n         if (exc \u0026\u0026 PyErr_ExceptionMatches(PyExc_OverflowError)) {\n             PRINTMARK();\n-            goto INVALID;\n+            tc-\u003etype = JT_BIGNUM;\n+            /* Question (arw2019): is this where I convert obj into a string ",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r435331391",
+    "created_at": "2020-06-04T15:06:18Z"
+  },
+  {
+    "id": 435331578,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n        assert str(encoding) == json.dumps(big_num)\r\n```",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 568,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -559,6 +560,15 @@ def test_encode_long_conversion(self):\n         assert output == json.dumps(long_input)\n         assert long_input == ujson.decode(output)\n \n+    def test_dumps_ints_larger_than_maxsize(self):\n+        # GH34395\n+        big_num = sys.maxsize + 1\n+        encoding = ujson.dumps(big_num)\n+\n+        assert encoding == json.dumps(big_num)",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r435331578",
+    "created_at": "2020-06-04T15:06:34Z"
+  },
+  {
+    "id": 436305458,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "just FYI `obj` is a pointer to a PyObject",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2132,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 16,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,15 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+// /*\n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc) {\n+    // char wstr[100];\n+    int sign = (obj\u003c0) ? -1 : 1;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r436305458",
+    "created_at": "2020-06-06T22:25:46Z"
+  },
+  {
+    "id": 436319302,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Just use PyObject_Str",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2136,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 21,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2127,10 +2130,36 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n }\n \n // /*\n-const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc) {\n-    // char wstr[100];\n-    int sign = (obj\u003c0) ? -1 : 1;\n-    printf(\"sign %d\\n\", sign);\n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    /* here goes the code that converts obj into a string\n+    char *wstr;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r436319302",
+    "created_at": "2020-06-07T02:53:11Z"
+  },
+  {
+    "id": 436323140,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Not sure if need this?",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2135,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 19,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,18 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Repr(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");\n+    char *bytes = PyBytes_AS_STRING(str);\n+\n+    PyObject_Free(GET_TC(tc)-\u003ecStr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r436323140",
+    "created_at": "2020-06-07T04:21:28Z"
+  },
+  {
+    "id": 436323240,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "This line throws a compiler error:\r\n```\r\npandas/_libs/src/ujson/python/objToJSON.c:2194:9: error: initialization of ‘JSINT32 (*)(void *, JSONTypeContext *)’ {aka ‘int (*)(void *, struct __JSONTypeContext *)’} from incompatible pointer type ‘const char * (*)(void *, JSONTypeContext *, size_t *)’ {aka ‘const char * (*)(void *, struct __JSONTypeContext *, long unsigned int *)’} [-Werror=incompatible-pointer-types]\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2194,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 32,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2179,6 +2191,7 @@ PyObject *objToJSON(PyObject *Py_UNUSED(self), PyObject *args,\n         Object_endTypeContext,\n         Object_getStringValue,\n         Object_getLongValue,\n+        Object_getBigNumStringValue,",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r436323240",
+    "created_at": "2020-06-07T04:24:06Z"
+  },
+  {
+    "id": 436401611,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "You will want PyUnicode_AsUTF8AndSize here. You can pass outLen as the second argument",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2133,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,18 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Repr(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");\n+    char *bytes = PyBytes_AS_STRING(str);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r436401611",
+    "created_at": "2020-06-07T21:03:10Z"
+  },
+  {
+    "id": 436401657,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Nothing has been allocated yet so shouldn’t be freeing here. I think this is undefined behavior and most likely would segfault ",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2135,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 19,
+    "in_reply_to_id": 436323140,
+    "diff_hunk": "@@ -2126,6 +2126,18 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Repr(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");\n+    char *bytes = PyBytes_AS_STRING(str);\n+\n+    PyObject_Free(GET_TC(tc)-\u003ecStr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r436401657",
+    "created_at": "2020-06-07T21:03:57Z"
+  },
+  {
+    "id": 436401679,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "I think should use Str instead of Repr here ",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2131,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 15,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,18 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Repr(obj);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r436401679",
+    "created_at": "2020-06-07T21:04:17Z"
+  },
+  {
+    "id": 436401896,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "So to manage the state properly you should allocate storage for bytes and memcpy whatever PyUnicode_AsUTF8AndSize returns to it. You will need to then free that memory in the callback function for ObjectEnd",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 2139,
+    "original_line": 2136,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 44,
+    "original_position": 20,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,18 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Repr(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");\n+    char *bytes = PyBytes_AS_STRING(str);\n+\n+    PyObject_Free(GET_TC(tc)-\u003ecStr);\n+    GET_TC(tc)-\u003ecStr = bytes;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r436401896",
+    "created_at": "2020-06-07T21:06:19Z"
+  },
+  {
+    "id": 436401921,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Make sure you Py_DECREF these objects when they are no longer needed or else this will leak memory",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2132,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 16,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,18 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Repr(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r436401921",
+    "created_at": "2020-06-07T21:06:41Z"
+  },
+  {
+    "id": 436402041,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "You will need to update the PyEncoder struct to have the appropriate member definitions",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2194,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 32,
+    "in_reply_to_id": 436323240,
+    "diff_hunk": "@@ -2179,6 +2191,7 @@ PyObject *objToJSON(PyObject *Py_UNUSED(self), PyObject *args,\n         Object_endTypeContext,\n         Object_getStringValue,\n         Object_getLongValue,\n+        Object_getBigNumStringValue,",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r436402041",
+    "created_at": "2020-06-07T21:08:12Z"
+  },
+  {
+    "id": 437159005,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Got rid of it",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2135,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 19,
+    "in_reply_to_id": 436323140,
+    "diff_hunk": "@@ -2126,6 +2126,18 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Repr(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");\n+    char *bytes = PyBytes_AS_STRING(str);\n+\n+    PyObject_Free(GET_TC(tc)-\u003ecStr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r437159005",
+    "created_at": "2020-06-09T06:10:12Z"
+  },
+  {
+    "id": 437870883,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "If this object gets released would also free bytes, so need to memcpy first. \r\n\r\nAlso just use Py_DECREF for these as simple enough to see lifecycle",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2135,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 19,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,20 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");\n+    char *bytes = PyBytes_AS_STRING(str);\n+\n+    Py_XDECREF(repr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r437870883",
+    "created_at": "2020-06-10T05:37:28Z"
+  },
+  {
+    "id": 437896904,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Ok! Now I memcpy bytes into `tc-\u003ecStr` before freeing up `repr`, `str` and `bytes`.\r\n\r\nLooking at `tc-\u003ecStr` I think it  gets freed-up in `Object_endTypeContext`:\r\nhttps://github.com/pandas-dev/pandas/blob/c45e92c3956fd2638980ac46e6e93ec3b6cc7c52/pandas/_libs/src/ujson/python/objToJSON.c#L2109",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2135,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 19,
+    "in_reply_to_id": 437870883,
+    "diff_hunk": "@@ -2126,6 +2126,20 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");\n+    char *bytes = PyBytes_AS_STRING(str);\n+\n+    Py_XDECREF(repr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r437896904",
+    "created_at": "2020-06-10T06:51:55Z"
+  },
+  {
+    "id": 437902865,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "This array is managed on the stack, so it automatically gets cleaned up when it goes out of scope, which isn’t what you want (and the reason for multiple memcpy calls)\r\n\r\nInstead just malloc _outLen bytes and then memcpy to that, before assign that to cStr",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2133,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,21 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    PyObject* str = PyUnicode_AsUTF8AndSize(repr, _outLen);\n+    char bytes[_outlen];",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r437902865",
+    "created_at": "2020-06-10T07:05:30Z"
+  },
+  {
+    "id": 437916708,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": " \u003e Instead just malloc _outLen bytes and then memcpy to that, before assign that to cStr\r\n\r\nOk, great! I fixed that.\r\n\r\nOne thing I'm stuck on is converting from the argument of `PyUnicode_AsUTF8AndSize` (which has to be a `Py_ssize_t`) to `_outLen` (which is C `size_t`)...\r\n\r\nAlso, just to check: I do need dereference `_outLen` in the calls to `memcpy` and `malloc`?",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2133,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": 437902865,
+    "diff_hunk": "@@ -2126,6 +2126,21 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    PyObject* str = PyUnicode_AsUTF8AndSize(repr, _outLen);\n+    char bytes[_outlen];",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r437916708",
+    "created_at": "2020-06-10T07:33:13Z"
+  },
+  {
+    "id": 438224302,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n    char* bytes = malloc(*_outLen);\r\n```\r\n\r\nNeed to dereference not take the address of here",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2135,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 19,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,23 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    Py_ssize_t* _py_ssize_t_outLen;\n+    const char *str = PyUnicode_AsUTF8AndSize(repr,_py_ssize_t_outLen);\n+    // need to cast _py_ssize_t_outLen as C size_t type (_outLen)\n+    char* bytes = malloc(\u0026_outLen);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438224302",
+    "created_at": "2020-06-10T15:43:31Z"
+  },
+  {
+    "id": 438224693,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n    memcpy(bytes, str, *_outLen);\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2136,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 20,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,23 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    Py_ssize_t* _py_ssize_t_outLen;\n+    const char *str = PyUnicode_AsUTF8AndSize(repr,_py_ssize_t_outLen);\n+    // need to cast _py_ssize_t_outLen as C size_t type (_outLen)\n+    char* bytes = malloc(\u0026_outLen);\n+    memcpy(bytes, PyBytes_AS_STRING(str), \u0026_outLen);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438224693",
+    "created_at": "2020-06-10T15:44:09Z"
+  },
+  {
+    "id": 438225666,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "You don't need a new variable here. If required just cast outLen when passed to the PyUnicode_AsUTF8AndSize function",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2132,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 16,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,23 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    Py_ssize_t* _py_ssize_t_outLen;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438225666",
+    "created_at": "2020-06-10T15:45:31Z"
+  },
+  {
+    "id": 438226051,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n    GET_TC(tc)-\u003ecStr = bytes;\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2137,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 21,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,23 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    Py_ssize_t* _py_ssize_t_outLen;\n+    const char *str = PyUnicode_AsUTF8AndSize(repr,_py_ssize_t_outLen);\n+    // need to cast _py_ssize_t_outLen as C size_t type (_outLen)\n+    char* bytes = malloc(\u0026_outLen);\n+    memcpy(bytes, PyBytes_AS_STRING(str), \u0026_outLen);\n+    memcpy(GET_TC(tc)-\u003ecStr, bytes, \u0026_outLen);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438226051",
+    "created_at": "2020-06-10T15:45:58Z"
+  },
+  {
+    "id": 438226142,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n    Py_DECREF(repr);\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2139,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 23,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,23 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    Py_ssize_t* _py_ssize_t_outLen;\n+    const char *str = PyUnicode_AsUTF8AndSize(repr,_py_ssize_t_outLen);\n+    // need to cast _py_ssize_t_outLen as C size_t type (_outLen)\n+    char* bytes = malloc(\u0026_outLen);\n+    memcpy(bytes, PyBytes_AS_STRING(str), \u0026_outLen);\n+    memcpy(GET_TC(tc)-\u003ecStr, bytes, \u0026_outLen);\n+\n+    Py_XDECREF(repr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438226142",
+    "created_at": "2020-06-10T15:46:06Z"
+  },
+  {
+    "id": 438226218,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n    Py_DECREF(str);\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2140,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 24,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,23 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    Py_ssize_t* _py_ssize_t_outLen;\n+    const char *str = PyUnicode_AsUTF8AndSize(repr,_py_ssize_t_outLen);\n+    // need to cast _py_ssize_t_outLen as C size_t type (_outLen)\n+    char* bytes = malloc(\u0026_outLen);\n+    memcpy(bytes, PyBytes_AS_STRING(str), \u0026_outLen);\n+    memcpy(GET_TC(tc)-\u003ecStr, bytes, \u0026_outLen);\n+\n+    Py_XDECREF(repr);\n+    Py_XDECREF(str);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438226218",
+    "created_at": "2020-06-10T15:46:14Z"
+  },
+  {
+    "id": 438226465,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "We don't want to free here. This should go to the callback for the end of the type context for the object",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2141,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 25,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,23 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    Py_ssize_t* _py_ssize_t_outLen;\n+    const char *str = PyUnicode_AsUTF8AndSize(repr,_py_ssize_t_outLen);\n+    // need to cast _py_ssize_t_outLen as C size_t type (_outLen)\n+    char* bytes = malloc(\u0026_outLen);\n+    memcpy(bytes, PyBytes_AS_STRING(str), \u0026_outLen);\n+    memcpy(GET_TC(tc)-\u003ecStr, bytes, \u0026_outLen);\n+\n+    Py_XDECREF(repr);\n+    Py_XDECREF(str);\n+    free(bytes);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438226465",
+    "created_at": "2020-06-10T15:46:36Z"
+  },
+  {
+    "id": 438411949,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n    const char *str = PyUnicode_AsUTF8AndSize(repr, \u003cPy_ssize_t\u003e *_outLen);\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2133,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,23 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    Py_ssize_t* _py_ssize_t_outLen;\n+    const char *str = PyUnicode_AsUTF8AndSize(repr,_py_ssize_t_outLen);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438411949",
+    "created_at": "2020-06-10T21:14:09Z"
+  },
+  {
+    "id": 438412081,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Don't need to create a new variable",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2133,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": 438411949,
+    "diff_hunk": "@@ -2126,6 +2126,23 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    Py_ssize_t* _py_ssize_t_outLen;\n+    const char *str = PyUnicode_AsUTF8AndSize(repr,_py_ssize_t_outLen);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438412081",
+    "created_at": "2020-06-10T21:14:26Z"
+  },
+  {
+    "id": 438421861,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "If you can address this and the comment around the free call I _think_ things will work leaking some memory but can continue to address that",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2194,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 32,
+    "in_reply_to_id": 436323240,
+    "diff_hunk": "@@ -2179,6 +2191,7 @@ PyObject *objToJSON(PyObject *Py_UNUSED(self), PyObject *args,\n         Object_endTypeContext,\n         Object_getStringValue,\n         Object_getLongValue,\n+        Object_getBigNumStringValue,",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438421861",
+    "created_at": "2020-06-10T21:36:11Z"
+  },
+  {
+    "id": 438428260,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "The compiler still complains here:\r\n```\r\npandas/_libs/src/ujson/python/objToJSON.c:2132:53: error: expected expression before ‘\u003c’ token\r\n     const char *str = PyUnicode_AsUTF8AndSize(repr, \u003cPy_ssize_t\u003e *_outLen);\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2132,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 16,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2126,21 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    const char *str = PyUnicode_AsUTF8AndSize(repr, \u003cPy_ssize_t\u003e *_outLen);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r438428260",
+    "created_at": "2020-06-10T21:51:00Z"
+  },
+  {
+    "id": 441848946,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Wherever you declare this object to be in this struct needs to match the subsequent definition. So if you place this here then down on L2199 need to make sure it appears in the same position when defining",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 139,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 4,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -136,6 +136,8 @@ typedef struct __PyObjectEncoder {\n     int outputFormat;\n     int originalOutputFormat;\n \n+    const char *Object_getBigNumStringValue;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r441848946",
+    "created_at": "2020-06-17T21:38:08Z"
+  },
+  {
+    "id": 441868531,
+    "user": {
+      "login": "jreback"
+    },
+    "body": "can you also add a full integration test in json/test_pandas.py",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 563,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 12,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -559,6 +560,15 @@ def test_encode_long_conversion(self):\n         assert output == json.dumps(long_input)\n         assert long_input == ujson.decode(output)\n \n+    def test_dumps_ints_larger_than_maxsize(self):",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r441868531",
+    "created_at": "2020-06-17T22:28:29Z"
+  },
+  {
+    "id": 441868680,
+    "user": {
+      "login": "jreback"
+    },
+    "body": "this is not a public method",
+    "path": "doc/source/whatsnew/v1.1.0.rst",
+    "line": null,
+    "original_line": 904,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 4,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -901,6 +901,7 @@ I/O\n - Bug in :meth:`~DataFrame.read_feather` was raising an `ArrowIOError` when reading an s3 or http file path (:issue:`29055`)\n - Bug in :meth:`~DataFrame.to_excel` could not handle the column name `render` and was raising an ``KeyError`` (:issue:`34331`)\n - Bug in :meth:`~SQLDatabase.execute` was raising a ``ProgrammingError`` for some DB-API drivers when the SQL statement contained the `%` character and no parameters were present (:issue:`34211`)\n+- Bug in :meth:`json.dumps` was raising an `OverflowError` with numbers larger than sys.maxsize (:issue: `34395`)",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r441868680",
+    "created_at": "2020-06-17T22:28:56Z"
+  },
+  {
+    "id": 441961279,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "So this works up to line 1112, in that\r\n``` C++\r\n value = enc-\u003egetBigNumStringValue(obj, \u0026tc, \u0026szlen);\r\n```\r\ngets the correct string (I checked with a print statement). But there's still a problem because we exit with an `OverflowError` via this line (checked with a print statement)\r\nhttps://github.com/pandas-dev/pandas/blob/5d69786af46291abe727b290a84aa9d2663cd50c/pandas/_libs/src/ujson/python/objToJSON.c#L2289\r\nI feel like this something to do with the buffer and the length of the string we're printing out somehow not being right...?",
+    "path": "pandas/_libs/src/ujson/lib/ultrajsonenc.c",
+    "line": 1111,
+    "original_line": 1119,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 5,
+    "original_position": 97,
+    "in_reply_to_id": 434706498,
+    "diff_hunk": "@@ -1080,6 +1087,39 @@ void encode(JSOBJ obj, JSONObjectEncoder *enc, const char *name,\n         }\n \n         case JT_UTF8: {\n+            printf(\"case: JT_UTF8\\n\");\n+            value = enc-\u003egetStringValue(obj, \u0026tc, \u0026szlen);\n+            Buffer_Reserve(enc, RESERVE_STRING(szlen));\n+            if (enc-\u003eerrorMsg) {\n+                enc-\u003eendTypeContext(obj, \u0026tc);\n+                return;\n+            }\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+\n+            if (enc-\u003eforceASCII) {\n+                if (!Buffer_EscapeStringValidated(obj, enc, value,\n+                                                  value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            } else {\n+                if (!Buffer_EscapeStringUnvalidated(enc, value,\n+                                                    value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            }\n+\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+            break;\n+        }\n+\n+        case JT_BIGNUM: {",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r441961279",
+    "created_at": "2020-06-18T04:27:04Z"
+  },
+  {
+    "id": 441965192,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "This goes back to L1636. CPython manages a global error and we never explicitly clear it on that line. You could all `PyErr_Clear()` but it actually would be better if you used `PyLong_AsLongLongAndOverflow` and checked for a non-zero overflow\r\n\r\nhttps://docs.python.org/3/c-api/long.html#c.PyLong_AsLongLongAndOverflow",
+    "path": "pandas/_libs/src/ujson/lib/ultrajsonenc.c",
+    "line": 1111,
+    "original_line": 1119,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 5,
+    "original_position": 97,
+    "in_reply_to_id": 434706498,
+    "diff_hunk": "@@ -1080,6 +1087,39 @@ void encode(JSOBJ obj, JSONObjectEncoder *enc, const char *name,\n         }\n \n         case JT_UTF8: {\n+            printf(\"case: JT_UTF8\\n\");\n+            value = enc-\u003egetStringValue(obj, \u0026tc, \u0026szlen);\n+            Buffer_Reserve(enc, RESERVE_STRING(szlen));\n+            if (enc-\u003eerrorMsg) {\n+                enc-\u003eendTypeContext(obj, \u0026tc);\n+                return;\n+            }\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+\n+            if (enc-\u003eforceASCII) {\n+                if (!Buffer_EscapeStringValidated(obj, enc, value,\n+                                                  value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            } else {\n+                if (!Buffer_EscapeStringUnvalidated(enc, value,\n+                                                    value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            }\n+\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+            break;\n+        }\n+\n+        case JT_BIGNUM: {",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r441965192",
+    "created_at": "2020-06-18T04:44:40Z"
+  },
+  {
+    "id": 441988211,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Ok! I'll go with `PyLong_AsLongLongAndOverflow`.\r\n\r\nQuick question, though: when I do\r\n``` C++\r\n        int *_overflow = 0;\r\n        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, _overflow);\r\n```\r\nI'm making a mistake (there's a segfault) - but not sure why",
+    "path": "pandas/_libs/src/ujson/lib/ultrajsonenc.c",
+    "line": 1111,
+    "original_line": 1119,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 5,
+    "original_position": 97,
+    "in_reply_to_id": 434706498,
+    "diff_hunk": "@@ -1080,6 +1087,39 @@ void encode(JSOBJ obj, JSONObjectEncoder *enc, const char *name,\n         }\n \n         case JT_UTF8: {\n+            printf(\"case: JT_UTF8\\n\");\n+            value = enc-\u003egetStringValue(obj, \u0026tc, \u0026szlen);\n+            Buffer_Reserve(enc, RESERVE_STRING(szlen));\n+            if (enc-\u003eerrorMsg) {\n+                enc-\u003eendTypeContext(obj, \u0026tc);\n+                return;\n+            }\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+\n+            if (enc-\u003eforceASCII) {\n+                if (!Buffer_EscapeStringValidated(obj, enc, value,\n+                                                  value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            } else {\n+                if (!Buffer_EscapeStringUnvalidated(enc, value,\n+                                                    value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            }\n+\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+            break;\n+        }\n+\n+        case JT_BIGNUM: {",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r441988211",
+    "created_at": "2020-06-18T06:08:19Z"
+  },
+  {
+    "id": 442244800,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "The way it is written you are telling the program to write the overflow result to memory location 0, which the program almost assuredly doesn't have access to (hence segfault)\r\n\r\nJust declare the int and use the address of operator\r\n\r\n```c\r\nint overflow;\r\nGET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\r\n```",
+    "path": "pandas/_libs/src/ujson/lib/ultrajsonenc.c",
+    "line": 1111,
+    "original_line": 1119,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 5,
+    "original_position": 97,
+    "in_reply_to_id": 434706498,
+    "diff_hunk": "@@ -1080,6 +1087,39 @@ void encode(JSOBJ obj, JSONObjectEncoder *enc, const char *name,\n         }\n \n         case JT_UTF8: {\n+            printf(\"case: JT_UTF8\\n\");\n+            value = enc-\u003egetStringValue(obj, \u0026tc, \u0026szlen);\n+            Buffer_Reserve(enc, RESERVE_STRING(szlen));\n+            if (enc-\u003eerrorMsg) {\n+                enc-\u003eendTypeContext(obj, \u0026tc);\n+                return;\n+            }\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+\n+            if (enc-\u003eforceASCII) {\n+                if (!Buffer_EscapeStringValidated(obj, enc, value,\n+                                                  value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            } else {\n+                if (!Buffer_EscapeStringUnvalidated(enc, value,\n+                                                    value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            }\n+\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+            break;\n+        }\n+\n+        case JT_BIGNUM: {",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442244800",
+    "created_at": "2020-06-18T13:55:30Z"
+  },
+  {
+    "id": 442347635,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "I could be wrong but I don’t think you need the error check here",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1636,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 10,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1629,14 +1629,20 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n-\n+        int _overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026_overflow);\n         exc = PyErr_Occurred();\n \n+        if (!exc \u0026\u0026 (_overflow!=0)){",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442347635",
+    "created_at": "2020-06-18T16:19:35Z"
+  },
+  {
+    "id": 442349022,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Nevermind i think this is ok. \r\n\r\nFor performance though I think should check that the return value is -1 first before checking for an error, as the latter can be expensive so good to short circuit",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1636,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 10,
+    "in_reply_to_id": 442347635,
+    "diff_hunk": "@@ -1629,14 +1629,20 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n-\n+        int _overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026_overflow);\n         exc = PyErr_Occurred();\n \n+        if (!exc \u0026\u0026 (_overflow!=0)){",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442349022",
+    "created_at": "2020-06-18T16:21:53Z"
+  },
+  {
+    "id": 442352792,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Ok! Added that. Does seem to work without the error check also though",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1636,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 10,
+    "in_reply_to_id": 442347635,
+    "diff_hunk": "@@ -1629,14 +1629,20 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n-\n+        int _overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026_overflow);\n         exc = PyErr_Occurred();\n \n+        if (!exc \u0026\u0026 (_overflow!=0)){",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442352792",
+    "created_at": "2020-06-18T16:27:51Z"
+  },
+  {
+    "id": 442355389,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n        assert str(big_num) == json.dumps(big_num)\r\n```",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 568,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -559,6 +560,15 @@ def test_encode_long_conversion(self):\n         assert output == json.dumps(long_input)\n         assert long_input == ujson.decode(output)\n \n+    def test_dumps_ints_larger_than_maxsize(self):\n+        # GH34395\n+        big_num = sys.maxsize + 1\n+        encoding = ujson.dumps(big_num)\n+\n+        assert str(encoding) == json.dumps(big_num)",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442355389",
+    "created_at": "2020-06-18T16:31:55Z"
+  },
+  {
+    "id": 442355573,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "You can delete this condition now",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1641,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 15,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1629,14 +1629,20 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n-\n+        int _overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026_overflow);\n         exc = PyErr_Occurred();\n \n+        if ((GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 _overflow \u0026\u0026 !exc){\n+            PRINTMARK();\n+            tc-\u003etype = JT_BIGNUM;\n+        }\n+\n         if (exc \u0026\u0026 PyErr_ExceptionMatches(PyExc_OverflowError)) {",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442355573",
+    "created_at": "2020-06-18T16:32:13Z"
+  },
+  {
+    "id": 442356056,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n        exc = GET_TC(tc)-\u003eLongValue == -1 \u0026\u0026 PyErr_Occurred();\r\n```\r\n\r\nThen can simplify condition on next line to just if `(_overflow \u0026\u0026 !exc)`",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1634,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 8,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1629,14 +1629,20 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n-\n+        int _overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026_overflow);\n         exc = PyErr_Occurred();",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442356056",
+    "created_at": "2020-06-18T16:32:57Z"
+  },
+  {
+    "id": 442356287,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n        int overflow = 0;\r\n```\r\n\r\nNo need to prepend an underscore here; may be confusing to authors who expect that to mean something",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1632,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 6,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1629,14 +1629,20 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n-\n+        int _overflow = 0;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442356287",
+    "created_at": "2020-06-18T16:33:21Z"
+  },
+  {
+    "id": 442385185,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n        if (err) {\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1642,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        _Bool err;\n+        err = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\n \n-        exc = PyErr_Occurred();\n+        if (overflow \u0026\u0026 !err){\n+            PRINTMARK();\n+            tc-\u003etype = JT_BIGNUM;\n+        }\n \n-        if (exc \u0026\u0026 PyErr_ExceptionMatches(PyExc_OverflowError)) {\n+        if (err \u0026\u0026 PyErr_ExceptionMatches(PyExc_OverflowError)) {",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442385185",
+    "created_at": "2020-06-18T17:22:26Z"
+  },
+  {
+    "id": 442385452,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n        if (overflow){\r\n```\r\n\r\nI think from the docstring overflow would only get set when there is no error, so don't need both",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1637,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 11,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        _Bool err;\n+        err = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\n \n-        exc = PyErr_Occurred();\n+        if (overflow \u0026\u0026 !err){",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442385452",
+    "created_at": "2020-06-18T17:22:53Z"
+  },
+  {
+    "id": 442385931,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n        int err;\r\n```\r\n\r\nShould just stick with int for now; would need a larger discussion around using C99 types (probably OK but not sure what Windows platforms support)",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1634,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 7,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        _Bool err;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442385931",
+    "created_at": "2020-06-18T17:23:45Z"
+  },
+  {
+    "id": 442386268,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Though you can also just use `exc`? I don't think need a new variable here",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1634,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 7,
+    "in_reply_to_id": 442385931,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        _Bool err;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442386268",
+    "created_at": "2020-06-18T17:24:21Z"
+  },
+  {
+    "id": 442386852,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "@WillAyd @jreback Do we want to add a test for nesting with `x=sys.maxsize+1`? That would also pass now ",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 591,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 29,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -579,8 +588,7 @@ class Nested:\n             x = 12839128391289382193812939\n \n         for _ in range(0, 100):\n-            with pytest.raises(OverflowError):\n-                ujson.encode(Nested())\n+            ujson.encode(Nested())",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442386852",
+    "created_at": "2020-06-18T17:25:12Z"
+  },
+  {
+    "id": 442386854,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "You can just delete this test",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 591,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 29,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -579,8 +588,7 @@ class Nested:\n             x = 12839128391289382193812939\n \n         for _ in range(0, 100):\n-            with pytest.raises(OverflowError):\n-                ujson.encode(Nested())\n+            ujson.encode(Nested())",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442386854",
+    "created_at": "2020-06-18T17:25:12Z"
+  },
+  {
+    "id": 442387623,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "@WillAyd Seeing an error when I run pytest on this:\r\n```\r\n================================================================================== short test summary info ==================================================================================\r\nFAILED pandas/tests/io/json/test_ujson.py::TestUltraJSONTests::test_encode_numeric_overflow_nested - OverflowError: Unterminated UTF-8 sequence when encoding string\r\n1 failed, 993 passed, 10 skipped, 37 xfailed, 27 warnings in 58.32s\r\n```",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 567,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 16,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -559,6 +560,14 @@ def test_encode_long_conversion(self):\n         assert output == json.dumps(long_input)\n         assert long_input == ujson.decode(output)\n \n+    def test_dumps_ints_larger_than_maxsize(self):\n+        # GH34395\n+        big_num = sys.maxsize + 1\n+\n+        assert str(big_num) == ujson.dumps(big_num)",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442387623",
+    "created_at": "2020-06-18T17:26:37Z"
+  },
+  {
+    "id": 442388048,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Ok!",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 591,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 29,
+    "in_reply_to_id": 442386854,
+    "diff_hunk": "@@ -579,8 +588,7 @@ class Nested:\n             x = 12839128391289382193812939\n \n         for _ in range(0, 100):\n-            with pytest.raises(OverflowError):\n-                ujson.encode(Nested())\n+            ujson.encode(Nested())",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442388048",
+    "created_at": "2020-06-18T17:27:21Z"
+  },
+  {
+    "id": 442393309,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "I changed it because using `exc` was throwing an error:\r\n```\r\npandas/_libs/src/ujson/python/objToJSON.c:1634:13: error: assignment to ‘PyObject *’ {aka ‘struct _object *’} from ‘int’ makes pointer from integer without a cast [-Werror=int-conversion]\r\n         exc = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\r\n             ^\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1634,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 7,
+    "in_reply_to_id": 442385931,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        _Bool err;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442393309",
+    "created_at": "2020-06-18T17:36:25Z"
+  },
+  {
+    "id": 442394615,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "I think you need `\u0026\u0026 (PyErr_Occurred() != NULL)` as that function returns a PyObject pointer",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1634,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 7,
+    "in_reply_to_id": 442385931,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        _Bool err;",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442394615",
+    "created_at": "2020-06-18T17:39:04Z"
+  },
+  {
+    "id": 442400748,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n```\r\n\r\nThis could cause strange behavior  (Py_DECREF is only for Python objects)",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2145,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 38,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2133,20 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    const char *str = PyUnicode_AsUTF8AndSize(repr, (Py_ssize_t *) _outLen);\n+    char* bytes = malloc(*_outLen);\n+    memcpy(bytes, str, *_outLen);\n+    GET_TC(tc)-\u003ecStr = bytes;\n+\n+    Py_DECREF(repr);\n+    Py_DECREF(str);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442400748",
+    "created_at": "2020-06-18T17:50:13Z"
+  },
+  {
+    "id": 442408578,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n            Buffer_Reserve(enc, szlen);\r\n```\r\n\r\nThis might be your outstanding issue. This macro reserves a much larger buffer than we know we need here",
+    "path": "pandas/_libs/src/ujson/lib/ultrajsonenc.c",
+    "line": 1114,
+    "original_line": 1114,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 8,
+    "original_position": 8,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1107,6 +1107,35 @@ void encode(JSOBJ obj, JSONObjectEncoder *enc, const char *name,\n             Buffer_AppendCharUnchecked(enc, '\\\"');\n             break;\n         }\n+\n+        case JT_BIGNUM: {\n+            value = enc-\u003egetBigNumStringValue(obj, \u0026tc, \u0026szlen);\n+\n+            Buffer_Reserve(enc, RESERVE_STRING(szlen));",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442408578",
+    "created_at": "2020-06-18T18:04:28Z"
+  },
+  {
+    "id": 442409782,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Should also parametrize this to exceed the minimum supported native size",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 563,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 12,
+    "in_reply_to_id": 441868531,
+    "diff_hunk": "@@ -559,6 +560,15 @@ def test_encode_long_conversion(self):\n         assert output == json.dumps(long_input)\n         assert long_input == ujson.decode(output)\n \n+    def test_dumps_ints_larger_than_maxsize(self):",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442409782",
+    "created_at": "2020-06-18T18:06:39Z"
+  },
+  {
+    "id": 442435964,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "I think we do need to add a `PyErr_Clear();` within this branch to prevent this from incorrectly propogating an OverflowError (sorry think I mistakenly asked you to remove before)",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 1638,
+    "original_line": 1638,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 14,
+    "original_position": 12,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        int err;\n+        err = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\n \n-        exc = PyErr_Occurred();\n+        if (overflow){\n+            PRINTMARK();",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442435964",
+    "created_at": "2020-06-18T18:55:13Z"
+  },
+  {
+    "id": 442478455,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n    char* bytes = malloc(*_outLen + 1);\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2140,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 33,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2133,19 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    const char *str = PyUnicode_AsUTF8AndSize(repr, (Py_ssize_t *) _outLen);\n+    char* bytes = malloc(*_outLen);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442478455",
+    "created_at": "2020-06-18T20:16:02Z"
+  },
+  {
+    "id": 442478547,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n    memcpy(bytes, str, *_outLen + 1);\r\n```",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2141,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 34,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2133,19 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    const char *str = PyUnicode_AsUTF8AndSize(repr, (Py_ssize_t *) _outLen);\n+    char* bytes = malloc(*_outLen);\n+    memcpy(bytes, str, *_outLen);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442478547",
+    "created_at": "2020-06-18T20:16:14Z"
+  },
+  {
+    "id": 442582102,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "I think that - if I understand the docstring correctly - `PyLong_AsLongLongAndOverflow` doesn't raise an OverflowError (but will raise an error if there's a problem other than Overflow)\r\n\r\nOne thing I know is this runs ok (including tests) without the `PyErr_Clear()` though I guess it doesn't hurt to add that in?",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 1638,
+    "original_line": 1638,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 14,
+    "original_position": 12,
+    "in_reply_to_id": 442435964,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        int err;\n+        err = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\n \n-        exc = PyErr_Occurred();\n+        if (overflow){\n+            PRINTMARK();",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442582102",
+    "created_at": "2020-06-19T01:21:25Z"
+  },
+  {
+    "id": 442583690,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "@WillAyd Reallocating `bytes` is an outstanding issue like we discussed a while back. I know we need to free it up after we're done writing the output - but within this function bytes is undeclared, I think",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2117,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 29,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2107,6 +2114,7 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n \n         PyObject_Free(GET_TC(tc)-\u003ecStr);\n+        free(bytes);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442583690",
+    "created_at": "2020-06-19T01:28:11Z"
+  },
+  {
+    "id": 442585143,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Yea I think you are right. Let’s keep this as is",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 1638,
+    "original_line": 1638,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 14,
+    "original_position": 12,
+    "in_reply_to_id": 442435964,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        int err;\n+        err = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\n \n-        exc = PyErr_Occurred();\n+        if (overflow){\n+            PRINTMARK();",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442585143",
+    "created_at": "2020-06-19T01:34:14Z"
+  },
+  {
+    "id": 442585267,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Can you make this an `else if`",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1642,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        int err;\n+        err = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\n \n-        exc = PyErr_Occurred();\n+        if (overflow){\n+            PRINTMARK();\n+            tc-\u003etype = JT_BIGNUM;\n+        }\n \n-        if (exc \u0026\u0026 PyErr_ExceptionMatches(PyExc_OverflowError)) {\n+        if (err) {",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442585267",
+    "created_at": "2020-06-19T01:34:45Z"
+  },
+  {
+    "id": 442585616,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Bytes is assigned to cStr but you won’t free it in this branch. We need an extra branch that checks for the JT_BIGNUM type and frees cStr in that case",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2117,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 29,
+    "in_reply_to_id": 442583690,
+    "diff_hunk": "@@ -2107,6 +2114,7 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n \n         PyObject_Free(GET_TC(tc)-\u003ecStr);\n+        free(bytes);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442585616",
+    "created_at": "2020-06-19T01:36:06Z"
+  },
+  {
+    "id": 442613616,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Done!",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 1642,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": 442585267,
+    "diff_hunk": "@@ -1629,14 +1629,21 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        int err;\n+        err = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\n \n-        exc = PyErr_Occurred();\n+        if (overflow){\n+            PRINTMARK();\n+            tc-\u003etype = JT_BIGNUM;\n+        }\n \n-        if (exc \u0026\u0026 PyErr_ExceptionMatches(PyExc_OverflowError)) {\n+        if (err) {",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442613616",
+    "created_at": "2020-06-19T03:36:13Z"
+  },
+  {
+    "id": 442616582,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "@WillAyd I know this isn't right (as is `ujson.encode` core dumps) but is it the right idea? If yes what should I look to fix",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2117,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 22,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2111,7 +2114,7 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         NpyArr_freeLabels(GET_TC(tc)-\u003ecolumnLabels,\n                           GET_TC(tc)-\u003ecolumnLabelsLen);\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n-\n+        if (tc-\u003etype == JT_BIGNUM) free(GET_TC(tc)-\u003ebigNum_bytes);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442616582",
+    "created_at": "2020-06-19T03:50:54Z"
+  },
+  {
+    "id": 442619367,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Just clear cStr - you don't need bigNum_bytes",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2117,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 22,
+    "in_reply_to_id": 442616582,
+    "diff_hunk": "@@ -2111,7 +2114,7 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         NpyArr_freeLabels(GET_TC(tc)-\u003ecolumnLabels,\n                           GET_TC(tc)-\u003ecolumnLabelsLen);\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n-\n+        if (tc-\u003etype == JT_BIGNUM) free(GET_TC(tc)-\u003ebigNum_bytes);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442619367",
+    "created_at": "2020-06-19T04:04:07Z"
+  },
+  {
+    "id": 442621135,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "@WillAyd This looks like it frees up `cStr`",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 2113,
+    "original_line": 2115,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 31,
+    "original_position": 14,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2114,7 +2112,6 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         NpyArr_freeLabels(GET_TC(tc)-\u003ecolumnLabels,\n                           GET_TC(tc)-\u003ecolumnLabelsLen);\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n-        if (tc-\u003etype == JT_BIGNUM) free(GET_TC(tc)-\u003ebigNum_bytes);\n         PyObject_Free(GET_TC(tc)-\u003ecStr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442621135",
+    "created_at": "2020-06-19T04:12:51Z"
+  },
+  {
+    "id": 442624853,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "I don't think that is getting hit here. If it would then you would be double freeing those bytes and get a segfault anyway",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 2113,
+    "original_line": 2115,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 31,
+    "original_position": 14,
+    "in_reply_to_id": 442621135,
+    "diff_hunk": "@@ -2114,7 +2112,6 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         NpyArr_freeLabels(GET_TC(tc)-\u003ecolumnLabels,\n                           GET_TC(tc)-\u003ecolumnLabelsLen);\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n-        if (tc-\u003etype == JT_BIGNUM) free(GET_TC(tc)-\u003ebigNum_bytes);\n         PyObject_Free(GET_TC(tc)-\u003ecStr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442624853",
+    "created_at": "2020-06-19T04:30:12Z"
+  },
+  {
+    "id": 442626488,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Sorry I meant \r\n``` C\r\nPyObject_Free(GET_TC(tc)-\u003ecStr);\r\n```\r\nI think `Object_endTypeContext` gets executed in \r\nhttps://github.com/pandas-dev/pandas/blob/e6e08890cc8bd1b162b920cf5a526a433bab8b30/pandas/_libs/src/ujson/lib/ultrajsonenc.c#L1112",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 2113,
+    "original_line": 2115,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 31,
+    "original_position": 14,
+    "in_reply_to_id": 442621135,
+    "diff_hunk": "@@ -2114,7 +2112,6 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         NpyArr_freeLabels(GET_TC(tc)-\u003ecolumnLabels,\n                           GET_TC(tc)-\u003ecolumnLabelsLen);\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n-        if (tc-\u003etype == JT_BIGNUM) free(GET_TC(tc)-\u003ebigNum_bytes);\n         PyObject_Free(GET_TC(tc)-\u003ecStr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442626488",
+    "created_at": "2020-06-19T04:37:50Z"
+  },
+  {
+    "id": 442633877,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Can you check that the free on cStr gets hit there? If so then good to go",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 2113,
+    "original_line": 2115,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 31,
+    "original_position": 14,
+    "in_reply_to_id": 442621135,
+    "diff_hunk": "@@ -2114,7 +2112,6 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         NpyArr_freeLabels(GET_TC(tc)-\u003ecolumnLabels,\n                           GET_TC(tc)-\u003ecolumnLabelsLen);\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n-        if (tc-\u003etype == JT_BIGNUM) free(GET_TC(tc)-\u003ebigNum_bytes);\n         PyObject_Free(GET_TC(tc)-\u003ecStr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442633877",
+    "created_at": "2020-06-19T05:11:10Z"
+  },
+  {
+    "id": 442634744,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Checked just now - it does!",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 2113,
+    "original_line": 2115,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 31,
+    "original_position": 14,
+    "in_reply_to_id": 442621135,
+    "diff_hunk": "@@ -2114,7 +2112,6 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         NpyArr_freeLabels(GET_TC(tc)-\u003ecolumnLabels,\n                           GET_TC(tc)-\u003ecolumnLabelsLen);\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n-        if (tc-\u003etype == JT_BIGNUM) free(GET_TC(tc)-\u003ebigNum_bytes);\n         PyObject_Free(GET_TC(tc)-\u003ecStr);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442634744",
+    "created_at": "2020-06-19T05:15:07Z"
+  },
+  {
+    "id": 442635466,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n    char* bytes = PyObject_Malloc(*_outLen + 1);\r\n```\r\nSince you noticed this is already getting freed in the context end, we should use the equivalent python malloc to match that",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 2139,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 49,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2126,6 +2132,19 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    const char *str = PyUnicode_AsUTF8AndSize(repr, (Py_ssize_t *) _outLen);\n+    char* bytes = malloc(*_outLen + 1);",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442635466",
+    "created_at": "2020-06-19T05:18:01Z"
+  },
+  {
+    "id": 442636280,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "It's a little tedious now since we can't roundtrip these but can you manually construct the expected JSON string and compare the result to that?",
+    "path": "pandas/tests/io/json/test_pandas.py",
+    "line": null,
+    "original_line": 1259,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 25,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1242,6 +1243,25 @@ def test_read_jsonl_unicode_chars(self):\n         expected = DataFrame([[\"foo\\u201d\", \"bar\"], [\"foo\", \"bar\"]], columns=[\"a\", \"b\"])\n         tm.assert_frame_equal(result, expected)\n \n+    def test_to_json_large_numbers(self):\n+        # GH34473\n+        bigNum = sys.maxsize + 1\n+\n+        originalSeries = Series(bigNum, dtype=object, index=[\"articleId\"])\n+        originalSeries.to_json()\n+        # json = StringIO(json)\n+        # newSeries = read_json(json, typ=\"series\")\n+        # tm.assert_series_equal(originalSeries, newSeries)\n+\n+        originalDataFrame = DataFrame(\n+            bigNum, dtype=object, index=[\"articleId\"], columns=[0]\n+        )\n+        originalDataFrame.to_json()",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442636280",
+    "created_at": "2020-06-19T05:21:43Z"
+  },
+  {
+    "id": 442636505,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "For sure!",
+    "path": "pandas/tests/io/json/test_pandas.py",
+    "line": null,
+    "original_line": 1259,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 25,
+    "in_reply_to_id": 442636280,
+    "diff_hunk": "@@ -1242,6 +1243,25 @@ def test_read_jsonl_unicode_chars(self):\n         expected = DataFrame([[\"foo\\u201d\", \"bar\"], [\"foo\", \"bar\"]], columns=[\"a\", \"b\"])\n         tm.assert_frame_equal(result, expected)\n \n+    def test_to_json_large_numbers(self):\n+        # GH34473\n+        bigNum = sys.maxsize + 1\n+\n+        originalSeries = Series(bigNum, dtype=object, index=[\"articleId\"])\n+        originalSeries.to_json()\n+        # json = StringIO(json)\n+        # newSeries = read_json(json, typ=\"series\")\n+        # tm.assert_series_equal(originalSeries, newSeries)\n+\n+        originalDataFrame = DataFrame(\n+            bigNum, dtype=object, index=[\"articleId\"], columns=[0]\n+        )\n+        originalDataFrame.to_json()",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442636505",
+    "created_at": "2020-06-19T05:22:42Z"
+  },
+  {
+    "id": 442641428,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "@jreback This is the full integration test you asked for ",
+    "path": "pandas/tests/io/json/test_pandas.py",
+    "line": null,
+    "original_line": 1246,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 12,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1242,6 +1243,22 @@ def test_read_jsonl_unicode_chars(self):\n         expected = DataFrame([[\"foo\\u201d\", \"bar\"], [\"foo\", \"bar\"]], columns=[\"a\", \"b\"])\n         tm.assert_frame_equal(result, expected)\n \n+    def test_to_json_large_numbers(self):",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442641428",
+    "created_at": "2020-06-19T05:41:54Z"
+  },
+  {
+    "id": 442886769,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "minor nit but can you revert any added / removed blank lines in the PR? Should minimize the diff a bit more",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": null,
+    "original_line": 122,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 4,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -119,6 +119,7 @@ typedef struct __TypeContext {\n typedef struct __PyObjectEncoder {\n     JSONObjectEncoder enc;\n \n+",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442886769",
+    "created_at": "2020-06-19T14:54:01Z"
+  },
+  {
+    "id": 442887063,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "revert this",
+    "path": "pandas/io/json/_json.py",
+    "line": null,
+    "original_line": 30,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 4,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -27,6 +27,7 @@\n loads = json.loads\n dumps = json.dumps\n \n+",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442887063",
+    "created_at": "2020-06-19T14:54:31Z"
+  },
+  {
+    "id": 442887207,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "revert this",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 2108,
+    "original_line": 2108,
+    "side": "LEFT",
+    "subject_type": "line",
+    "position": 30,
+    "original_position": 37,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -2105,7 +2112,6 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         NpyArr_freeLabels(GET_TC(tc)-\u003ecolumnLabels,\n                           GET_TC(tc)-\u003ecolumnLabelsLen);\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n-",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442887207",
+    "created_at": "2020-06-19T14:54:46Z"
+  },
+  {
+    "id": 442887253,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "this too",
+    "path": "pandas/_libs/src/ujson/python/objToJSON.c",
+    "line": 1645,
+    "original_line": 1646,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 22,
+    "original_position": 29,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1629,14 +1630,20 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n-\n-        exc = PyErr_Occurred();\n+        int overflow = 0;\n+        GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+        int err;\n+        err = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\n \n-        if (exc \u0026\u0026 PyErr_ExceptionMatches(PyExc_OverflowError)) {\n+        if (overflow){\n+            PRINTMARK();\n+            tc-\u003etype = JT_BIGNUM;\n+        }\n+        else if (err) {\n             PRINTMARK();\n             goto INVALID;\n         }\n+        ",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442887253",
+    "created_at": "2020-06-19T14:54:51Z"
+  },
+  {
+    "id": 442887750,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "Can you do the parametrization of a large negative value here too?",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 563,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 12,
+    "in_reply_to_id": 441868531,
+    "diff_hunk": "@@ -559,6 +560,15 @@ def test_encode_long_conversion(self):\n         assert output == json.dumps(long_input)\n         assert long_input == ujson.decode(output)\n \n+    def test_dumps_ints_larger_than_maxsize(self):",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442887750",
+    "created_at": "2020-06-19T14:55:41Z"
+  },
+  {
+    "id": 442981752,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "I think you might have an issue merging master - none of this should have changed",
+    "path": "pandas/io/json/_json.py",
+    "line": null,
+    "original_line": 725,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 119,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -737,17 +722,11 @@ def read(self):\n         \"\"\"\n         Read the whole JSON input into a pandas object.\n         \"\"\"\n-        if self.lines:\n-            if self.chunksize:\n-                obj = concat(self)\n-            elif self.nrows:\n-                lines = list(islice(self.data, self.nrows))\n-                lines_json = self._combine_lines(lines)\n-                obj = self._get_object_parser(lines_json)\n-            else:\n-                data = ensure_str(self.data)\n-                data = data.split(\"\\n\")\n-                obj = self._get_object_parser(self._combine_lines(data))\n+        if self.lines and self.chunksize:",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r442981752",
+    "created_at": "2020-06-19T18:12:50Z"
+  },
+  {
+    "id": 443025239,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "Yeah. Fixed now",
+    "path": "pandas/io/json/_json.py",
+    "line": null,
+    "original_line": 725,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 119,
+    "in_reply_to_id": 442981752,
+    "diff_hunk": "@@ -737,17 +722,11 @@ def read(self):\n         \"\"\"\n         Read the whole JSON input into a pandas object.\n         \"\"\"\n-        if self.lines:\n-            if self.chunksize:\n-                obj = concat(self)\n-            elif self.nrows:\n-                lines = list(islice(self.data, self.nrows))\n-                lines_json = self._combine_lines(lines)\n-                obj = self._get_object_parser(lines_json)\n-            else:\n-                data = ensure_str(self.data)\n-                data = data.split(\"\\n\")\n-                obj = self._get_object_parser(self._combine_lines(data))\n+        if self.lines and self.chunksize:",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r443025239",
+    "created_at": "2020-06-19T20:12:01Z"
+  },
+  {
+    "id": 443065197,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "```suggestion\r\n    @pytest.mark.parametrize(\"bigNum\", [sys.maxsize + 1, -(sys.maxsize + 2)])\r\n```\r\n\r\nTo exceed the negative range would have to add 2",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 563,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 12,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -559,6 +560,16 @@ def test_encode_long_conversion(self):\n         assert output == json.dumps(long_input)\n         assert long_input == ujson.decode(output)\n \n+    @pytest.mark.parametrize(\"bigNum\", [sys.maxsize + 1, -(sys.maxsize + 1)])",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r443065197",
+    "created_at": "2020-06-19T22:26:28Z"
+  },
+  {
+    "id": 443065279,
+    "user": {
+      "login": "WillAyd"
+    },
+    "body": "same here",
+    "path": "pandas/tests/io/json/test_pandas.py",
+    "line": null,
+    "original_line": 1246,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 12,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1242,6 +1243,21 @@ def test_read_jsonl_unicode_chars(self):\n         expected = DataFrame([[\"foo\\u201d\", \"bar\"], [\"foo\", \"bar\"]], columns=[\"a\", \"b\"])\n         tm.assert_frame_equal(result, expected)\n \n+    @pytest.mark.parametrize(\"bigNum\", [sys.maxsize + 1, -(sys.maxsize + 1)])",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r443065279",
+    "created_at": "2020-06-19T22:26:52Z"
+  },
+  {
+    "id": 443074069,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "OK, fixed!",
+    "path": "pandas/tests/io/json/test_pandas.py",
+    "line": null,
+    "original_line": 1246,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 12,
+    "in_reply_to_id": 443065279,
+    "diff_hunk": "@@ -1242,6 +1243,21 @@ def test_read_jsonl_unicode_chars(self):\n         expected = DataFrame([[\"foo\\u201d\", \"bar\"], [\"foo\", \"bar\"]], columns=[\"a\", \"b\"])\n         tm.assert_frame_equal(result, expected)\n \n+    @pytest.mark.parametrize(\"bigNum\", [sys.maxsize + 1, -(sys.maxsize + 1)])",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r443074069",
+    "created_at": "2020-06-19T23:10:44Z"
+  },
+  {
+    "id": 443156841,
+    "user": {
+      "login": "jreback"
+    },
+    "body": "can you use series here (and just df below)",
+    "path": "pandas/tests/io/json/test_pandas.py",
+    "line": null,
+    "original_line": 1249,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 15,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -1242,6 +1243,21 @@ def test_read_jsonl_unicode_chars(self):\n         expected = DataFrame([[\"foo\\u201d\", \"bar\"], [\"foo\", \"bar\"]], columns=[\"a\", \"b\"])\n         tm.assert_frame_equal(result, expected)\n \n+    @pytest.mark.parametrize(\"bigNum\", [sys.maxsize + 1, -(sys.maxsize + 2)])\n+    def test_to_json_large_numbers(self, bigNum):\n+        # GH34473\n+        originalSeries = Series(bigNum, dtype=object, index=[\"articleId\"])",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r443156841",
+    "created_at": "2020-06-20T20:13:43Z"
+  },
+  {
+    "id": 443156882,
+    "user": {
+      "login": "jreback"
+    },
+    "body": "is there an issue for this? don't leave in commented code, rather add an xfail test",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 570,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 19,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -559,6 +560,16 @@ def test_encode_long_conversion(self):\n         assert output == json.dumps(long_input)\n         assert long_input == ujson.decode(output)\n \n+    @pytest.mark.parametrize(\"bigNum\", [sys.maxsize + 1, -(sys.maxsize + 2)])\n+    def test_dumps_ints_larger_than_maxsize(self, bigNum):\n+        # GH34395\n+        bigNum = sys.maxsize + 1\n+        encoding = ujson.encode(bigNum)\n+\n+        assert str(bigNum) == encoding\n+        # ujson.loads to be fixed in the future",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r443156882",
+    "created_at": "2020-06-20T20:14:27Z"
+  },
+  {
+    "id": 443335203,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "sure!",
+    "path": "pandas/tests/io/json/test_pandas.py",
+    "line": null,
+    "original_line": 1249,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 15,
+    "in_reply_to_id": 443156841,
+    "diff_hunk": "@@ -1242,6 +1243,21 @@ def test_read_jsonl_unicode_chars(self):\n         expected = DataFrame([[\"foo\\u201d\", \"bar\"], [\"foo\", \"bar\"]], columns=[\"a\", \"b\"])\n         tm.assert_frame_equal(result, expected)\n \n+    @pytest.mark.parametrize(\"bigNum\", [sys.maxsize + 1, -(sys.maxsize + 2)])\n+    def test_to_json_large_numbers(self, bigNum):\n+        # GH34473\n+        originalSeries = Series(bigNum, dtype=object, index=[\"articleId\"])",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r443335203",
+    "created_at": "2020-06-22T06:10:30Z"
+  },
+  {
+    "id": 443343358,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "added the test. Also added xfail tests for this in `test_pandas.py`. ",
+    "path": "pandas/tests/io/json/test_ujson.py",
+    "line": null,
+    "original_line": 570,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 19,
+    "in_reply_to_id": 443156882,
+    "diff_hunk": "@@ -559,6 +560,16 @@ def test_encode_long_conversion(self):\n         assert output == json.dumps(long_input)\n         assert long_input == ujson.decode(output)\n \n+    @pytest.mark.parametrize(\"bigNum\", [sys.maxsize + 1, -(sys.maxsize + 2)])\n+    def test_dumps_ints_larger_than_maxsize(self, bigNum):\n+        # GH34395\n+        bigNum = sys.maxsize + 1\n+        encoding = ujson.encode(bigNum)\n+\n+        assert str(bigNum) == encoding\n+        # ujson.loads to be fixed in the future",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r443343358",
+    "created_at": "2020-06-22T06:35:41Z"
+  },
+  {
+    "id": 443817568,
+    "user": {
+      "login": "arw2019"
+    },
+    "body": "@jreback Not sure where we want the `longints` to go - whether into `ints` or separately. I would think we also want to make sure we have both positive and negative long ints in there?",
+    "path": "asv_bench/benchmarks/io/json.py",
+    "line": 87,
+    "original_line": 87,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 10,
+    "original_position": 10,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -82,6 +84,7 @@ def setup(self, orient, frame):\n         timedeltas = timedelta_range(start=1, periods=N, freq=\"s\")\n         datetimes = date_range(start=1, periods=N, freq=\"s\")\n         ints = np.random.randint(100000000, size=N)\n+        longints = sys.maxsize * np.random.randint(100000000, size=N)",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r443817568",
+    "created_at": "2020-06-22T20:48:54Z"
+  },
+  {
+    "id": 445229067,
+    "user": {
+      "login": "jreback"
+    },
+    "body": "this prob fine",
+    "path": "asv_bench/benchmarks/io/json.py",
+    "line": 87,
+    "original_line": 87,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 10,
+    "original_position": 10,
+    "in_reply_to_id": 443817568,
+    "diff_hunk": "@@ -82,6 +84,7 @@ def setup(self, orient, frame):\n         timedeltas = timedelta_range(start=1, periods=N, freq=\"s\")\n         datetimes = date_range(start=1, periods=N, freq=\"s\")\n         ints = np.random.randint(100000000, size=N)\n+        longints = sys.maxsize * np.random.randint(100000000, size=N)",
+    "html_url": "https://github.com/pandas-dev/pandas/pull/34473#discussion_r445229067",
+    "created_at": "2020-06-24T23:38:53Z"
+  }
+]

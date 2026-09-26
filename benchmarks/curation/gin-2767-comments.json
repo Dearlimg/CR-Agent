@@ -1,0 +1,254 @@
+[
+  {
+    "id": 659322066,
+    "user": {
+      "login": "rw-access"
+    },
+    "body": "these names are a little too short and cryptic for my taste. mind making them longer? (i.e. `recordIndex`)",
+    "path": "tree.go",
+    "line": null,
+    "original_line": 413,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -405,11 +406,30 @@ type nodeValue struct {\n // made if a handle exists with an extra (without the) trailing slash for the\n // given path.\n func (n *node) getValue(path string, params *Params, unescape bool) (value nodeValue) {\n-\tvar skipped *skip\n+\tvar (\n+\t\tskipped *skip\n+\t\tnroot   = \u0026(*n)                                // not found `level 1 router` use nroot\n+\t\tldi     = len(strings.Split(path, \"/\")[1]) + 1 // level 1 router '/' index\n+\t\tri      int                                    //record index",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r659322066",
+    "created_at": "2021-06-27T13:28:43Z"
+  },
+  {
+    "id": 659331725,
+    "user": {
+      "login": "appleboy"
+    },
+    "body": "revert this.",
+    "path": ".gitignore",
+    "line": null,
+    "original_line": 8,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 4,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -5,3 +5,4 @@ count.out\n test\n profile.out\n tmp.out\n+.idea",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r659331725",
+    "created_at": "2021-06-27T14:39:22Z"
+  },
+  {
+    "id": 659414745,
+    "user": {
+      "login": "qm012"
+    },
+    "body": "thanks for your review, more comments have been added.",
+    "path": "tree.go",
+    "line": null,
+    "original_line": 413,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 17,
+    "in_reply_to_id": 659322066,
+    "diff_hunk": "@@ -405,11 +406,30 @@ type nodeValue struct {\n // made if a handle exists with an extra (without the) trailing slash for the\n // given path.\n func (n *node) getValue(path string, params *Params, unescape bool) (value nodeValue) {\n-\tvar skipped *skip\n+\tvar (\n+\t\tskipped *skip\n+\t\tnroot   = \u0026(*n)                                // not found `level 1 router` use nroot\n+\t\tldi     = len(strings.Split(path, \"/\")[1]) + 1 // level 1 router '/' index\n+\t\tri      int                                    //record index",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r659414745",
+    "created_at": "2021-06-28T01:50:05Z"
+  },
+  {
+    "id": 659415807,
+    "user": {
+      "login": "qm012"
+    },
+    "body": "thanks for your review,has been reset,can you tell me why? please I'll remember (same file: .vscode)",
+    "path": ".gitignore",
+    "line": null,
+    "original_line": 8,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 4,
+    "in_reply_to_id": 659331725,
+    "diff_hunk": "@@ -5,3 +5,4 @@ count.out\n test\n profile.out\n tmp.out\n+.idea",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r659415807",
+    "created_at": "2021-06-28T01:54:22Z"
+  },
+  {
+    "id": 663143713,
+    "user": {
+      "login": "rw-access"
+    },
+    "body": "can you add more routes with multiple params?\r\nI also want to confirm something like this:\r\n```\r\n/something/:paramname/thirdthing\r\n/something/secondthing/test\r\n```\r\n\r\nIf you someone does `GET /something/secondthing/thirdthing` that should have a 404. because `GET /something/secondthing` is explicitly created, it gets its own tree and won't ever fall back to `/something/:paramname`",
+    "path": "tree_test.go",
+    "line": 166,
+    "original_line": 162,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 13,
+    "original_position": 9,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -154,6 +154,12 @@ func TestTreeWildcard(t *testing.T) {\n \t\t\"/info/:user/public\",\n \t\t\"/info/:user/project/:project\",\n \t\t\"/info/:user/project/golang\",\n+\t\t\"/aa/*xx\",\n+\t\t\"/ab/*xx\",\n+\t\t\"/:cc\",\n+\t\t\"/:cc/cc\",\n+\t\t\"/get/test/abc/\",\n+\t\t\"/get/:param/abc/\",",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r663143713",
+    "created_at": "2021-07-02T16:59:53Z"
+  },
+  {
+    "id": 663154654,
+    "user": {
+      "login": "rw-access"
+    },
+    "body": "my personal preference is to keep the parentheses, as they make it more clear you're assigning a boolean expression\r\n```suggestion\r\n\t\t\t\t\tvalue.tsr = (path == \"/\" \u0026\u0026 n.handlers != nil)\r\n```",
+    "path": "tree.go",
+    "line": 466,
+    "original_line": 466,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 88,
+    "original_position": 88,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -418,32 +429,41 @@ walk: // Outer loop for walking the tree\n \t\t\t\tidxc := path[0]\n \t\t\t\tfor i, c := range []byte(n.indices) {\n \t\t\t\t\tif c == idxc {\n-\t\t\t\t\t\tif strings.HasPrefix(n.children[len(n.children)-1].path, \":\") {\n-\t\t\t\t\t\t\tskipped = \u0026skip{\n-\t\t\t\t\t\t\t\tpath: prefix + path,\n-\t\t\t\t\t\t\t\tparamNode: \u0026node{\n-\t\t\t\t\t\t\t\t\tpath:      n.path,\n-\t\t\t\t\t\t\t\t\twildChild: n.wildChild,\n-\t\t\t\t\t\t\t\t\tnType:     n.nType,\n-\t\t\t\t\t\t\t\t\tpriority:  n.priority,\n-\t\t\t\t\t\t\t\t\tchildren:  n.children,\n-\t\t\t\t\t\t\t\t\thandlers:  n.handlers,\n-\t\t\t\t\t\t\t\t\tfullPath:  n.fullPath,\n-\t\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t//  strings.HasPrefix(n.children[len(n.children)-1].path, \":\") == n.wildChild\n+\t\t\t\t\t\tif n.wildChild {\n+\t\t\t\t\t\t\tskippedPath = prefix + path\n+\t\t\t\t\t\t\tlatestNode = \u0026node{\n+\t\t\t\t\t\t\t\tpath:      n.path,\n+\t\t\t\t\t\t\t\twildChild: n.wildChild,\n+\t\t\t\t\t\t\t\tnType:     n.nType,\n+\t\t\t\t\t\t\t\tpriority:  n.priority,\n+\t\t\t\t\t\t\t\tchildren:  n.children,\n+\t\t\t\t\t\t\t\thandlers:  n.handlers,\n+\t\t\t\t\t\t\t\tfullPath:  n.fullPath,\n \t\t\t\t\t\t\t}\n \t\t\t\t\t\t}\n \n \t\t\t\t\t\tn = n.children[i]\n+\n+\t\t\t\t\t\t// match '/', If this condition is matched, the next route is found\n+\t\t\t\t\t\tif len(n.fullPath) != 0 \u0026\u0026 n.wildChild {\n+\t\t\t\t\t\t\tmatchNum++\n+\t\t\t\t\t\t}\n \t\t\t\t\t\tcontinue walk\n \t\t\t\t\t}\n \t\t\t\t}\n \n+\t\t\t\t// level 2 router not found,the current node needs to be equal to latestNode\n+\t\t\t\tif matchNum \u003c 1 {\n+\t\t\t\t\tn = latestNode\n+\t\t\t\t}\n+\n \t\t\t\t// If there is no wildcard pattern, recommend a redirection\n \t\t\t\tif !n.wildChild {\n \t\t\t\t\t// Nothing found.\n \t\t\t\t\t// We can recommend to redirect to the same URL without a\n \t\t\t\t\t// trailing slash if a leaf exists for that path.\n-\t\t\t\t\tvalue.tsr = (path == \"/\" \u0026\u0026 n.handlers != nil)\n+\t\t\t\t\tvalue.tsr = path == \"/\" \u0026\u0026 n.handlers != nil",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r663154654",
+    "created_at": "2021-07-02T17:20:23Z"
+  },
+  {
+    "id": 663160428,
+    "user": {
+      "login": "rw-access"
+    },
+    "body": "restore newline\r\n```suggestion\r\ntmp.out\r\n\r\n```",
+    "path": ".gitignore",
+    "line": null,
+    "original_line": 7,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 5,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -4,4 +4,4 @@ coverage.out\n count.out\n test\n profile.out\n-tmp.out\n+tmp.out",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r663160428",
+    "created_at": "2021-07-02T17:31:48Z"
+  },
+  {
+    "id": 663359198,
+    "user": {
+      "login": "qm012"
+    },
+    "body": "done,thanks.",
+    "path": ".gitignore",
+    "line": null,
+    "original_line": 7,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 5,
+    "in_reply_to_id": 663160428,
+    "diff_hunk": "@@ -4,4 +4,4 @@ coverage.out\n count.out\n test\n profile.out\n-tmp.out\n+tmp.out",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r663359198",
+    "created_at": "2021-07-03T12:22:53Z"
+  },
+  {
+    "id": 663359292,
+    "user": {
+      "login": "qm012"
+    },
+    "body": "Thank you for your review, I see what you mean, but for a obsessive-compulsive disorder patients, in fact the parentheses is invalid and can be ignored, just had prompt effect (but not enough concise), if the judge conditions for more than two or more, or is too long, can adopt the way of line, I'm sorry, I want to insist on my opinion.",
+    "path": "tree.go",
+    "line": 466,
+    "original_line": 466,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 88,
+    "original_position": 88,
+    "in_reply_to_id": 663154654,
+    "diff_hunk": "@@ -418,32 +429,41 @@ walk: // Outer loop for walking the tree\n \t\t\t\tidxc := path[0]\n \t\t\t\tfor i, c := range []byte(n.indices) {\n \t\t\t\t\tif c == idxc {\n-\t\t\t\t\t\tif strings.HasPrefix(n.children[len(n.children)-1].path, \":\") {\n-\t\t\t\t\t\t\tskipped = \u0026skip{\n-\t\t\t\t\t\t\t\tpath: prefix + path,\n-\t\t\t\t\t\t\t\tparamNode: \u0026node{\n-\t\t\t\t\t\t\t\t\tpath:      n.path,\n-\t\t\t\t\t\t\t\t\twildChild: n.wildChild,\n-\t\t\t\t\t\t\t\t\tnType:     n.nType,\n-\t\t\t\t\t\t\t\t\tpriority:  n.priority,\n-\t\t\t\t\t\t\t\t\tchildren:  n.children,\n-\t\t\t\t\t\t\t\t\thandlers:  n.handlers,\n-\t\t\t\t\t\t\t\t\tfullPath:  n.fullPath,\n-\t\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t//  strings.HasPrefix(n.children[len(n.children)-1].path, \":\") == n.wildChild\n+\t\t\t\t\t\tif n.wildChild {\n+\t\t\t\t\t\t\tskippedPath = prefix + path\n+\t\t\t\t\t\t\tlatestNode = \u0026node{\n+\t\t\t\t\t\t\t\tpath:      n.path,\n+\t\t\t\t\t\t\t\twildChild: n.wildChild,\n+\t\t\t\t\t\t\t\tnType:     n.nType,\n+\t\t\t\t\t\t\t\tpriority:  n.priority,\n+\t\t\t\t\t\t\t\tchildren:  n.children,\n+\t\t\t\t\t\t\t\thandlers:  n.handlers,\n+\t\t\t\t\t\t\t\tfullPath:  n.fullPath,\n \t\t\t\t\t\t\t}\n \t\t\t\t\t\t}\n \n \t\t\t\t\t\tn = n.children[i]\n+\n+\t\t\t\t\t\t// match '/', If this condition is matched, the next route is found\n+\t\t\t\t\t\tif len(n.fullPath) != 0 \u0026\u0026 n.wildChild {\n+\t\t\t\t\t\t\tmatchNum++\n+\t\t\t\t\t\t}\n \t\t\t\t\t\tcontinue walk\n \t\t\t\t\t}\n \t\t\t\t}\n \n+\t\t\t\t// level 2 router not found,the current node needs to be equal to latestNode\n+\t\t\t\tif matchNum \u003c 1 {\n+\t\t\t\t\tn = latestNode\n+\t\t\t\t}\n+\n \t\t\t\t// If there is no wildcard pattern, recommend a redirection\n \t\t\t\tif !n.wildChild {\n \t\t\t\t\t// Nothing found.\n \t\t\t\t\t// We can recommend to redirect to the same URL without a\n \t\t\t\t\t// trailing slash if a leaf exists for that path.\n-\t\t\t\t\tvalue.tsr = (path == \"/\" \u0026\u0026 n.handlers != nil)\n+\t\t\t\t\tvalue.tsr = path == \"/\" \u0026\u0026 n.handlers != nil",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r663359292",
+    "created_at": "2021-07-03T12:23:45Z"
+  },
+  {
+    "id": 663359520,
+    "user": {
+      "login": "qm012"
+    },
+    "body": "Thank you for your review. I need some time to do the test. The final result should be 404 is correct",
+    "path": "tree_test.go",
+    "line": 166,
+    "original_line": 162,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 13,
+    "original_position": 9,
+    "in_reply_to_id": 663143713,
+    "diff_hunk": "@@ -154,6 +154,12 @@ func TestTreeWildcard(t *testing.T) {\n \t\t\"/info/:user/public\",\n \t\t\"/info/:user/project/:project\",\n \t\t\"/info/:user/project/golang\",\n+\t\t\"/aa/*xx\",\n+\t\t\"/ab/*xx\",\n+\t\t\"/:cc\",\n+\t\t\"/:cc/cc\",\n+\t\t\"/get/test/abc/\",\n+\t\t\"/get/:param/abc/\",",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r663359520",
+    "created_at": "2021-07-03T12:27:12Z"
+  },
+  {
+    "id": 663461645,
+    "user": {
+      "login": "qm012"
+    },
+    "body": "hi @rw-access \r\n1. Added more unit tests\r\n2. This scene I tested ` GET/something/secondthing thirdthing ` matching ` / something / : paramname/thirdthing ` is correct\r\n    When n.indices matches a child node, 'line 271 n.hildren [len(n.hildren)-1]' will be executed if it does not\r\n```\r\n`GET /something/secondthing/abc` 404\r\n`GET /something/secondthing/ff` 404\r\n```\r\n\u003cdetails\u003e\r\n\u003csummary\u003etree_node.png\u003c/summary\u003e\r\n     \u003cdiv\u003e\r\n        \u003cimg src=\"https://user-images.githubusercontent.com/67568757/124377236-96c04c00-dcdd-11eb-931b-fc3b6f9b4fc7.png\"\u003e\r\n    \u003c/div\u003e\r\n\u003c/details\u003e",
+    "path": "tree_test.go",
+    "line": 166,
+    "original_line": 162,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 13,
+    "original_position": 9,
+    "in_reply_to_id": 663143713,
+    "diff_hunk": "@@ -154,6 +154,12 @@ func TestTreeWildcard(t *testing.T) {\n \t\t\"/info/:user/public\",\n \t\t\"/info/:user/project/:project\",\n \t\t\"/info/:user/project/golang\",\n+\t\t\"/aa/*xx\",\n+\t\t\"/ab/*xx\",\n+\t\t\"/:cc\",\n+\t\t\"/:cc/cc\",\n+\t\t\"/get/test/abc/\",\n+\t\t\"/get/:param/abc/\",",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r663461645",
+    "created_at": "2021-07-04T07:37:58Z"
+  },
+  {
+    "id": 663596584,
+    "user": {
+      "login": "qm012"
+    },
+    "body": "#### There will also be differences in style\r\nhttps://github.com/gin-gonic/gin/blob/9c27053243cb24ecc90d01c8ff379bd98fed9c8e/tree.go#L502\r\n\r\n#### It makes sense under conditions like this\r\n\r\n```go\r\nvar condition = (a \u0026b) || \r\n                       (c \u0026\u0026 d)\r\n```\r\nhttps://github.com/gin-gonic/gin/blob/9c27053243cb24ecc90d01c8ff379bd98fed9c8e/tree.go#L558\r\n\r\n",
+    "path": "tree.go",
+    "line": 466,
+    "original_line": 466,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 88,
+    "original_position": 88,
+    "in_reply_to_id": 663154654,
+    "diff_hunk": "@@ -418,32 +429,41 @@ walk: // Outer loop for walking the tree\n \t\t\t\tidxc := path[0]\n \t\t\t\tfor i, c := range []byte(n.indices) {\n \t\t\t\t\tif c == idxc {\n-\t\t\t\t\t\tif strings.HasPrefix(n.children[len(n.children)-1].path, \":\") {\n-\t\t\t\t\t\t\tskipped = \u0026skip{\n-\t\t\t\t\t\t\t\tpath: prefix + path,\n-\t\t\t\t\t\t\t\tparamNode: \u0026node{\n-\t\t\t\t\t\t\t\t\tpath:      n.path,\n-\t\t\t\t\t\t\t\t\twildChild: n.wildChild,\n-\t\t\t\t\t\t\t\t\tnType:     n.nType,\n-\t\t\t\t\t\t\t\t\tpriority:  n.priority,\n-\t\t\t\t\t\t\t\t\tchildren:  n.children,\n-\t\t\t\t\t\t\t\t\thandlers:  n.handlers,\n-\t\t\t\t\t\t\t\t\tfullPath:  n.fullPath,\n-\t\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t//  strings.HasPrefix(n.children[len(n.children)-1].path, \":\") == n.wildChild\n+\t\t\t\t\t\tif n.wildChild {\n+\t\t\t\t\t\t\tskippedPath = prefix + path\n+\t\t\t\t\t\t\tlatestNode = \u0026node{\n+\t\t\t\t\t\t\t\tpath:      n.path,\n+\t\t\t\t\t\t\t\twildChild: n.wildChild,\n+\t\t\t\t\t\t\t\tnType:     n.nType,\n+\t\t\t\t\t\t\t\tpriority:  n.priority,\n+\t\t\t\t\t\t\t\tchildren:  n.children,\n+\t\t\t\t\t\t\t\thandlers:  n.handlers,\n+\t\t\t\t\t\t\t\tfullPath:  n.fullPath,\n \t\t\t\t\t\t\t}\n \t\t\t\t\t\t}\n \n \t\t\t\t\t\tn = n.children[i]\n+\n+\t\t\t\t\t\t// match '/', If this condition is matched, the next route is found\n+\t\t\t\t\t\tif len(n.fullPath) != 0 \u0026\u0026 n.wildChild {\n+\t\t\t\t\t\t\tmatchNum++\n+\t\t\t\t\t\t}\n \t\t\t\t\t\tcontinue walk\n \t\t\t\t\t}\n \t\t\t\t}\n \n+\t\t\t\t// level 2 router not found,the current node needs to be equal to latestNode\n+\t\t\t\tif matchNum \u003c 1 {\n+\t\t\t\t\tn = latestNode\n+\t\t\t\t}\n+\n \t\t\t\t// If there is no wildcard pattern, recommend a redirection\n \t\t\t\tif !n.wildChild {\n \t\t\t\t\t// Nothing found.\n \t\t\t\t\t// We can recommend to redirect to the same URL without a\n \t\t\t\t\t// trailing slash if a leaf exists for that path.\n-\t\t\t\t\tvalue.tsr = (path == \"/\" \u0026\u0026 n.handlers != nil)\n+\t\t\t\t\tvalue.tsr = path == \"/\" \u0026\u0026 n.handlers != nil",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r663596584",
+    "created_at": "2021-07-05T02:04:40Z"
+  },
+  {
+    "id": 664093314,
+    "user": {
+      "login": "rw-access"
+    },
+    "body": "```suggestion\r\n\t\t\t// level 2 router not found and latestNode.wildChild is true\r\n```",
+    "path": "tree.go",
+    "line": null,
+    "original_line": 570,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 115,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -535,6 +567,10 @@ walk: // Outer loop for walking the tree\n \t\t}\n \n \t\tif path == prefix {\n+\t\t\t// level 2 router not found and latestNode.wildChild is ture",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r664093314",
+    "created_at": "2021-07-05T19:02:25Z"
+  },
+  {
+    "id": 664166125,
+    "user": {
+      "login": "qm012"
+    },
+    "body": "done,thanks.😵",
+    "path": "tree.go",
+    "line": null,
+    "original_line": 570,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 115,
+    "in_reply_to_id": 664093314,
+    "diff_hunk": "@@ -535,6 +567,10 @@ walk: // Outer loop for walking the tree\n \t\t}\n \n \t\tif path == prefix {\n+\t\t\t// level 2 router not found and latestNode.wildChild is ture",
+    "html_url": "https://github.com/gin-gonic/gin/pull/2767#discussion_r664166125",
+    "created_at": "2021-07-06T00:31:22Z"
+  }
+]

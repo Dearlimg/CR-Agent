@@ -3,10 +3,14 @@ package main
 import (
 	"CR-Agent/internal/logic"
 	"CR-Agent/internal/model"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +76,168 @@ func TestScoreMatchesOnlyGroundedFinding(t *testing.T) {
 	tp, fp, fn := score(sample, predictions)
 	if tp != 1 || fp != 1 || fn != 0 {
 		t.Fatalf("score=(%d,%d,%d), want (1,1,0)", tp, fp, fn)
+	}
+}
+
+func TestApplyJudgeVerdictsSeparatesAuditChannels(t *testing.T) {
+	result := &realCaseResult{
+		References: []realReference{
+			{File: "a.go", Line: 10, Kind: "defect", Status: "valid"},
+			{File: "b.go", Line: 20, Kind: "defect", Status: "fixed_in_snapshot"},
+			{File: "c.go", Line: 30, Kind: "suggestion", Status: "suggestion"},
+			{File: "d.go", Line: 40, Kind: "design", Status: "unverifiable"},
+		},
+		Findings: []model.ReviewComment{
+			{File: "a.go", Line: 11, Body: "covers the valid defect"},
+			{File: "b.go", Line: 21, Body: "re-flags the already-fixed issue"},
+			{File: "c.go", Line: 31, Body: "matches the suggestion"},
+			{File: "zz.go", Line: 99, Body: "unrelated valid issue"},
+		},
+		RefVerdicts: []judgeRefVerdict{
+			{Index: 0, Verdict: "covered", CoveredBy: []int{0}},
+			{Index: 1, Verdict: "re_flagged", CoveredBy: []int{1}},
+			{Index: 2, Verdict: "covered", CoveredBy: []int{2}},
+			{Index: 3, Verdict: "skipped"},
+		},
+		FindingVerdict: []judgeFindingVerdict{
+			{Index: 0, Verdict: "matched_reference"},
+			{Index: 1, Verdict: "invalid"},
+			{Index: 2, Verdict: "matched_reference"},
+			{Index: 3, Verdict: "valid_new_issue"},
+		},
+	}
+	applyJudgeVerdicts(result)
+	if result.CoveredRefs != 1 || result.PartialRefs != 0 || result.MissedRefs != 0 {
+		t.Errorf("core coverage=(%d,%d,%d), want (1,0,0)", result.CoveredRefs, result.PartialRefs, result.MissedRefs)
+	}
+	if result.FixedHits != 1 || result.FixedRefs != 1 {
+		t.Errorf("fixed refs/hits=(%d,%d), want (1,1)", result.FixedRefs, result.FixedHits)
+	}
+	if result.SuggestionCovered != 1.0 {
+		t.Errorf("suggestion covered=%.1f, want 1.0", result.SuggestionCovered)
+	}
+	if result.SkippedRefs != 1 {
+		t.Errorf("skipped=%d, want 1", result.SkippedRefs)
+	}
+	// Finding 0 matched the valid reference; finding 1 re-flagged a fixed
+	// issue and must be a false positive despite being anchorable; finding 2
+	// matched the suggestion channel; finding 3 is a judge-confirmed novel issue.
+	if result.Matched != 2 || result.Novel != 1 || result.FalsePositives != 1 {
+		t.Errorf("findings matched/novel/fp=(%d,%d,%d), want (2,1,1)", result.Matched, result.Novel, result.FalsePositives)
+	}
+	if result.CoverageScore != 1.0 {
+		t.Errorf("coverage score=%.1f, want 1.0", result.CoverageScore)
+	}
+}
+
+func TestApplyJudgeVerdictsQuietOnFixedIssue(t *testing.T) {
+	result := &realCaseResult{
+		References: []realReference{
+			{File: "b.go", Line: 20, Kind: "defect", Status: "fixed_in_snapshot"},
+		},
+		Findings: []model.ReviewComment{},
+		RefVerdicts: []judgeRefVerdict{
+			{Index: 0, Verdict: "quiet"},
+		},
+	}
+	applyJudgeVerdicts(result)
+	if result.FixedHits != 0 {
+		t.Errorf("fixed hits=%d, want 0 (system stayed quiet)", result.FixedHits)
+	}
+}
+
+func TestFinalizeRealReportCoreDenominator(t *testing.T) {
+	result := realCaseResult{
+		References: []realReference{
+			{Status: "valid"},
+			{Status: "suggestion"},
+			{Status: "fixed_in_snapshot"},
+		},
+		RefVerdicts: []judgeRefVerdict{
+			{Index: 0, Verdict: "partial"},
+			{Index: 1, Verdict: "covered"},
+			{Index: 2, Verdict: "quiet"},
+		},
+	}
+	applyJudgeVerdicts(&result)
+	report := &realRunReport{
+		DimensionCoverage: map[string]*dimCoverage{},
+		ScenarioMetrics:   map[string]*scenarioMetric{},
+		Results:           []realCaseResult{result},
+	}
+	finalizeRealReport(report)
+	if report.CoreRefs != 1 || report.SuggestionRefs != 1 || report.FixedRefs != 1 {
+		t.Fatalf("channel refs core/sugg/fixed=(%d,%d,%d), want (1,1,1)", report.CoreRefs, report.SuggestionRefs, report.FixedRefs)
+	}
+	if report.Recall != 0.5 {
+		t.Errorf("core recall=%.2f, want 0.5 (partial counts 0.5 of the single core ref)", report.Recall)
+	}
+	if report.SuggestionCoverage != 1.0 {
+		t.Errorf("suggestion coverage=%.2f, want 1.0", report.SuggestionCoverage)
+	}
+}
+
+func TestRefChannelDefaultsLegacyToValid(t *testing.T) {
+	if got := refChannel(realReference{Status: ""}); got != "valid" {
+		t.Errorf("legacy reference channel=%q, want valid", got)
+	}
+	if got := refChannel(realReference{Status: "bogus"}); got != "valid" {
+		t.Errorf("bogus status channel=%q, want valid", got)
+	}
+	if got := refChannel(realReference{Status: "fixed_in_snapshot"}); got != "fixed_in_snapshot" {
+		t.Errorf("fixed channel=%q, want fixed_in_snapshot", got)
+	}
+}
+
+func TestLoadRealCasesRejectsTamperedSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	diff := "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,2 +1,3 @@\n line one\n+line two\n"
+	diffPath := filepath.Join(dir, "x.diff")
+	if err := os.WriteFile(diffPath, []byte(diff), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte(diff))
+	base := realCase{
+		ID: "case-1", PrURL: "https://github.com/o/r/pull/1", Scenario: "bugfix",
+		DiffFile: "x.diff", DiffSHA256: hex.EncodeToString(digest[:]),
+		ReferenceComments: []realReference{{
+			File: "x.go", Line: 2, Body: "body", Dimension: "correctness", Kind: "defect", Status: "valid",
+		}},
+	}
+	manifest := []realCase{base}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(dir, "manifest.json")
+	if err := os.WriteFile(manifestPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadRealCases(manifestPath); err != nil {
+		t.Fatalf("valid manifest rejected: %v", err)
+	}
+
+	// Tampering with the snapshot must fail validation: the audit refers to
+	// the pinned content.
+	if err := os.WriteFile(diffPath, []byte(diff+"\n+line three\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadRealCases(manifestPath); err == nil {
+		t.Fatal("tampered snapshot accepted")
+	}
+
+	// Missing or invalid status must fail validation.
+	if err := os.WriteFile(diffPath, []byte(diff), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	noStatus := base
+	noStatus.ReferenceComments[0].Status = ""
+	encoded, _ = json.Marshal([]realCase{noStatus})
+	if err := os.WriteFile(manifestPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadRealCases(manifestPath); err == nil {
+		t.Fatal("reference without audit status accepted")
 	}
 }
 

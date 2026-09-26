@@ -34,8 +34,8 @@ func TestValidateFindingEvidenceReanchorsUniqueAddedBlock(t *testing.T) {
 		),
 	}
 
-	verified, rejected := validateFindingEvidence(findings, diff)
-	if rejected != 0 || len(verified) != len(findings) {
+	verified, rejected, reasons := validateFindingEvidence(findings, diff)
+	if rejected != 0 || len(verified) != len(findings) || len(reasons) != 0 {
 		t.Fatalf("verified=%d rejected=%d, want 2 and 0", len(verified), rejected)
 	}
 	if verified[0].Line != 1278 || verified[1].Line != 639 {
@@ -62,15 +62,15 @@ func TestValidateFindingEvidencePreservesCorrectDuplicateAnchor(t *testing.T) {
 	}, "\n")
 	anchored := completeEvidenceFinding("a.go", 11, "same()")
 
-	verified, rejected := validateFindingEvidence([]ReviewFinding{anchored}, diff)
-	if rejected != 0 || len(verified) != 1 || verified[0].Line != 11 {
-		t.Fatalf("correct anchor should survive duplicate text: verified=%v rejected=%d", verified, rejected)
+	verified, rejected, reasons := validateFindingEvidence([]ReviewFinding{anchored}, diff)
+	if rejected != 0 || len(verified) != 1 || verified[0].Line != 11 || len(reasons) != 0 {
+		t.Fatalf("correct anchor should survive duplicate text: verified=%v rejected=%d reasons=%v", verified, rejected, reasons)
 	}
 
 	wrongAnchor := completeEvidenceFinding("a.go", 10, "same()")
-	verified, rejected = validateFindingEvidence([]ReviewFinding{wrongAnchor}, diff)
-	if rejected != 1 || len(verified) != 0 {
-		t.Fatalf("ambiguous relocation should fail: verified=%v rejected=%d", verified, rejected)
+	verified, rejected, reasons = validateFindingEvidence([]ReviewFinding{wrongAnchor}, diff)
+	if rejected != 1 || len(verified) != 0 || reasons[evidenceReasonAmbiguousAnchor] != 1 {
+		t.Fatalf("ambiguous relocation should fail: verified=%v rejected=%d reasons=%v", verified, rejected, reasons)
 	}
 }
 
@@ -99,9 +99,35 @@ func TestValidateFindingEvidenceRejectsNonAddedOrFalseQuotes(t *testing.T) {
 		completeEvidenceFinding("a.go", 2, "added()\nadded2()"),
 	}
 
-	verified, rejected := validateFindingEvidence(findings, diff)
+	verified, rejected, reasons := validateFindingEvidence(findings, diff)
 	if rejected != len(findings) || len(verified) != 0 {
 		t.Fatalf("non-added or false quotes should fail: verified=%v rejected=%d", verified, rejected)
+	}
+	if reasons[evidenceReasonTextMismatch] != 4 || reasons[evidenceReasonContextOnly] != 1 {
+		t.Fatalf("unexpected rejection breakdown: %v, want text_mismatch=4 context_only=1", reasons)
+	}
+}
+
+func TestValidateFindingEvidenceClassifiesMissingFieldAndUnknownFile(t *testing.T) {
+	diff := strings.Join([]string{
+		"diff --git a/a.go b/a.go",
+		"--- a/a.go",
+		"+++ b/a.go",
+		"@@ -0,0 +1,2 @@",
+		"+added()",
+		"+added2()",
+	}, "\n")
+	findings := []ReviewFinding{
+		completeEvidenceFinding("a.go", 1, "added()"),
+		completeEvidenceFinding("b.go", 1, "added()"),
+		{File: "a.go", Line: 1, Evidence: "added()", Body: "only body"},
+	}
+	verified, rejected, reasons := validateFindingEvidence(findings, diff)
+	if rejected != 2 || len(verified) != 1 {
+		t.Fatalf("verified=%d rejected=%d, want 1 and 2", len(verified), rejected)
+	}
+	if reasons[evidenceReasonUnknownFile] != 1 || reasons[evidenceReasonMissingField] != 1 {
+		t.Fatalf("unexpected breakdown: %v, want unknown_file=1 missing_field=1", reasons)
 	}
 }
 

@@ -120,17 +120,58 @@ func main() {
 	caseTimeout := flag.Duration("case-timeout", 2*time.Minute, "time allowed for one review case")
 	validateOnly := flag.Bool("validate-only", false, "validate the local fixture and scoring labels without calling a model")
 	scorePath := flag.String("score-report", "", "re-score a saved run against the current labels without calling a model")
+	manifest := flag.String("manifest", "benchmarks/code_review_v1.json", "benchmark manifest; use benchmarks/real_pr_v1.json for the real-PR benchmark")
+	judgeMaxTokens := flag.Int("judge-max-tokens", 2048, "maximum output tokens for the real-PR judge call per case")
+	fromRemote := flag.String("from-remote", "", "directory of saved job JSONs fetched from a deployed service; skips live review execution and only scores them")
 	flag.Parse()
 
+	if *fromRemote != "" {
+		if err := runRealFromRemote(*fromRemote, *judgeMaxTokens); err != nil {
+			fmt.Fprintln(os.Stderr, "benchmark:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if *scorePath != "" {
-		if err := rescoreReport(*scorePath); err != nil {
+		var err error
+		if isRealReport(*scorePath) {
+			err = rescoreRealReport(*scorePath)
+		} else {
+			err = rescoreReport(*scorePath)
+		}
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "benchmark:", err)
 			os.Exit(1)
 		}
 		return
 	}
 	if *validateOnly {
-		cases, err := loadCases("benchmarks/code_review_v1.json")
+		if isRealManifest(*manifest) {
+			cases, err := loadRealCases(*manifest)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "benchmark:", err)
+				os.Exit(1)
+			}
+			refs := 0
+			perScenario := map[string]int{}
+			perStatus := map[string]int{}
+			for _, sample := range cases {
+				refs += len(sample.ReferenceComments)
+				perScenario[sample.Scenario]++
+				for _, ref := range sample.ReferenceComments {
+					perStatus[refChannel(ref)]++
+				}
+			}
+			fmt.Printf("validated %d real-PR cases, %d reference comments\n", len(cases), refs)
+			for scenario, count := range perScenario {
+				fmt.Printf("  scenario %s: %d cases\n", scenario, count)
+			}
+			fmt.Printf("  core (valid): %d\n  suggestion: %d\n  fixed_in_snapshot (paired negatives): %d\n  unverifiable: %d\n",
+				perStatus[refStatusValid], perStatus[refStatusSuggestion], perStatus[refStatusFixedInSnapshot], perStatus[refStatusUnverifiable])
+			return
+		}
+		cases, err := loadCases(*manifest)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "benchmark:", err)
 			os.Exit(1)
@@ -146,13 +187,20 @@ func main() {
 		fmt.Printf("validated %d cases (%d positive, %d negative)\n", len(cases), positive, negative)
 		return
 	}
-	if err := run(benchmarkOptions{
+	options := benchmarkOptions{
 		Limit:           *limit,
 		MaxCalls:        *maxCalls,
 		MaxOutputTokens: *maxTokens,
 		CaseTimeout:     *caseTimeout,
 		CaseIDs:         *caseIDs,
-	}); err != nil {
+	}
+	var err error
+	if isRealManifest(*manifest) {
+		err = runReal(*manifest, options, *judgeMaxTokens)
+	} else {
+		err = run(options)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "benchmark:", err)
 		os.Exit(1)
 	}

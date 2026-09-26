@@ -35,6 +35,7 @@ type reviewCheckpoint struct {
 	CandidateSource         checkpointSource         `json:"candidate_source"`
 	SourceContextError      string                   `json:"source_context_error,omitempty"`
 	RejectedEvidence        int                      `json:"rejected_evidence"`
+	RejectedReasons         map[string]int           `json:"rejected_reasons,omitempty"`
 	IncompleteReason        string                   `json:"incomplete_reason,omitempty"`
 	LastVerificationError   string                   `json:"last_verification_error,omitempty"`
 	VerificationCursor      int                      `json:"verification_cursor"`

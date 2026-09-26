@@ -1,0 +1,953 @@
+[
+  {
+    "case": "ts-57465",
+    "index": 0,
+    "cid": 1508184266,
+    "author": "ahejlsberg",
+    "kind": "suggestion",
+    "dimension": "correctness",
+    "anchor": "src/compiler/checker.ts:15486",
+    "body": "Change `===` check to `signature.resolvedReturnType.flags \u0026 TypeFlags.Boolean`. We generally want to avoid checking for specific _instances_ of types and instead check for specific _kinds_ of types.",
+    "diff_hunk_at_comment": "@@ -15458,9 +15458,19 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {\n                         jsdocPredicate = getTypePredicateOfSignature(jsdocSignature);\r\n                     }\r\n                 }\r\n-                signature.resolvedTypePredicate = type \u0026\u0026 isTypePredicateNode(type) ?\r\n-                    createTypePredicateFromTypePredicateNode(type, signature) :\r\n-                    jsdocPredicate || noTypePredicate;\r\n+                if (type || jsdocPredicate) {\r\n+                    signature.resolvedTypePredicate = type \u0026\u0026 isTypePredicateNode(type) ?\r\n+                        createTypePredicateFromTypePredicateNode(type, signature) :\r\n+                        jsdocPredicate || noTypePredicate;\r\n+                }\r\n+                else if (signature.declaration \u0026\u0026 isFunctionLikeDeclaration(signature.declaration) \u0026\u0026 (!signature.resolvedReturnType || signature.resolvedReturnType === booleanType)) {\r\n+                    const { declaration } = signature;",
+    "final_snapshot_context": "--- src/compiler/checker.ts @@\n-                   signature.resolvedTypePredicate = type \u0026\u0026 isTypePredicateNode(type) ?\n-                       createTypePredicateFromTypePredicateNode(type, signature) :\n-                       jsdocPredicate || noTypePredicate;\n+15481                 if (type || jsdocPredicate) {\n+15482                     signature.resolvedTypePredicate = type \u0026\u0026 isTypePredicateNode(type) ?\n+15483                         createTypePredicateFromTypePredicateNode(type, signature) :\n+15484                         jsdocPredicate || noTypePredicate;\n+15485                 }\n+15486                 else if (signature.declaration \u0026\u0026 isFunctionLikeDeclaration(signature.declaration) \u0026\u0026 (!signature.resolvedReturnType || signature.resolvedReturnType.flags \u0026 TypeFlags.Boolean) \u0026\u0026 getParameterCount(signature) \u003e 0) {\n+15487                     const { declaration } = signature;\n+15488                     signature.resolvedTypePredicate = noTypePredicate; // avoid infinite loop\n+15489                     signature.resolvedTypePredicate = getTypePredicateFromBody(declaration) || noTypePredicate;\n+15490                 }\n+15491                 else {\n+15492                     signature.resolvedTypePredicate = noTypePredicate;\n+15493                 }\n 15494             }\n",
+    "token_hints": [
+      {
+        "token": "===",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "signature.resolvedReturnType.flags \u0026 TypeFlags.Boolean",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "ts-57465",
+    "index": 1,
+    "cid": 1523687507,
+    "author": "weswigham",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "src/compiler/checker.ts:15486",
+    "body": "We should check the signature's `getParameterCount` instead of the raw declaration here, if possible - as is, this PR infers a predicate `f is never` for `const a = (...f: []) =\u003e typeof f === \"undefined\";` which, while true, is kinda funky and not useful. More tests with rest args are probably pertinent, too.",
+    "diff_hunk_at_comment": "@@ -37389,6 +37399,72 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {\n         }\r\n     }\r\n \r\n+    function getTypePredicateFromBody(func: FunctionLikeDeclaration): TypePredicate | undefined {\r\n+        switch (func.kind) {\r\n+            case SyntaxKind.Constructor:\r\n+            case SyntaxKind.GetAccessor:\r\n+            case SyntaxKind.SetAccessor:\r\n+                return undefined;\r\n+        }\r\n+        const functionFlags = getFunctionFlags(func);\r\n+        if (functionFlags !== FunctionFlags.Normal || func.parameters.length === 0) return undefined;",
+    "final_snapshot_context": "--- src/compiler/checker.ts @@\n-                   signature.resolvedTypePredicate = type \u0026\u0026 isTypePredicateNode(type) ?\n-                       createTypePredicateFromTypePredicateNode(type, signature) :\n-                       jsdocPredicate || noTypePredicate;\n+15481                 if (type || jsdocPredicate) {\n+15482                     signature.resolvedTypePredicate = type \u0026\u0026 isTypePredicateNode(type) ?\n+15483                         createTypePredicateFromTypePredicateNode(type, signature) :\n+15484                         jsdocPredicate || noTypePredicate;\n+15485                 }\n+15486                 else if (signature.declaration \u0026\u0026 isFunctionLikeDeclaration(signature.declaration) \u0026\u0026 (!signature.resolvedReturnType || signature.resolvedReturnType.flags \u0026 TypeFlags.Boolean) \u0026\u0026 getParameterCount(signature) \u003e 0) {\n+15487                     const { declaration } = signature;\n+15488                     signature.resolvedTypePredicate = noTypePredicate; // avoid infinite loop\n+15489                     signature.resolvedTypePredicate = getTypePredicateFromBody(declaration) || noTypePredicate;\n+15490                 }\n+15491                 else {\n+15492                     signature.resolvedTypePredicate = noTypePredicate;\n+15493                 }\n 15494             }\n",
+    "token_hints": [
+      {
+        "token": "getParameterCount",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "f is never",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "const a = (...f: []) =\u003e typeof f === \"undefined\";",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "ts-57465",
+    "index": 2,
+    "cid": 1507922928,
+    "author": "ahejlsberg",
+    "kind": "suggestion",
+    "dimension": "correctness",
+    "anchor": "src/compiler/checker.ts:37492",
+    "body": "Use `unescapeLeadingUnderscores(param.name)`.",
+    "diff_hunk_at_comment": "@@ -37389,6 +37399,81 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {\n         }\r\n     }\r\n \r\n+    function getTypePredicateFromBody(func: FunctionLikeDeclaration, _sig: Signature): TypePredicate | undefined {\r\n+        const functionFlags = getFunctionFlags(func);\r\n+        if (functionFlags !== FunctionFlags.Normal) return undefined;\r\n+\r\n+        // Only attempt to infer a type predicate if there's exactly one return.\r\n+        let singleReturn: Expression | undefined;\r\n+        if (func.body \u0026\u0026 func.body.kind !== SyntaxKind.Block) {\r\n+            singleReturn = func.body; // arrow function\r\n+        }\r\n+        else {\r\n+            if (functionHasImplicitReturn(func)) return undefined;\r\n+\r\n+            const bailedEarly = forEachReturnStatement(func.body as Block, returnStatement =\u003e {\r\n+                if (singleReturn || !returnStatement.expression) return true;\r\n+                singleReturn = returnStatement.expression;\r\n+            });\r\n+            if (bailedEarly || !singleReturn) return undefined;\r\n+        }\r\n+\r\n+        const predicate = checkIfExpressionRefinesAnyParameter(singleReturn);\r\n+        if (predicate) {\r\n+            const [i, type] = predicate;\r\n+            const param = func.parameters[i];\r\n+            if (isIdentifier(param.name)) {\r\n+                // TODO: is there an alternative to the \"as string\" here? (It's __String)",
+    "final_snapshot_context": "--- src/compiler/checker.ts @@\n+37484         return forEach(func.parameters, (param, i) =\u003e {\n+37485             const initType = getTypeOfSymbol(param.symbol);\n+37486             if (!initType || initType.flags \u0026 TypeFlags.Boolean || !isIdentifier(param.name) || isSymbolAssigned(param.symbol) || isRestParameter(param)) {\n+37487                 // Refining \"x: boolean\" to \"x is true\" or \"x is false\" isn't useful.\n+37488                 return;\n+37489             }\n+37490             const trueType = checkIfExpressionRefinesParameter(func, expr, param, initType);\n+37491             if (trueType) {\n+37492                 return createTypePredicate(TypePredicateKind.Identifier, unescapeLeadingUnderscores(param.name.escapedText), i, trueType);\n+37493             }\n+37494         });\n+37495     }\n+37496 \n+37497     function checkIfExpressionRefinesParameter(func: FunctionLikeDeclaration, expr: Expression, param: ParameterDeclaration, initType: Type): Type | undefined {\n+37498         const antecedent = (expr as Expression \u0026 { flowNode?: FlowNode; }).flowNode ||\n+37499             expr.parent.kind === SyntaxKind.ReturnStatement \u0026\u0026 (expr.parent as ReturnStatement).flowNode ||\n+37500             { flags: FlowFlags.Start };\n",
+    "token_hints": [
+      {
+        "token": "unescapeLeadingUnderscores(param.name)",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "ts-57465",
+    "index": 3,
+    "cid": 1508177902,
+    "author": "ahejlsberg",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "src/compiler/checker.ts:37458",
+    "body": "This isn't quite right. It really isn't meaningful to perform control flow analysis on an expression that wasn't assigned a flow node in the binder because without it you have no antecedent chain. The one notable exception may be the expression of an arrow function where you know there's no preceding code. I think the best approach here is to have the binder always initialize the `flowNode` property of `return` statements and then use that as the antecedent when analyzing expressions of (single) return statements. That would allow you to get rid of the single return statement exclusion logic you have below.",
+    "diff_hunk_at_comment": "@@ -37389,6 +37399,95 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {\n         }\r\n     }\r\n \r\n+    function getTypePredicateFromBody(func: FunctionLikeDeclaration): TypePredicate | undefined {\r\n+        switch (func.kind) {\r\n+            case SyntaxKind.Constructor:\r\n+            case SyntaxKind.GetAccessor:\r\n+            case SyntaxKind.SetAccessor:\r\n+                return undefined;\r\n+        }\r\n+        const functionFlags = getFunctionFlags(func);\r\n+        if (functionFlags !== FunctionFlags.Normal || func.parameters.length === 0) return undefined;\r\n+\r\n+        // Only attempt to infer a type predicate if there's exactly one return.\r\n+        let singleReturn: Expression | undefined;\r\n+        let singleReturnStatement: ReturnStatement | undefined;\r\n+        if (func.body \u0026\u0026 func.body.kind !== SyntaxKind.Block) {\r\n+            singleReturn = func.body; // arrow function\r\n+        }\r\n+        else {\r\n+            if (functionHasImplicitReturn(func)) return undefined;\r\n+\r\n+            const bailedEarly = forEachReturnStatement(func.body as Block, returnStatement =\u003e {\r\n+                if (singleReturn || !returnStatement.expression) return true;\r\n+                singleReturnStatement = returnStatement;\r\n+                singleReturn = returnStatement.expression;\r\n+            });\r\n+            if (bailedEarly || !singleReturn) return undefined;\r\n+        }\r\n+\r\n+        const predicate = checkIfExpressionRefinesAnyParameter(singleReturn);\r\n+        if (predicate) {\r\n+            const [i, type] = predicate;\r\n+            const param = func.parameters[i];\r\n+            if (isIdentifier(param.name)) {\r\n+                return createTypePredicate(TypePredicateKind.Identifier, unescapeLeadingUnderscores(param.name.escapedText), i, type);\r\n+     …(截断)",
+    "final_snapshot_context": "--- src/compiler/checker.ts @@\n 37451         }\n 37452     }\n 37453 \n+37454     function getTypePredicateFromBody(func: FunctionLikeDeclaration): TypePredicate | undefined {\n+37455         switch (func.kind) {\n+37456             case SyntaxKind.Constructor:\n+37457             case SyntaxKind.GetAccessor:\n+37458             case SyntaxKind.SetAccessor:\n+37459                 return undefined;\n+37460         }\n+37461         const functionFlags = getFunctionFlags(func);\n+37462         if (functionFlags !== FunctionFlags.Normal) return undefined;\n+37463 \n+37464         // Only attempt to infer a type predicate if there's exactly one return.\n+37465         let singleReturn: Expression | undefined;\n+37466         if (func.body \u0026\u0026 func.body.kind !== SyntaxKind.Block) {\n",
+    "token_hints": [
+      {
+        "token": "flowNode",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "return",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      }
+    ]
+  },
+  {
+    "case": "ts-57465",
+    "index": 4,
+    "cid": 1508186184,
+    "author": "ahejlsberg",
+    "kind": "suggestion",
+    "dimension": "maintainability",
+    "anchor": "src/compiler/checker.ts:37475",
+    "body": "Just change to `!(falseSubtype.flags \u0026 TypeFlags.Never)`.",
+    "diff_hunk_at_comment": "@@ -37389,6 +37399,95 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {\n         }\r\n     }\r\n \r\n+    function getTypePredicateFromBody(func: FunctionLikeDeclaration): TypePredicate | undefined {\r\n+        switch (func.kind) {\r\n+            case SyntaxKind.Constructor:\r\n+            case SyntaxKind.GetAccessor:\r\n+            case SyntaxKind.SetAccessor:\r\n+                return undefined;\r\n+        }\r\n+        const functionFlags = getFunctionFlags(func);\r\n+        if (functionFlags !== FunctionFlags.Normal || func.parameters.length === 0) return undefined;\r\n+\r\n+        // Only attempt to infer a type predicate if there's exactly one return.\r\n+        let singleReturn: Expression | undefined;\r\n+        let singleReturnStatement: ReturnStatement | undefined;\r\n+        if (func.body \u0026\u0026 func.body.kind !== SyntaxKind.Block) {\r\n+            singleReturn = func.body; // arrow function\r\n+        }\r\n+        else {\r\n+            if (functionHasImplicitReturn(func)) return undefined;\r\n+\r\n+            const bailedEarly = forEachReturnStatement(func.body as Block, returnStatement =\u003e {\r\n+                if (singleReturn || !returnStatement.expression) return true;\r\n+                singleReturnStatement = returnStatement;\r\n+                singleReturn = returnStatement.expression;\r\n+            });\r\n+            if (bailedEarly || !singleReturn) return undefined;\r\n+        }\r\n+\r\n+        const predicate = checkIfExpressionRefinesAnyParameter(singleReturn);\r\n+        if (predicate) {\r\n+            const [i, type] = predicate;\r\n+            const param = func.parameters[i];\r\n+            if (isIdentifier(param.name)) {\r\n+                return createTypePredicate(TypePredicateKind.Identifier, unescapeLeadingUnderscores(param.name.escapedText), i, type);\r\n+     …(截断)",
+    "final_snapshot_context": "--- src/compiler/checker.ts @@\n+37467             singleReturn = func.body; // arrow function\n+37468         }\n+37469         else {\n+37470             const bailedEarly = forEachReturnStatement(func.body as Block, returnStatement =\u003e {\n+37471                 if (singleReturn || !returnStatement.expression) return true;\n+37472                 singleReturn = returnStatement.expression;\n+37473             });\n+37474             if (bailedEarly || !singleReturn || functionHasImplicitReturn(func)) return undefined;\n+37475         }\n+37476         return checkIfExpressionRefinesAnyParameter(func, singleReturn);\n+37477     }\n+37478 \n+37479     function checkIfExpressionRefinesAnyParameter(func: FunctionLikeDeclaration, expr: Expression): TypePredicate | undefined {\n+37480         expr = skipParentheses(expr, /*excludeJSDocTypeAssertions*/ true);\n+37481         const returnType = checkExpressionCached(expr);\n+37482         if (!(returnType.flags \u0026 TypeFlags.Boolean)) return undefined;\n+37483 \n",
+    "token_hints": [
+      {
+        "token": "!(falseSubtype.flags \u0026 TypeFlags.Never)",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "ts-57465",
+    "index": 5,
+    "cid": 1525225501,
+    "author": "weswigham",
+    "kind": "suggestion",
+    "dimension": "maintainability",
+    "anchor": "src/compiler/checker.ts:48584",
+    "body": "I've just realized this is basically identical to code both in `typePredicateToString` and `signatureToSignatureDeclarationHelper` - rather than adding a 3rd instance, can we expose a `typePredicateToTypePredicateNode` on the `NodeBuilder` and use it in all 3?",
+    "diff_hunk_at_comment": "@@ -48500,6 +48576,18 @@ export function createTypeChecker(host: TypeCheckerHost): TypeChecker {\n             return factory.createToken(SyntaxKind.AnyKeyword) as KeywordTypeNode;\r\n         }\r\n         const signature = getSignatureFromDeclaration(signatureDeclaration);\r\n+        const typePredicate = getTypePredicateOfSignature(signature);\r\n+        if (typePredicate) {\r\n+            // Inferred type predicates\r\n+            const assertsModifier = typePredicate.kind === TypePredicateKind.AssertsThis || typePredicate.kind === TypePredicateKind.AssertsIdentifier ?\r\n+                factory.createToken(SyntaxKind.AssertsKeyword) :\r\n+                undefined;\r\n+            const parameterName = typePredicate.kind === TypePredicateKind.Identifier || typePredicate.kind === TypePredicateKind.AssertsIdentifier ?\r\n+                setEmitFlags(factory.createIdentifier(typePredicate.parameterName), EmitFlags.NoAsciiEscaping) :\r\n+                factory.createThisTypeNode();\r\n+            const typeNode = typePredicate.type \u0026\u0026 nodeBuilder.typeToTypeNode(typePredicate.type, enclosingDeclaration, flags | NodeBuilderFlags.MultilineObjectLiterals, tracker);\r\n+            return factory.createTypePredicateNode(assertsModifier, parameterName, typeNode);",
+    "final_snapshot_context": "--- src/compiler/checker.ts @@\n 48578             return factory.createToken(SyntaxKind.AnyKeyword) as KeywordTypeNode;\n 48579         }\n 48580         const signature = getSignatureFromDeclaration(signatureDeclaration);\n+48581         const typePredicate = getTypePredicateOfSignature(signature);\n+48582         if (typePredicate) {\n+48583             // Inferred type predicates\n+48584             return nodeBuilder.typePredicateToTypePredicateNode(typePredicate, enclosingDeclaration, flags | NodeBuilderFlags.MultilineObjectLiterals, tracker);\n+48585         }\n 48586         return nodeBuilder.typeToTypeNode(getReturnTypeOfSignature(signature), enclosingDeclaration, flags | NodeBuilderFlags.MultilineObjectLiterals, tracker);\n 48587     }\n 48588 \n",
+    "token_hints": [
+      {
+        "token": "typePredicateToString",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "signatureToSignatureDeclarationHelper",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "typePredicateToTypePredicateNode",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "NodeBuilder",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      }
+    ]
+  },
+  {
+    "case": "node-41749",
+    "index": 0,
+    "cid": 795067183,
+    "author": "targos",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "lib/internal/bootstrap/pre_execution.js:38",
+    "body": "It seems that this is not the right place to run this code if I want `fetch` to also be installed in workers. Note that I cannot do it in `internal/bootstrap/browser.js` because it's not allowed to call `getOptionValue` from this file.",
+    "diff_hunk_at_comment": "@@ -30,6 +35,7 @@ function prepareMainThreadExecution(expandArgv1 = false) {\n   setupPerfHooks();\n   setupInspectorHooks();\n   setupWarningHandler();\n+  setupFetch();",
+    "final_snapshot_context": "--- lib/internal/bootstrap/pre_execution.js @@\n 35   setupPerfHooks();\n 36   setupInspectorHooks();\n 37   setupWarningHandler();\n+38   setupFetch();\n 39 \n 40   // Resolve the coverage directory to an absolute path, and\n 41   // overwrite process.env so that the original path gets passed\n",
+    "token_hints": [
+      {
+        "token": "fetch",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "internal/bootstrap/browser.js",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "getOptionValue",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "node-41749",
+    "index": 1,
+    "cid": 795146943,
+    "author": "targos",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "test/parallel/test-fetch.mjs:32",
+    "body": "All these lines run very fast, but then on my computer the test hangs a few seconds before it exits. Could it have to do with keep-alive behavior? Can we override it?",
+    "diff_hunk_at_comment": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "final_snapshot_context": "--- test/parallel/test-fetch.mjs @@\n+24 const response = await fetch(`http://localhost:${port}`);\n+25 \n+26 assert(response instanceof Response);\n+27 assert.strictEqual(response.status, 200);\n+28 assert.strictEqual(response.statusText, 'OK');\n+29 const body = await response.text();\n+30 assert.strictEqual(body, 'Hello world');\n+31 \n+32 server.close();\n",
+    "token_hints": null
+  },
+  {
+    "case": "node-41749",
+    "index": 2,
+    "cid": 795081434,
+    "author": "benjamingr",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "doc/api/globals.md:342",
+    "body": "Any reason this can't be experimental without requiring a CLI flag? Even a warning would probably be better DX?",
+    "diff_hunk_at_comment": "@@ -333,6 +333,17 @@ A browser-compatible implementation of the `EventTarget` class. See\n \n This variable may appear to be global but is not. See [`exports`][].\n \n+## `fetch`\n+\n+\u003c!-- YAML\n+added: REPLACEME\n+--\u003e\n+\n+\u003e Stability: 1 - Experimental. Enable this API with the [`--experimental-fetch`][]",
+    "final_snapshot_context": "--- doc/api/globals.md @@\n 334 This variable may appear to be global but is not. See [`exports`][].\n 335 \n+336 ## `fetch`\n+337 \n+338 \u003c!-- YAML\n+339 added: REPLACEME\n+340 --\u003e\n+341 \n+342 \u003e Stability: 1 - Experimental. Enable this API with the [`--experimental-fetch`][]\n+343 \u003e CLI flag.\n+344 \n+345 A browser-compatible implementation of the [`fetch()`][] function.\n+346 \n 347 ## `global`\n 348 \n 349 \u003c!-- YAML\n",
+    "token_hints": null
+  },
+  {
+    "case": "gin-2632",
+    "index": 0,
+    "cid": 694639407,
+    "author": "agmt",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "context_test.go:1433",
+    "body": "If we trust proxy `40.40.40.40`, but not trust `30.30.30.30` (proxy it is or not), then ClientIP should be `30.30.30.30` as `20.20.20.20` was set by somebody untrusted. Please do not forget that `X-Forwarded-For` is appended, so it should be processed right-to-left: right-most IP address is the IP address of the most recent proxy and the left-most IP address is the IP address of the originating client.",
+    "diff_hunk_at_comment": "@@ -1416,6 +1415,74 @@ func TestContextClientIP(t *testing.T) {\n \t// no port\n \tc.Request.RemoteAddr = \"50.50.50.50\"\n \tassert.Empty(t, c.ClientIP())\n+\n+\t// Tests exercising the TrustedProxies functionality\n+\tresetContextForClientIPTests(c)\n+\n+\t// No trusted proxies\n+\tc.engine.TrustedProxies = []string{}\n+\tc.engine.RemoteIPHeaders = []string{\"X-Forwarded-For\"}\n+\tassert.Equal(t, \"40.40.40.40\", c.ClientIP())\n+\n+\t// Last proxy is trusted, but the RemoteAddr is not\n+\tc.engine.TrustedProxies = []string{\"30.30.30.30\"}\n+\tassert.Equal(t, \"40.40.40.40\", c.ClientIP())\n+\n+\t// Only trust RemoteAddr\n+\tc.engine.TrustedProxies = []string{\"40.40.40.40\"}\n+\tassert.Equal(t, \"20.20.20.20\", c.ClientIP())",
+    "final_snapshot_context": "--- context_test.go @@\n+1425 \tassert.Equal(t, \"40.40.40.40\", c.ClientIP())\n+1426 \n+1427 \t// Last proxy is trusted, but the RemoteAddr is not\n+1428 \tc.engine.TrustedProxies = []string{\"30.30.30.30\"}\n+1429 \tassert.Equal(t, \"40.40.40.40\", c.ClientIP())\n+1430 \n+1431 \t// Only trust RemoteAddr\n+1432 \tc.engine.TrustedProxies = []string{\"40.40.40.40\"}\n+1433 \tassert.Equal(t, \"20.20.20.20\", c.ClientIP())\n+1434 \n+1435 \t// All steps are trusted\n+1436 \tc.engine.TrustedProxies = []string{\"40.40.40.40\", \"30.30.30.30\", \"20.20.20.20\"}\n+1437 \tassert.Equal(t, \"20.20.20.20\", c.ClientIP())\n+1438 \n+1439 \t// Use CIDR\n+1440 \tc.engine.TrustedProxies = []string{\"40.40.25.25/16\", \"30.30.30.30\"}\n+1441 \tassert.Equal(t, \"20.20.20.20\", c.ClientIP())\n",
+    "token_hints": [
+      {
+        "token": "40.40.40.40",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "30.30.30.30",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "20.20.20.20",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "X-Forwarded-For",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      }
+    ]
+  },
+  {
+    "case": "gin-2632",
+    "index": 1,
+    "cid": 694643333,
+    "author": "agmt",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "context.go:756",
+    "body": "Do you expect that HTTP proxy running on `c.RemoteIP()` resets `X-Forwarded-For`? Because if it appends, then we can't inherit trustiness of `c.RemoteIP()` to all other proxies.",
+    "diff_hunk_at_comment": "@@ -746,11 +744,46 @@ func (c *Context) ClientIP() string {\n \t\t}\n \t}\n \n-\tif ip, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr)); err == nil {\n-\t\treturn ip\n+\tif c.shouldCheckIPHeaders() {\n+\t\tfor _, cidr := range c.engine.trustedCIDRs {\n+\t\t\tif cidr.Contains(remoteIP) {\n+\t\t\t\tfor _, headerName := range c.engine.RemoteIPHeaders {\n+\t\t\t\t\tip, valid := validateHeader(c.requestHeader(headerName))\n+\t\t\t\t\tif valid {\n+\t\t\t\t\t\treturn ip\n+\t\t\t\t\t}\n+\t\t\t\t}\n+\t\t\t}",
+    "final_snapshot_context": "--- context.go @@\n 751 \t\t}\n 752 \t}\n+753 \treturn remoteIP.String()\n+754 }\n 755 \n-   \tif c.engine.AppEngine {\n-   \t\tif addr := c.requestHeader(\"X-Appengine-Remote-Addr\"); addr != \"\" {\n-   \t\t\treturn addr\n+756 // RemoteIP parses the IP from Request.RemoteAddr, normalizes and returns the IP (without the port).\n+757 // It also checks if the remoteIP is a trusted proxy or not.\n+758 // In order to perform this validation, it will see if the IP is contained within at least one of the CIDR blocks\n+759 // defined in Engine.TrustedProxies\n+760 func (c *Context) RemoteIP() (net.IP, bool) {\n+761 \tip, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr))\n+762 \tif err != nil {\n+763 \t\treturn nil, false\n+764 \t}\n",
+    "token_hints": [
+      {
+        "token": "c.RemoteIP()",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "X-Forwarded-For",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "gin-2767",
+    "index": 0,
+    "cid": 659322066,
+    "author": "rw-access",
+    "kind": "suggestion",
+    "dimension": "readability",
+    "anchor": "tree.go:413",
+    "body": "these names are a little too short and cryptic for my taste. mind making them longer? (i.e. `recordIndex`)",
+    "diff_hunk_at_comment": "@@ -405,11 +406,30 @@ type nodeValue struct {\n // made if a handle exists with an extra (without the) trailing slash for the\n // given path.\n func (n *node) getValue(path string, params *Params, unescape bool) (value nodeValue) {\n-\tvar skipped *skip\n+\tvar (\n+\t\tskipped *skip\n+\t\tnroot   = \u0026(*n)                                // not found `level 1 router` use nroot\n+\t\tldi     = len(strings.Split(path, \"/\")[1]) + 1 // level 1 router '/' index\n+\t\tri      int                                    //record index",
+    "final_snapshot_context": "--- tree.go @@\n+405 \t// level 2 router:123\n+406 \t// level 3 router:def\n+407 \tvar (\n+408 \t\tskippedPath string\n+409 \t\tlatestNode  = n // not found `level 2 router` use latestNode\n+410 \n+411 \t\t// match '/' count\n+412 \t\t// matchNum \u003c 1: `level 2 router` not found,the current node needs to be equal to latestNode\n+413 \t\t// matchNum \u003e= 1: `level (2 or 3 or 4 or ...) router`: Normal handling\n+414 \t\tmatchNum int // each match will accumulate\n+415 \t)\n+416 \t//if path == \"/\", no need to look for tree node\n+417 \tif len(path) == 1 {\n+418 \t\tmatchNum = 1\n+419 \t}\n 420 \n 421 walk: // Outer loop for walking the tree\n",
+    "token_hints": [
+      {
+        "token": "recordIndex",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "gin-2767",
+    "index": 1,
+    "cid": 664093314,
+    "author": "rw-access",
+    "kind": "suggestion",
+    "dimension": "maintainability",
+    "anchor": "tree.go:570",
+    "body": "// level 2 router not found and latestNode.wildChild is true",
+    "diff_hunk_at_comment": "@@ -535,6 +567,10 @@ walk: // Outer loop for walking the tree\n \t\t}\n \n \t\tif path == prefix {\n+\t\t\t// level 2 router not found and latestNode.wildChild is ture",
+    "final_snapshot_context": "--- tree.go @@\n 567 \t\t}\n 568 \n 569 \t\tif path == prefix {\n+570 \t\t\t// level 2 router not found and latestNode.wildChild is true\n+571 \t\t\tif matchNum \u003c 1 \u0026\u0026 latestNode.wildChild {\n+572 \t\t\t\tn = latestNode.children[len(latestNode.children)-1]\n+573 \t\t\t}\n 574 \t\t\t// We should have reached the node containing the handle.\n 575 \t\t\t// Check if this node has a handle registered.\n 576 \t\t\tif value.handlers = n.handlers; value.handlers != nil {\n",
+    "token_hints": null
+  },
+  {
+    "case": "gin-2767",
+    "index": 2,
+    "cid": 663143713,
+    "author": "rw-access",
+    "kind": "test",
+    "dimension": "testing",
+    "anchor": "tree_test.go:162",
+    "body": "can you add more routes with multiple params? I also want to confirm something like this: `/something/:paramname/thirdthing` and `/something/secondthing/test`. If someone does `GET /something/secondthing/thirdthing` that should have a 404, because `GET /something/secondthing` is explicitly created, it gets its own tree and won't ever fall back to `/something/:paramname`.",
+    "diff_hunk_at_comment": "@@ -154,6 +154,12 @@ func TestTreeWildcard(t *testing.T) {\n \t\t\"/info/:user/public\",\n \t\t\"/info/:user/project/:project\",\n \t\t\"/info/:user/project/golang\",\n+\t\t\"/aa/*xx\",\n+\t\t\"/ab/*xx\",\n+\t\t\"/:cc\",\n+\t\t\"/:cc/cc\",\n+\t\t\"/get/test/abc/\",\n+\t\t\"/get/:param/abc/\",",
+    "final_snapshot_context": "--- tree_test.go @@\n 154 \t\t\"/info/:user/public\",\n 155 \t\t\"/info/:user/project/:project\",\n 156 \t\t\"/info/:user/project/golang\",\n+157 \t\t\"/aa/*xx\",\n+158 \t\t\"/ab/*xx\",\n+159 \t\t\"/:cc\",\n+160 \t\t\"/:cc/cc\",\n+161 \t\t\"/:cc/:dd/ee\",\n+162 \t\t\"/:cc/:dd/:ee/ff\",\n+163 \t\t\"/:cc/:dd/:ee/:ff/gg\",\n+164 \t\t\"/:cc/:dd/:ee/:ff/:gg/hh\",\n+165 \t\t\"/get/test/abc/\",\n+166 \t\t\"/get/:param/abc/\",\n+167 \t\t\"/something/:paramname/thirdthing\",\n+168 \t\t\"/something/secondthing/test\",\n 169 \t}\n 170 \tfor _, route := range routes {\n",
+    "token_hints": [
+      {
+        "token": "/something/:paramname/thirdthing",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "/something/secondthing/test",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "GET /something/secondthing/thirdthing",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "GET /something/secondthing",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "/something/:paramname",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "pandas-34473",
+    "index": 0,
+    "cid": 441965192,
+    "author": "WillAyd",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "pandas/_libs/src/ujson/lib/ultrajsonenc.c:1119",
+    "body": "This goes back to L1636. CPython manages a global error and we never explicitly clear it on that line. You could call `PyErr_Clear()` but it actually would be better if you used `PyLong_AsLongLongAndOverflow` and checked for a non-zero overflow.",
+    "diff_hunk_at_comment": "@@ -1080,6 +1087,39 @@ void encode(JSOBJ obj, JSONObjectEncoder *enc, const char *name,\n         }\n \n         case JT_UTF8: {\n+            printf(\"case: JT_UTF8\\n\");\n+            value = enc-\u003egetStringValue(obj, \u0026tc, \u0026szlen);\n+            Buffer_Reserve(enc, RESERVE_STRING(szlen));\n+            if (enc-\u003eerrorMsg) {\n+                enc-\u003eendTypeContext(obj, \u0026tc);\n+                return;\n+            }\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+\n+            if (enc-\u003eforceASCII) {\n+                if (!Buffer_EscapeStringValidated(obj, enc, value,\n+                                                  value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            } else {\n+                if (!Buffer_EscapeStringUnvalidated(enc, value,\n+                                                    value + szlen)) {\n+                    enc-\u003eendTypeContext(obj, \u0026tc);\n+                    enc-\u003elevel--;\n+                    return;\n+                }\n+            }\n+\n+            Buffer_AppendCharUnchecked(enc, '\\\"');\n+            break;\n+        }\n+\n+        case JT_BIGNUM: {",
+    "final_snapshot_context": "--- pandas/_libs/src/ujson/lib/ultrajsonenc.c @@\n+1111         case JT_BIGNUM: {\n+1112             value = enc-\u003egetBigNumStringValue(obj, \u0026tc, \u0026szlen);\n+1113 \n+1114             Buffer_Reserve(enc, RESERVE_STRING(szlen));\n+1115             if (enc-\u003eerrorMsg) {\n+1116                 enc-\u003eendTypeContext(obj, \u0026tc);\n+1117                 return;\n+1118             }\n+1119 \n+1120             if (enc-\u003eforceASCII) {\n+1121                 if (!Buffer_EscapeStringValidated(obj, enc, value,\n+1122                                                   value + szlen)) {\n+1123                     enc-\u003eendTypeContext(obj, \u0026tc);\n+1124                     enc-\u003elevel--;\n+1125                     return;\n+1126                 }\n+1127             } else {\n",
+    "token_hints": [
+      {
+        "token": "PyErr_Clear()",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "PyLong_AsLongLongAndOverflow",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "pandas-34473",
+    "index": 1,
+    "cid": 436401921,
+    "author": "WillAyd",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "pandas/_libs/src/ujson/python/objToJSON.c:2136",
+    "body": "Make sure you Py_DECREF these objects when they are no longer needed or else this will leak memory.",
+    "diff_hunk_at_comment": "@@ -2126,6 +2126,18 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Repr(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");",
+    "final_snapshot_context": "--- pandas/_libs/src/ujson/python/objToJSON.c @@\n 2130     return GET_TC(tc)-\u003edoubleValue;\n 2131 }\n 2132 \n+2133 const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+2134                                     size_t *_outLen) {\n+2135     PyObject* repr = PyObject_Str(obj);\n+2136     const char *str = PyUnicode_AsUTF8AndSize(repr, (Py_ssize_t *) _outLen);\n+2137     char* bytes = PyObject_Malloc(*_outLen + 1);\n+2138     memcpy(bytes, str, *_outLen + 1);\n+2139     GET_TC(tc)-\u003ecStr = bytes;\n+2140 \n+2141     Py_DECREF(repr);\n+2142     \n+2143     return GET_TC(tc)-\u003ecStr;\n+2144 }\n",
+    "token_hints": null
+  },
+  {
+    "case": "pandas-34473",
+    "index": 2,
+    "cid": 437870883,
+    "author": "WillAyd",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "pandas/_libs/src/ujson/python/objToJSON.c:2135",
+    "body": "If this object gets released would also free bytes, so need to memcpy first. Also just use Py_DECREF for these as simple enough to see lifecycle.",
+    "diff_hunk_at_comment": "@@ -2126,6 +2126,20 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Str(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");\n+    char *bytes = PyBytes_AS_STRING(str);\n+\n+    Py_XDECREF(repr);",
+    "final_snapshot_context": "--- pandas/_libs/src/ujson/python/objToJSON.c @@\n 2130     return GET_TC(tc)-\u003edoubleValue;\n 2131 }\n 2132 \n+2133 const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+2134                                     size_t *_outLen) {\n+2135     PyObject* repr = PyObject_Str(obj);\n+2136     const char *str = PyUnicode_AsUTF8AndSize(repr, (Py_ssize_t *) _outLen);\n+2137     char* bytes = PyObject_Malloc(*_outLen + 1);\n+2138     memcpy(bytes, str, *_outLen + 1);\n+2139     GET_TC(tc)-\u003ecStr = bytes;\n+2140 \n+2141     Py_DECREF(repr);\n+2142     \n+2143     return GET_TC(tc)-\u003ecStr;\n",
+    "token_hints": null
+  },
+  {
+    "case": "pandas-34473",
+    "index": 3,
+    "cid": 436401611,
+    "author": "WillAyd",
+    "kind": "suggestion",
+    "dimension": "correctness",
+    "anchor": "pandas/_libs/src/ujson/python/objToJSON.c:2133",
+    "body": "You will want PyUnicode_AsUTF8AndSize here. You can pass outLen as the second argument.",
+    "diff_hunk_at_comment": "@@ -2126,6 +2126,18 @@ double Object_getDoubleValue(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n     return GET_TC(tc)-\u003edoubleValue;\n }\n \n+const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+                                    size_t *_outLen) {\n+    PyObject* repr = PyObject_Repr(obj);\n+    PyObject* str = PyUnicode_AsEncodedString(repr, \"utf-8\", \"~E~\");\n+    char *bytes = PyBytes_AS_STRING(str);",
+    "final_snapshot_context": "--- pandas/_libs/src/ujson/python/objToJSON.c @@\n 2130     return GET_TC(tc)-\u003edoubleValue;\n 2131 }\n 2132 \n+2133 const char *Object_getBigNumStringValue(JSOBJ obj, JSONTypeContext *tc, \n+2134                                     size_t *_outLen) {\n+2135     PyObject* repr = PyObject_Str(obj);\n+2136     const char *str = PyUnicode_AsUTF8AndSize(repr, (Py_ssize_t *) _outLen);\n+2137     char* bytes = PyObject_Malloc(*_outLen + 1);\n+2138     memcpy(bytes, str, *_outLen + 1);\n+2139     GET_TC(tc)-\u003ecStr = bytes;\n+2140 \n+2141     Py_DECREF(repr);\n",
+    "token_hints": null
+  },
+  {
+    "case": "pandas-34473",
+    "index": 4,
+    "cid": 442585616,
+    "author": "WillAyd",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "pandas/_libs/src/ujson/python/objToJSON.c:1639",
+    "body": "Bytes is assigned to cStr but you won't free it in this branch. We need an extra branch that checks for the JT_BIGNUM type and frees cStr in that case.",
+    "diff_hunk_at_comment": "@@ -2107,6 +2114,7 @@ void Object_endTypeContext(JSOBJ Py_UNUSED(obj), JSONTypeContext *tc) {\n         GET_TC(tc)-\u003ecolumnLabels = NULL;\n \n         PyObject_Free(GET_TC(tc)-\u003ecStr);\n+        free(bytes);",
+    "final_snapshot_context": "--- pandas/_libs/src/ujson/python/objToJSON.c @@\n+1634         int err;\n+1635         err = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\n 1636 \n-           exc = PyErr_Occurred();\n-   \n-           if (exc \u0026\u0026 PyErr_ExceptionMatches(PyExc_OverflowError)) {\n+1637         if (overflow){\n+1638             PRINTMARK();\n+1639             tc-\u003etype = JT_BIGNUM;\n+1640         }\n+1641         else if (err) {\n 1642             PRINTMARK();\n 1643             goto INVALID;\n 1644         }\n-   \n+1645         \n 1646         return;\n",
+    "token_hints": null
+  },
+  {
+    "case": "pandas-34473",
+    "index": 5,
+    "cid": 442356287,
+    "author": "WillAyd",
+    "kind": "suggestion",
+    "dimension": "readability",
+    "anchor": "pandas/_libs/src/ujson/python/objToJSON.c:1632",
+    "body": "No need to prepend an underscore here; may be confusing to authors who expect that to mean something. (`int overflow = 0;`)",
+    "diff_hunk_at_comment": "@@ -1629,14 +1629,20 @@ void Object_beginTypeContext(JSOBJ _obj, JSONTypeContext *tc) {\n     if (PyLong_Check(obj)) {\n         PRINTMARK();\n         tc-\u003etype = JT_LONG;\n-        GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n-\n+        int _overflow = 0;",
+    "final_snapshot_context": "--- pandas/_libs/src/ujson/python/objToJSON.c @@\n 1629     if (PyLong_Check(obj)) {\n 1630         PRINTMARK();\n 1631         tc-\u003etype = JT_LONG;\n-           GET_TC(tc)-\u003elongValue = PyLong_AsLongLong(obj);\n+1632         int overflow = 0;\n+1633         GET_TC(tc)-\u003elongValue = PyLong_AsLongLongAndOverflow(obj, \u0026overflow);\n+1634         int err;\n+1635         err = (GET_TC(tc)-\u003elongValue == -1) \u0026\u0026 PyErr_Occurred();\n 1636 \n-           exc = PyErr_Occurred();\n-   \n-           if (exc \u0026\u0026 PyErr_ExceptionMatches(PyExc_OverflowError)) {\n+1637         if (overflow){\n",
+    "token_hints": [
+      {
+        "token": "int overflow = 0;",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "tokio-4652",
+    "index": 0,
+    "cid": 867329811,
+    "author": "Darksonn",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "tokio-util/src/sync/cancellation_token/tree_node.rs:185",
+    "body": "The potential parent might not match and be `Some` here. We shouldn't keep the previous parent locked in that case.",
+    "diff_hunk_at_comment": "@@ -0,0 +1,341 @@\n+//! GENERAL NOTES\n+//! -------------\n+//!\n+//! ** Invariants **\n+//!\n+//! Those invariants shall be true at any time, and are required to prove correctness\n+//! of the CancellationToken.\n+//!\n+//! 1. A node that has no parents and no handles can no longer be cancelled.\n+//!     This is important during both cancellation and refcounting.\n+//!\n+//! 2. If node B *is* or *was* a child of node A, then node B was created *after* node A.\n+//!     This is important for deadlock safety, as it is used for lock order.\n+//!     Node B can only become the child of node A in two ways:\n+//!         - being created with `child_node()`, in which case it is trivially true that\n+//!           node A already existed when node B was created\n+//!         - being moved A-\u003eC-\u003eB to A-\u003eB because node C was removed in `decrease_handle_refcount()`.\n+//!           In this case the invariant still holds, as B was younger than C, and C was younger\n+//!           than A, therefore B is also younger than A.\n+//!\n+//! 3. If two nodes are both unlocked and node A is the parent of node B, then node B is a child of node A.\n+//!     It is important to always restore that invariant before dropping the lock of a node.\n+//!\n+//! ** Deadlock safety **\n+//!\n+//! Principles that provide deadlock safety:\n+//!     1. We always lock in the order of creation time. We can prove this through invariant #2.\n+//!        Specifically, through invariant #2, we know that we always have to lock a parent before its child.\n+//!     2. We never lock two siblings simultaneously, because we cannot establish an order.\n+//!        There is one exception in `with_locked_node_and_parent()`, which is described in the function itself.\n+//!\n+use crate::loom::sync::{Arc, Mutex, MutexGuard};\n+\n+/// A node of the cancella …(截断)",
+    "final_snapshot_context": "--- tokio-util/src/sync/cancellation_token/tree_node.rs @@\n+177             None =\u003e {\n+178                 // Was the wrong parent, so unlock it before calling `func`\n+179                 drop(locked_parent);\n+180                 return func(locked_node, None);\n+181             }\n+182         };\n+183 \n+184         // Loop until we managed to lock both the node and its parent\n+185         if Arc::ptr_eq(\u0026actual_parent, \u0026potential_parent) {\n+186             return func(locked_node, Some(locked_parent));\n+187         }\n+188 \n+189         // Drop locked_parent before reassigning to potential_parent,\n+190         // as potential_parent is borrowed in it\n+191         drop(locked_node);\n+192         drop(locked_parent);\n+193 \n",
+    "token_hints": [
+      {
+        "token": "Some",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "tokio-4652",
+    "index": 1,
+    "cid": 867331241,
+    "author": "Darksonn",
+    "kind": "defect",
+    "dimension": "performance",
+    "anchor": "tokio-util/src/sync/cancellation_token/tree_node.rs:348",
+    "body": "You should wake the wakers after releasing the lock. Otherwise the future might try to lock the mutex while we're still holding it, which is a waste of resources.",
+    "diff_hunk_at_comment": "@@ -0,0 +1,341 @@\n+//! GENERAL NOTES\n+//! -------------\n+//!\n+//! ** Invariants **\n+//!\n+//! Those invariants shall be true at any time, and are required to prove correctness\n+//! of the CancellationToken.\n+//!\n+//! 1. A node that has no parents and no handles can no longer be cancelled.\n+//!     This is important during both cancellation and refcounting.\n+//!\n+//! 2. If node B *is* or *was* a child of node A, then node B was created *after* node A.\n+//!     This is important for deadlock safety, as it is used for lock order.\n+//!     Node B can only become the child of node A in two ways:\n+//!         - being created with `child_node()`, in which case it is trivially true that\n+//!           node A already existed when node B was created\n+//!         - being moved A-\u003eC-\u003eB to A-\u003eB because node C was removed in `decrease_handle_refcount()`.\n+//!           In this case the invariant still holds, as B was younger than C, and C was younger\n+//!           than A, therefore B is also younger than A.\n+//!\n+//! 3. If two nodes are both unlocked and node A is the parent of node B, then node B is a child of node A.\n+//!     It is important to always restore that invariant before dropping the lock of a node.\n+//!\n+//! ** Deadlock safety **\n+//!\n+//! Principles that provide deadlock safety:\n+//!     1. We always lock in the order of creation time. We can prove this through invariant #2.\n+//!        Specifically, through invariant #2, we know that we always have to lock a parent before its child.\n+//!     2. We never lock two siblings simultaneously, because we cannot establish an order.\n+//!        There is one exception in `with_locked_node_and_parent()`, which is described in the function itself.\n+//!\n+use crate::loom::sync::{Arc, Mutex, MutexGuard};\n+\n+/// A node of the cancella …(截断)",
+    "final_snapshot_context": "--- tokio-util/src/sync/cancellation_token/tree_node.rs @@\n+340 \n+341             // For performance reasons, only adopt grandchildren that have children.\n+342             // Otherwise, just cancel them right away, no need for another iteration.\n+343             if locked_grandchild.children.is_empty() {\n+344                 // Cancel the grandchild\n+345                 locked_grandchild.is_cancelled = true;\n+346                 locked_grandchild.children = Vec::new();\n+347                 drop(locked_grandchild);\n+348                 grandchild.waker.notify_waiters();\n+349             } else {\n+350                 // Otherwise, adopt grandchild\n+351                 locked_grandchild.parent = Some(node.clone());\n+352                 locked_grandchild.parent_idx = locked_node.children.len();\n+353                 drop(locked_grandchild);\n+354                 locked_node.children.push(grandchild);\n+355             }\n+356         }\n",
+    "token_hints": null
+  },
+  {
+    "case": "tokio-4652",
+    "index": 2,
+    "cid": 867331984,
+    "author": "Darksonn",
+    "kind": "suggestion",
+    "dimension": "performance",
+    "anchor": "tokio-util/src/sync/cancellation_token/tree_node.rs:306",
+    "body": "If the node is already cancelled, you can just return immediately.",
+    "diff_hunk_at_comment": "@@ -0,0 +1,341 @@\n+//! GENERAL NOTES\n+//! -------------\n+//!\n+//! ** Invariants **\n+//!\n+//! Those invariants shall be true at any time, and are required to prove correctness\n+//! of the CancellationToken.\n+//!\n+//! 1. A node that has no parents and no handles can no longer be cancelled.\n+//!     This is important during both cancellation and refcounting.\n+//!\n+//! 2. If node B *is* or *was* a child of node A, then node B was created *after* node A.\n+//!     This is important for deadlock safety, as it is used for lock order.\n+//!     Node B can only become the child of node A in two ways:\n+//!         - being created with `child_node()`, in which case it is trivially true that\n+//!           node A already existed when node B was created\n+//!         - being moved A-\u003eC-\u003eB to A-\u003eB because node C was removed in `decrease_handle_refcount()`.\n+//!           In this case the invariant still holds, as B was younger than C, and C was younger\n+//!           than A, therefore B is also younger than A.\n+//!\n+//! 3. If two nodes are both unlocked and node A is the parent of node B, then node B is a child of node A.\n+//!     It is important to always restore that invariant before dropping the lock of a node.\n+//!\n+//! ** Deadlock safety **\n+//!\n+//! Principles that provide deadlock safety:\n+//!     1. We always lock in the order of creation time. We can prove this through invariant #2.\n+//!        Specifically, through invariant #2, we know that we always have to lock a parent before its child.\n+//!     2. We never lock two siblings simultaneously, because we cannot establish an order.\n+//!        There is one exception in `with_locked_node_and_parent()`, which is described in the function itself.\n+//!\n+use crate::loom::sync::{Arc, Mutex, MutexGuard};\n+\n+/// A node of the cancella …(截断)",
+    "final_snapshot_context": "--- tokio-util/src/sync/cancellation_token/tree_node.rs @@\n+298         });\n+299     }\n+300 }\n+301 \n+302 /// Cancels a node and its children.\n+303 pub(crate) fn cancel(node: \u0026Arc\u003cTreeNode\u003e) {\n+304     let mut locked_node = node.inner.lock().unwrap();\n+305 \n+306     if locked_node.is_cancelled {\n+307         return;\n+308     }\n+309 \n+310     // One by one, adopt grandchildren and then cancel and detach the child\n+311     while let Some(child) = locked_node.children.pop() {\n+312         // This can't deadlock because the mutex we are already\n+313         // holding is the parent of child.\n+314         let mut locked_child = child.inner.lock().unwrap();\n",
+    "token_hints": null
+  },
+  {
+    "case": "tokio-4652",
+    "index": 3,
+    "cid": 867349454,
+    "author": "Darksonn",
+    "kind": "suggestion",
+    "dimension": "performance",
+    "anchor": "tokio-util/src/sync/cancellation_token/tree_node.rs:322",
+    "body": "Here you can call `continue` if `locked_child.is_cancelled`. Its children are already cancelled in that case.",
+    "diff_hunk_at_comment": "@@ -0,0 +1,355 @@\n+//! GENERAL NOTES\n+//! -------------\n+//!\n+//! ** Invariants **\n+//!\n+//! Those invariants shall be true at any time, and are required to prove correctness\n+//! of the CancellationToken.\n+//!\n+//! 1. A node that has no parents and no handles can no longer be cancelled.\n+//!     This is important during both cancellation and refcounting.\n+//!\n+//! 2. If node B *is* or *was* a child of node A, then node B was created *after* node A.\n+//!     This is important for deadlock safety, as it is used for lock order.\n+//!     Node B can only become the child of node A in two ways:\n+//!         - being created with `child_node()`, in which case it is trivially true that\n+//!           node A already existed when node B was created\n+//!         - being moved A-\u003eC-\u003eB to A-\u003eB because node C was removed in `decrease_handle_refcount()`.\n+//!           In this case the invariant still holds, as B was younger than C, and C was younger\n+//!           than A, therefore B is also younger than A.\n+//!\n+//! 3. If two nodes are both unlocked and node A is the parent of node B, then node B is a child of node A.\n+//!     It is important to always restore that invariant before dropping the lock of a node.\n+//!\n+//! ** Deadlock safety **\n+//!\n+//! Principles that provide deadlock safety:\n+//!     1. We always lock in the order of creation time. We can prove this through invariant #2.\n+//!        Specifically, through invariant #2, we know that we always have to lock a parent before its child.\n+//!     2. We never lock two siblings simultaneously, because we cannot establish an order.\n+//!        There is one exception in `with_locked_node_and_parent()`, which is described in the function itself.\n+//!\n+use crate::loom::sync::{Arc, Mutex, MutexGuard};\n+\n+/// A node of the cancella …(截断)",
+    "final_snapshot_context": "--- tokio-util/src/sync/cancellation_token/tree_node.rs @@\n+314         let mut locked_child = child.inner.lock().unwrap();\n+315 \n+316         // Detach the child from node\n+317         // No need to modify node.children, as the child already got removed with `.pop`\n+318         locked_child.parent = None;\n+319         locked_child.parent_idx = 0;\n+320 \n+321         // If child is already cancelled, detaching is enough\n+322         if locked_child.is_cancelled {\n+323             continue;\n+324         }\n+325 \n+326         // Cancel or adopt grandchildren\n+327         while let Some(grandchild) = locked_child.children.pop() {\n+328             // This can't deadlock because the two mutexes we are already\n+329             // holding is the parent and grandparent of grandchild.\n+330             let mut locked_grandchild = grandchild.inner.lock().unwrap();\n",
+    "token_hints": [
+      {
+        "token": "continue",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "locked_child.is_cancelled",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "tokio-4652",
+    "index": 4,
+    "cid": 867332429,
+    "author": "Darksonn",
+    "kind": "suggestion",
+    "dimension": "performance",
+    "anchor": "tokio-util/src/sync/cancellation_token/tree_node.rs:343",
+    "body": "Here, we _could_ avoid adopting the grandchildren that have no children. It would be more efficient.",
+    "diff_hunk_at_comment": "@@ -0,0 +1,341 @@\n+//! GENERAL NOTES\n+//! -------------\n+//!\n+//! ** Invariants **\n+//!\n+//! Those invariants shall be true at any time, and are required to prove correctness\n+//! of the CancellationToken.\n+//!\n+//! 1. A node that has no parents and no handles can no longer be cancelled.\n+//!     This is important during both cancellation and refcounting.\n+//!\n+//! 2. If node B *is* or *was* a child of node A, then node B was created *after* node A.\n+//!     This is important for deadlock safety, as it is used for lock order.\n+//!     Node B can only become the child of node A in two ways:\n+//!         - being created with `child_node()`, in which case it is trivially true that\n+//!           node A already existed when node B was created\n+//!         - being moved A-\u003eC-\u003eB to A-\u003eB because node C was removed in `decrease_handle_refcount()`.\n+//!           In this case the invariant still holds, as B was younger than C, and C was younger\n+//!           than A, therefore B is also younger than A.\n+//!\n+//! 3. If two nodes are both unlocked and node A is the parent of node B, then node B is a child of node A.\n+//!     It is important to always restore that invariant before dropping the lock of a node.\n+//!\n+//! ** Deadlock safety **\n+//!\n+//! Principles that provide deadlock safety:\n+//!     1. We always lock in the order of creation time. We can prove this through invariant #2.\n+//!        Specifically, through invariant #2, we know that we always have to lock a parent before its child.\n+//!     2. We never lock two siblings simultaneously, because we cannot establish an order.\n+//!        There is one exception in `with_locked_node_and_parent()`, which is described in the function itself.\n+//!\n+use crate::loom::sync::{Arc, Mutex, MutexGuard};\n+\n+/// A node of the cancella …(截断)",
+    "final_snapshot_context": "--- tokio-util/src/sync/cancellation_token/tree_node.rs @@\n+335 \n+336             // If grandchild is already cancelled, detaching is enough\n+337             if locked_grandchild.is_cancelled {\n+338                 continue;\n+339             }\n+340 \n+341             // For performance reasons, only adopt grandchildren that have children.\n+342             // Otherwise, just cancel them right away, no need for another iteration.\n+343             if locked_grandchild.children.is_empty() {\n+344                 // Cancel the grandchild\n+345                 locked_grandchild.is_cancelled = true;\n+346                 locked_grandchild.children = Vec::new();\n+347                 drop(locked_grandchild);\n+348                 grandchild.waker.notify_waiters();\n+349             } else {\n+350                 // Otherwise, adopt grandchild\n+351                 locked_grandchild.parent = Some(node.clone());\n",
+    "token_hints": null
+  },
+  {
+    "case": "tokio-4652",
+    "index": 5,
+    "cid": 870763595,
+    "author": "hawkw",
+    "kind": "suggestion",
+    "dimension": "maintainability",
+    "anchor": "tokio-util/src/sync/cancellation_token/tree_node.rs:1",
+    "body": "it would be nice if there was some top-level documentation explaining how this structure *works*, as well as the invariants that it upholds. the implementation has a bunch of inline comments, but there isn't a summary of the general design anywhere that i can find...",
+    "diff_hunk_at_comment": "@@ -0,0 +1,359 @@\n+//! GENERAL NOTES",
+    "final_snapshot_context": "--- tokio-util/src/sync/cancellation_token/tree_node.rs @@\n+1 //! This mod provides the logic for the inner tree structure of the CancellationToken.\n+2 //!\n+3 //! CancellationTokens are only light handles with references to TreeNode.\n+4 //! All the logic is actually implemented in the TreeNode.\n+5 //!\n+6 //! A TreeNode is part of the cancellation tree and may have one parent and an arbitrary number of\n+7 //! children.\n+8 //!\n+9 //! A TreeNode can receive the request to perform a cancellation through a CancellationToken.\n",
+    "token_hints": null
+  },
+  {
+    "case": "redis-9323",
+    "index": 0,
+    "cid": 684999246,
+    "author": "oranagra",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "src/server.c:5437",
+    "body": "i think it may be a cleaner approach to turn on both `server.loading` and `server.async_loading` in our scenario. this way, all the existing code that checks the `loading` flag will not need a change, and we'll only need to add a few exceptions like `server.loading \u0026\u0026 !server.async_loading`.",
+    "diff_hunk_at_comment": "@@ -713,7 +713,7 @@ void clusterAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {\n \n     /* If the server is starting up, don't accept cluster connections:\n      * UPDATE messages may interact with the database content. */\n-    if (server.masterhost == NULL \u0026\u0026 server.loading) return;\n+    if (server.masterhost == NULL \u0026\u0026 (server.loading || server.async_loading)) return;",
+    "final_snapshot_context": "--- src/server.c @@\n 5434 \n 5435     /* Loading DB? Return an error if the command has not the\n 5436      * CMD_LOADING flag. */\n-       if (server.loading \u0026\u0026 is_denyloading_command) {\n+5437     if (server.loading \u0026\u0026 !server.async_loading \u0026\u0026 is_denyloading_command) {\n 5438         rejectCommand(c, shared.loadingerr);\n 5439         return C_OK;\n 5440     }\n",
+    "token_hints": [
+      {
+        "token": "server.loading",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "server.async_loading",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "loading",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "server.loading \u0026\u0026 !server.async_loading",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "redis-9323",
+    "index": 1,
+    "cid": 685941509,
+    "author": "oranagra",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "src/rdb.c:2502",
+    "body": "Here's a list of scenarios: 1. a replica gets disconnected and gets a full-sync when it reconnects. 2. a replica was connected to one master and got redirected to a new master (of the same replication chain) and got a full sync for some reason. 3. redis was restarted from rdb file (after a graceful shutdown), and has replicaof config, attempted a partial sync with the replid it got from the rdb file, but gets a full sync. 4. the replica was a master till now and got some data from that era, then gets a REPLICAOF command and does a full-sync. 5. the replica started empty and is attempting its first sync ever. 6. the replica was replicating from a certain master, and is now full-syncing from another master that's completely unrelated to the previous one. i think the first 3 scenarios want to allow clients to read the data, but on the last 3 we don't! i think the rule here is that if the current dataset in the db represents a valid point in time of the master we're full-syncing from, then we wanna allow reads, but if it doesn't represent a certain point in time of that master, then we don't want to serve reads.",
+    "diff_hunk_at_comment": "@@ -713,7 +713,7 @@ void clusterAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {\n \n     /* If the server is starting up, don't accept cluster connections:\n      * UPDATE messages may interact with the database content. */\n-    if (server.masterhost == NULL \u0026\u0026 server.loading) return;\n+    if (server.masterhost == NULL \u0026\u0026 (server.loading || server.async_loading)) return;",
+    "final_snapshot_context": "--- src/rdb.c @@\n 2496 \n 2497 /* Mark that we are loading in the global state and setup the fields\n 2498  * needed to provide loading stats. */\n-   void startLoading(size_t size, int rdbflags) {\n+2499 void startLoading(size_t size, int rdbflags, int async) {\n 2500     /* Load the DB */\n 2501     server.loading = 1;\n+2502     if (async == 1) server.async_loading = 1;\n 2503     server.loading_start_time = time(NULL);\n 2504     server.loading_loaded_bytes = 0;\n 2505     server.loading_total_bytes = size;\n",
+    "token_hints": null
+  },
+  {
+    "case": "redis-9323",
+    "index": 2,
+    "cid": 691928309,
+    "author": "oranagra",
+    "kind": "design",
+    "dimension": "compatibility",
+    "anchor": "src/db.c:497",
+    "body": "This change is gonna break modules that use the `RedisModuleEvent_ReplBackup` mechanism anyway, so i suggest the following: 1. We deprecate `RedisModuleEvent_ReplBackup` (starting redis 7.0 we never fire that event). 2. We create a new API named `RedisModuleEvent_ReplAsync`, holding 3 sub-events; STARTED, COMPLETED, ABORTED. 3. We add another module flag for `RedisModule_SetModuleOptions` (REDISMODULE_OPTIONS_HANDLE_REPL_ASYNC). 4. in replication.c, if there are modules loaded which registered a data type and didn't declare they're supporting this, we fall back to the alternative replication method.",
+    "diff_hunk_at_comment": "@@ -462,90 +455,46 @@ long long emptyDb(int dbnum, int flags, void(callback)(dict*)) {\n     return removed;\n }\n \n-/* Store a backup of the database for later use, and put an empty one\n- * instead of it. */\n-dbBackup *backupDb(void) {\n-    dbBackup *backup = zmalloc(sizeof(dbBackup));\n+/* Initialize temporary db on replica for use during diskless replication */\n+tempDb *initTempDb(void) {\n+    tempDb *tempDb = zmalloc(sizeof(tempDb));\n \n-    /* Backup main DBs. */\n-    backup-\u003edbarray = zmalloc(sizeof(redisDb)*server.dbnum);\n+    tempDb-\u003edbarray = zmalloc(sizeof(redisDb)*server.dbnum);\n     for (int i=0; i\u003cserver.dbnum; i++) {\n-        backup-\u003edbarray[i] = server.db[i];\n-        server.db[i].dict = dictCreate(\u0026dbDictType);\n-        server.db[i].expires = dictCreate(\u0026dbExpiresDictType);\n+        tempDb-\u003edbarray[i].dict = dictCreate(\u0026dbDictType);\n+        tempDb-\u003edbarray[i].expires = dictCreate(\u0026dbExpiresDictType);\n     }\n \n-    /* Backup cluster slots to keys map if enable cluster. */\n+    /* Init cluster slots to keys map if enable cluster. */\n     if (server.cluster_enabled) {\n-        backup-\u003eslots_to_keys = server.cluster-\u003eslots_to_keys;\n-        memcpy(backup-\u003eslots_keys_count, server.cluster-\u003eslots_keys_count,\n-            sizeof(server.cluster-\u003eslots_keys_count));\n-        server.cluster-\u003eslots_to_keys = raxNew();\n-        memset(server.cluster-\u003eslots_keys_count, 0,\n-            sizeof(server.cluster-\u003eslots_keys_count));\n+        tempDb-\u003eslots_to_keys = raxNew();\n+        memset(tempDb-\u003eslots_keys_count, 0, sizeof(tempDb-\u003eslots_keys_count));\n     }\n \n-    moduleFireServerEvent(REDISMODULE_EVENT_REPL_BACKUP,\n-                          REDISMODULE_SUBEVENT_REPL_BACKUP_CREATE,\n-                          NULL);\n-\n-    return backup;\n+    return tempDb;\n }\n \n-/* Discard …(截断)",
+    "final_snapshot_context": "--- src/db.c @@\n-   void restoreDbBackup(dbBackup *backup) {\n-       /* Restore main DBs. */\n-       for (int i=0; i\u003cserver.dbnum; i++) {\n-           serverAssert(dictSize(server.db[i].dict) == 0);\n-           serverAssert(dictSize(server.db[i].expires) == 0);\n-           dictRelease(server.db[i].dict);\n-           dictRelease(server.db[i].expires);\n-           server.db[i] = backup-\u003edbarray[i];\n+497     if (server.cluster_enabled) {\n+498         /* Release temp slot to key map. */\n+499         slotToKeyDestroy(tempDb);\n 500     }\n 501 \n-       /* Restore slots to keys map backup if enable cluster. */\n-       if (server.cluster_enabled) slotToKeyRestoreBackup(\u0026backup-\u003eslots_to_keys);\n-   \n-       /* Release backup. */\n",
+    "token_hints": [
+      {
+        "token": "RedisModuleEvent_ReplBackup",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "RedisModuleEvent_ReplAsync",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "RedisModule_SetModuleOptions",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "redis-9323",
+    "index": 3,
+    "cid": 685446527,
+    "author": "oranagra",
+    "kind": "suggestion",
+    "dimension": "maintainability",
+    "anchor": "src/db.c:1328",
+    "body": "this function is not as generic as it seems (by its name), the implementation and behavior are quite specific for placing the newly loaded temp db at the main active one, and the old active one in the temp. so i think we need a better name for it, and we certainly need a beefier doc comment.",
+    "diff_hunk_at_comment": "@@ -1363,6 +1312,43 @@ int dbSwapDatabases(int id1, int id2) {\n     return C_OK;\n }\n \n+void dbSwapAllDatabases(redisDb *dbarray1, redisDb *dbarray2) {",
+    "final_snapshot_context": "--- src/db.c @@\n 1320 }\n 1321 \n+1322 /* Logically, this discards (flushes) the old main database, and apply the newly loaded\n+1323  * database (temp) as the main (active) database, the actual freeing of old database\n+1324  * (which will now be placed in the temp one) is done later. */\n+1325 void swapMainDbWithTempDb(redisDb *tempDb) {\n+1326     if (server.cluster_enabled) {\n+1327         /* Swap slots_to_keys from tempdb just loaded with main db slots_to_keys. */\n+1328         clusterSlotToKeyMapping *aux = server.db-\u003eslots_to_keys;\n+1329         server.db-\u003eslots_to_keys = tempDb-\u003eslots_to_keys;\n+1330         tempDb-\u003eslots_to_keys = aux;\n+1331     }\n+1332 \n+1333     for (int i=0; i\u003cserver.dbnum; i++) {\n+1334         redisDb aux = server.db[i];\n+1335         redisDb *activedb = \u0026server.db[i], *newdb = \u0026tempDb[i];\n+1336 \n",
+    "token_hints": null
+  },
+  {
+    "case": "redis-9323",
+    "index": 4,
+    "cid": 725662202,
+    "author": "zuiderkwast",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "src/db.c:499",
+    "body": "The slot-to-key array needs to be free'd somewhere before the tempDb is free'd. Flush just memsets it to zero. Maybe we can replace slotToKeyFlush with two functions: slotToKeyInit (allocates it) and slotToKeyDestroy (frees it)?",
+    "diff_hunk_at_comment": "@@ -463,41 +463,40 @@ long long emptyDb(int dbnum, int flags, void(callback)(dict*)) {\n }\n \n /* Initialize temporary db on replica for use during diskless replication. */\n-tempDb *initTempDb(void) {\n-    tempDb *tempDb = zmalloc(sizeof(tempDb));\n-\n-    tempDb-\u003edbarray = zcalloc(sizeof(redisDb)*server.dbnum);\n+redisDb *initTempDb(void) {\n+    redisDb *tempDb = zcalloc(sizeof(redisDb)*server.dbnum);\n     for (int i=0; i\u003cserver.dbnum; i++) {\n-        tempDb-\u003edbarray[i].dict = dictCreate(\u0026dbDictType);\n-        tempDb-\u003edbarray[i].expires = dictCreate(\u0026dbExpiresDictType);\n+        tempDb[i].dict = dictCreate(\u0026dbDictType);\n+        tempDb[i].expires = dictCreate(\u0026dbExpiresDictType);\n+        tempDb[i].slots_to_keys = NULL;\n     }\n \n     if (server.cluster_enabled) {\n-        /* Prepare temp slots_to_keys to be written during async diskless replication. */\n-        slotToKeyTempDbFlush();\n+        /* Prepare temp slots to keys map to be written during async diskless replication. */\n+        tempDb-\u003eslots_to_keys = zmalloc(sizeof(*tempDb-\u003eslots_to_keys));\n+        slotToKeyFlush(tempDb);\n     }\n \n     return tempDb;\n }\n \n /* Discard tempDb, this can be slow (similar to FLUSHALL), but it's always async */\n- void discardTempDb(tempDb *tempDb, void(callback)(dict*)) {\n+ void discardTempDb(redisDb *tempDb, void(callback)(dict*)) {\n     int async = 1;\n \n     /* Release temp DBs */\n-    emptyDbStructure(tempDb-\u003edbarray, -1, async, callback);\n+    emptyDbStructure(tempDb, -1, async, callback);\n     for (int i=0; i\u003cserver.dbnum; i++) {\n-        dictRelease(tempDb-\u003edbarray[i].dict);\n-        dictRelease(tempDb-\u003edbarray[i].expires);\n+        dictRelease(tempDb[i].dict);\n+        dictRelease(tempDb[i].expires);\n     }\n \n-    zfree(tempDb-\u003edbarray);\n-    zfree(tempDb);\n-\n     if (server.clu …(截断)",
+    "final_snapshot_context": "--- src/db.c @@\n-       for (int i=0; i\u003cserver.dbnum; i++) {\n-           serverAssert(dictSize(server.db[i].dict) == 0);\n-           serverAssert(dictSize(server.db[i].expires) == 0);\n-           dictRelease(server.db[i].dict);\n-           dictRelease(server.db[i].expires);\n-           server.db[i] = backup-\u003edbarray[i];\n+497     if (server.cluster_enabled) {\n+498         /* Release temp slot to key map. */\n+499         slotToKeyDestroy(tempDb);\n 500     }\n 501 \n-       /* Restore slots to keys map backup if enable cluster. */\n-       if (server.cluster_enabled) slotToKeyRestoreBackup(\u0026backup-\u003eslots_to_keys);\n-   \n-       /* Release backup. */\n-       zfree(backup-\u003edbarray);\n-       zfree(backup);\n",
+    "token_hints": null
+  },
+  {
+    "case": "redis-9323",
+    "index": 5,
+    "cid": 725663704,
+    "author": "zuiderkwast",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "src/db.c:1322",
+    "body": "This code doesn't swap them. It just copies one to the other. Don't we want to swap them like we do for dict, expires, avg_ttl and expires_cursor below? Also, we don't need memcpy here. We can just swap the pointers.",
+    "diff_hunk_at_comment": "@@ -1316,16 +1315,16 @@ int dbSwapDatabases(int id1, int id2) {\n /* Logically, this discards (flushes) the old main database, and apply the newly loaded\n  * database (temp) as the main (active) database, the actual freeing of old database\n  * (which will now be placed in the temp one) is done later. */\n-void swapMainDbWithTempDb(tempDb *tempDb) {\n+void swapMainDbWithTempDb(redisDb *tempDb) {\n     if (server.cluster_enabled) {\n         /* Copy slots_to_keys from tempdb just loaded to main slots_to_keys. */\n-        memcpy(server.cluster-\u003eslots_to_keys, server.cluster-\u003eslots_to_keys_tempdb,\n-           sizeof(server.cluster-\u003eslots_to_keys_tempdb));\n+        memcpy(*server.db-\u003eslots_to_keys, *tempDb-\u003eslots_to_keys,\n+           sizeof(*tempDb-\u003eslots_to_keys));",
+    "final_snapshot_context": "--- src/db.c @@\n 1319     return C_OK;\n 1320 }\n 1321 \n+1322 /* Logically, this discards (flushes) the old main database, and apply the newly loaded\n+1323  * database (temp) as the main (active) database, the actual freeing of old database\n+1324  * (which will now be placed in the temp one) is done later. */\n+1325 void swapMainDbWithTempDb(redisDb *tempDb) {\n+1326     if (server.cluster_enabled) {\n+1327         /* Swap slots_to_keys from tempdb just loaded with main db slots_to_keys. */\n+1328         clusterSlotToKeyMapping *aux = server.db-\u003eslots_to_keys;\n+1329         server.db-\u003eslots_to_keys = tempDb-\u003eslots_to_keys;\n+1330         tempDb-\u003eslots_to_keys = aux;\n",
+    "token_hints": null
+  },
+  {
+    "case": "tokio-6001",
+    "index": 0,
+    "cid": 1368527199,
+    "author": "Darksonn",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "tokio/src/runtime/task/list.rs:119",
+    "body": "Having correctness rely on such things makes it very easy to introduce bugs when changing things. (The check for `closed` must happen while the shard mutex is locked; otherwise a task spawned during shutdown can be pushed to `OwnedTasks` but not removed by `close_and_shutdown_all`.)",
+    "diff_hunk_at_comment": "@@ -111,25 +110,30 @@ impl\u003cS: 'static\u003e OwnedTasks\u003cS\u003e {\n             // to the field.\n             task.header().set_owner_id(self.id);\n         }\n-\n-        let mut lock = self.inner.lock();\n-        if lock.closed {\n-            drop(lock);\n-            drop(notified);\n+        // check close flag\n+        if self.closed.load(Ordering::Acquire) {\n             task.shutdown();\n-            None\n-        } else {\n-            lock.list.push_front(task);\n-            Some(notified)\n+            return None;\n         }\n+        self.list.push(task);\n+\n+        // double check close flag for ensuring all tasks will shutdown after OwnedTasks has been closed,\n+        // it should be completed quickly.\n+        if self.closed.load(Ordering::Acquire) {\n+            for i in 0..self.get_shard_size() {\n+                if let Some(task) = self.list.pop_back(i) {\n+                    task.shutdown();\n+                }\n+            }\n+        }",
+    "final_snapshot_context": "--- tokio/src/runtime/task/list.rs @@\n 115 \n-           let mut lock = self.inner.lock();\n-           if lock.closed {\n-               drop(lock);\n-               drop(notified);\n+116         let shard = self.list.lock_shard(\u0026task);\n+117         // Check the closed flag in the lock for ensuring all that tasks\n+118         // will shut down after the OwnedTasks has been closed.\n+119         if self.closed.load(Ordering::Acquire) {\n+120             drop(shard);\n 121             task.shutdown();\n-               None\n-           } else {\n-               lock.list.push_front(task);\n-               Some(notified)\n+122             return None;\n 123         }\n",
+    "token_hints": [
+      {
+        "token": "closed",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "OwnedTasks",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "close_and_shutdown_all",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "tokio-6001",
+    "index": 1,
+    "cid": 1332175404,
+    "author": "hawkw",
+    "kind": "suggestion",
+    "dimension": "readability",
+    "anchor": "tokio/src/runtime/task/list.rs:44",
+    "body": "I don't really understand what the word \"grain\" means in this context. Can we add a doc comment explaining this, rename the field to something that better describes what it is, or both?",
+    "diff_hunk_at_comment": "@@ -24,47 +26,30 @@ use std::num::NonZeroU64;\n // bug in Tokio, so we accept that certain bugs would not be caught if the two\n // mixed up runtimes happen to have the same id.\n \n-cfg_has_atomic_u64! {\n-    use std::sync::atomic::{AtomicU64, Ordering};\n+static NEXT_OWNED_TASKS_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);\n \n-    static NEXT_OWNED_TASKS_ID: AtomicU64 = AtomicU64::new(1);\n-\n-    fn get_next_id() -\u003e NonZeroU64 {\n-        loop {\n-            let id = NEXT_OWNED_TASKS_ID.fetch_add(1, Ordering::Relaxed);\n-            if let Some(id) = NonZeroU64::new(id) {\n-                return id;\n-            }\n-        }\n-    }\n-}\n-\n-cfg_not_has_atomic_u64! {\n-    use std::sync::atomic::{AtomicU32, Ordering};\n-\n-    static NEXT_OWNED_TASKS_ID: AtomicU32 = AtomicU32::new(1);\n-\n-    fn get_next_id() -\u003e NonZeroU64 {\n-        loop {\n-            let id = NEXT_OWNED_TASKS_ID.fetch_add(1, Ordering::Relaxed);\n-            if let Some(id) = NonZeroU64::new(u64::from(id)) {\n-                return id;\n-            }\n+fn get_next_id() -\u003e NonZeroU32 {\n+    loop {\n+        let id = NEXT_OWNED_TASKS_ID.fetch_add(1, Ordering::Relaxed);\n+        if let Some(id) = NonZeroU32::new(id) {\n+            return id;\n         }\n     }\n }\n \n pub(crate) struct OwnedTasks\u003cS: 'static\u003e {\n-    inner: Mutex\u003cCountedOwnedTasksInner\u003cS\u003e\u003e,\n-    pub(crate) id: NonZeroU64,\n-}\n-struct CountedOwnedTasksInner\u003cS: 'static\u003e {\n-    list: CountedLinkedList\u003cTask\u003cS\u003e, \u003cTask\u003cS\u003e as Link\u003e::Target\u003e,\n-    closed: bool,\n+    lists: Box\u003c[Mutex\u003cListInner\u003cS\u003e\u003e]\u003e,\n+    pub(crate) id: NonZeroU32,\n+    closed: AtomicBool,\n+    pub(crate) grain: u32,",
+    "final_snapshot_context": "--- tokio/src/runtime/task/list.rs @@\n 41 }\n 42 \n 43 cfg_not_has_atomic_u64! {\n-       use std::sync::atomic::{AtomicU32, Ordering};\n+44     use std::sync::atomic::AtomicU32;\n 45 \n 46     static NEXT_OWNED_TASKS_ID: AtomicU32 = AtomicU32::new(1);\n 47 \n",
+    "token_hints": null
+  },
+  {
+    "case": "tokio-6001",
+    "index": 2,
+    "cid": 1332181300,
+    "author": "hawkw",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "tokio/src/runtime/task/list.rs:78",
+    "body": "it looks like `OwnedTasks::new` is only ever called with the values 1 and 16. What do you think about making this constructor private, and having the `pub(crate)` constructors be `new_current_thread` and `new_multi_thread` or something? that way, the value (which feels like an internal implementation detail) isn't leaked to the places where the `OwnedTasks` is constructed, and we can change the value in one place, rather than having to update _every_ call to `OwnedTasks::new`?",
+    "diff_hunk_at_comment": "@@ -73,13 +58,23 @@ struct OwnedTasksInner\u003cS: 'static\u003e {\n }\n \n impl\u003cS: 'static\u003e OwnedTasks\u003cS\u003e {\n-    pub(crate) fn new() -\u003e Self {\n+    /// grain must be an integer power of 2\n+    pub(crate) fn new(grain: u32) -\u003e Self {\n+        assert_eq!(\n+            grain \u0026 (grain - 1),\n+            0,\n+            \"the grain of OwnedTasks must be an integer power of 2\"\n+        );",
+    "final_snapshot_context": "--- tokio/src/runtime/task/list.rs @@\n+71 \n 72 struct OwnedTasksInner\u003cS: 'static\u003e {\n 73     list: LinkedList\u003cTask\u003cS\u003e, \u003cTask\u003cS\u003e as Link\u003e::Target\u003e,\n 74     closed: bool,\n 75 }\n 76 \n 77 impl\u003cS: 'static\u003e OwnedTasks\u003cS\u003e {\n-       pub(crate) fn new() -\u003e Self {\n+78     pub(crate) fn new(num_cores: usize) -\u003e Self {\n+79         let shard_size = Self::gen_shared_list_size(num_cores);\n 80         Self {\n-               inner: Mutex::new(CountedOwnedTasksInner {\n-                   list: CountedLinkedList::new(),\n-                   closed: false,\n-               }),\n+81             list: List::new(shard_size),\n+82             closed: AtomicBool::new(false),\n",
+    "token_hints": [
+      {
+        "token": "OwnedTasks::new",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "pub(crate)",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "new_current_thread",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "new_multi_thread",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "OwnedTasks",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      }
+    ]
+  },
+  {
+    "case": "tokio-6001",
+    "index": 3,
+    "cid": 1382579513,
+    "author": "Darksonn",
+    "kind": "suggestion",
+    "dimension": "maintainability",
+    "anchor": "tokio/src/util/sharded_list.rs:32",
+    "body": "```suggestion\n    unsafe fn get_shard_id(target: NonNull\u003cSelf::Target\u003e) -\u003e usize;\n```",
+    "diff_hunk_at_comment": "@@ -0,0 +1,160 @@\n+#![cfg_attr(not(feature = \"full\"), allow(dead_code))]\n+\n+use std::{ptr::NonNull, sync::atomic::Ordering};\n+\n+use crate::loom::sync::{Mutex, MutexGuard};\n+use std::sync::atomic::AtomicUsize;\n+\n+use super::linked_list::{Link, LinkedList};\n+\n+/// An intrusive  linked list supporting high concurrent updates.\n+///\n+/// It currently relies on `LinkedList`, so it is the caller's\n+/// responsibility to ensure the list is empty before dropping it.\n+///\n+/// Note: Due to its inner sharded design, the order of node cannot be guaranteed.\n+pub(crate) struct ShardedList\u003cL, T\u003e {\n+    lists: Box\u003c[Mutex\u003cLinkedList\u003cL, T\u003e\u003e]\u003e,\n+    count: AtomicUsize,\n+    shard_mask: usize,\n+}\n+\n+/// Defines the id of a node in a linked list, different ids cause inner list nodes\n+/// to be scattered in different mutexs.\n+///\n+/// # Safety\n+///\n+/// Implementations must guarantee that `Target` types are pinned in memory. In\n+/// other words, when a node is inserted, the value will not be moved as long as\n+/// it is stored in the list.\n+pub(crate) unsafe trait ShardedListItem: Link {\n+    // The returned id is used to pick which list this item should go into.\n+    unsafe fn get_shared_id(target: NonNull\u003cSelf::Target\u003e) -\u003e usize;",
+    "final_snapshot_context": "--- tokio/src/util/sharded_list.rs @@\n+24 ///\n+25 /// Implementations must guarantee that the id of an item does not change from\n+26 /// call to call.\n+27 pub(crate) unsafe trait ShardedListItem: Link {\n+28     /// # Safety\n+29     /// The provided pointer must point at a valid list item.\n+30     unsafe fn get_shard_id(target: NonNull\u003cSelf::Target\u003e) -\u003e usize;\n+31 }\n+32 \n+33 impl\u003cL, T\u003e ShardedList\u003cL, T\u003e {\n+34     /// Creates a new and empty sharded linked list with the specified size.\n+35     pub(crate) fn new(sharded_size: usize) -\u003e Self {\n+36         assert!(sharded_size.is_power_of_two());\n+37 \n+38         let shard_mask = sharded_size - 1;\n+39         let mut lists = Vec::with_capacity(sharded_size);\n+40         for _ in 0..sharded_size {\n",
+    "token_hints": null
+  },
+  {
+    "case": "redis-14017",
+    "index": 0,
+    "cid": 2106124779,
+    "author": "oranagra",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "src/config.c:3171",
+    "body": "i personally think this is far too low level to be made a user config (and p.s. i don't see it in redis.conf). maybe we can completely drop it, and if not, let's make it a HIDDEN one.",
+    "diff_hunk_at_comment": "@@ -3168,6 +3168,7 @@ standardConfig static_configs[] = {\n     createIntConfig(\"databases\", NULL, IMMUTABLE_CONFIG, 1, INT_MAX, server.dbnum, 16, INTEGER_CONFIG, NULL, NULL),\n     createIntConfig(\"port\", NULL, MODIFIABLE_CONFIG, 0, 65535, server.port, 6379, INTEGER_CONFIG, NULL, updatePort), /* TCP port. */\n     createIntConfig(\"io-threads\", NULL, DEBUG_CONFIG | IMMUTABLE_CONFIG, 1, 128, server.io_threads_num, 1, INTEGER_CONFIG, NULL, NULL), /* Single threaded by default */\n+    createIntConfig(\"prefetch-batch-max-size\", NULL, MODIFIABLE_CONFIG, 0, 128, server.prefetch_batch_max_size, 16, INTEGER_CONFIG, NULL, NULL),",
+    "final_snapshot_context": "--- src/config.c @@\n 3168     createIntConfig(\"databases\", NULL, IMMUTABLE_CONFIG, 1, INT_MAX, server.dbnum, 16, INTEGER_CONFIG, NULL, NULL),\n 3169     createIntConfig(\"port\", NULL, MODIFIABLE_CONFIG, 0, 65535, server.port, 6379, INTEGER_CONFIG, NULL, updatePort), /* TCP port. */\n 3170     createIntConfig(\"io-threads\", NULL, DEBUG_CONFIG | IMMUTABLE_CONFIG, 1, 128, server.io_threads_num, 1, INTEGER_CONFIG, NULL, NULL), /* Single threaded by default */\n+3171     createIntConfig(\"prefetch-batch-max-size\", NULL, MODIFIABLE_CONFIG | HIDDEN_CONFIG, 0, 128, server.prefetch_batch_max_size, 16, INTEGER_CONFIG, NULL, NULL),\n 3172     createIntConfig(\"auto-aof-rewrite-percentage\", NULL, MODIFIABLE_CONFIG, 0, INT_MAX, server.aof_rewrite_perc, 100, INTEGER_CONFIG, NULL, NULL),\n 3173     createIntConfig(\"cluster-replica-validity-factor\", \"cluster-slave-validity-factor\", MODIFIABLE_CONFIG, 0, INT_MAX, server.cluster_slave_validity_factor, 10, INTEGER_CONFIG, NULL, NULL), /* Slave max data age factor. */\n 3174     createIntConfig(\"list-max-listpack-size\", \"list-max-ziplist-size\", MODIFIABLE_CONFIG, INT_MIN, INT_MAX, server.list_max_listpack_size, -2, INTEGER_CONFIG, NULL, NULL),\n",
+    "token_hints": null
+  },
+  {
+    "case": "redis-14017",
+    "index": 1,
+    "cid": 2106125576,
+    "author": "oranagra",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "src/db.c:374",
+    "body": "if we do that, maybe we can cache the result so it can serve others usages (ACL, Cluster, ROF). besides, maybe instead of just computing the slot of the first key, it can already check for cross slot, and then the main thread won't have to. we did that in lookahead.",
+    "diff_hunk_at_comment": "@@ -324,6 +324,24 @@ int getKeySlot(sds key) {\n     return calculateKeySlot(key);\n }\n \n+/* Return the slot of the key in the command. IO threads use this function\n+ * to calculate slot to reduce main-thread load */\n+int getSlotFromCommand(struct redisCommand *cmd, robj **argv, int argc) {\n+    int slot = -1;\n+    if (!cmd || !server.cluster_enabled) return slot;\n+\n+    /* Get the keys from the command */\n+    getKeysResult result = GETKEYS_RESULT_INIT;\n+    int numkeys = getKeysFromCommand(cmd, argv, argc, \u0026result);",
+    "final_snapshot_context": "--- src/db.c @@\n+366 /* Return the slot of the key in the command. IO threads use this function\n+367  * to calculate slot to reduce main-thread load */\n+368 int getSlotFromCommand(struct redisCommand *cmd, robj **argv, int argc) {\n+369     int slot = -1;\n+370     if (!cmd || !server.cluster_enabled) return slot;\n+371 \n+372     /* Get the keys from the command */\n+373     getKeysResult result = GETKEYS_RESULT_INIT;\n+374     int numkeys = getKeysFromCommand(cmd, argv, argc, \u0026result);\n+375     if (numkeys \u003e 0) {\n+376         /* Get the slot of the first key */\n+377         robj *first = argv[result.keys[0].pos];\n+378         slot = keyHashSlot(first-\u003eptr, (int)sdslen(first-\u003eptr));\n+379     }\n+380     getKeysFreeResult(\u0026result);\n+381     return slot;\n+382 }\n",
+    "token_hints": null
+  },
+  {
+    "case": "redis-14017",
+    "index": 2,
+    "cid": 2112771801,
+    "author": "tezc",
+    "kind": "suggestion",
+    "dimension": "correctness",
+    "anchor": "src/memory_prefetch.c:338",
+    "body": "Function comment mentions that goal is to bring data to L1. Then, here it says I/O thread already did the look up but on a multi core machine (most machines nowadays), iothread and main thread will be on different cores and not sharing L1. I wonder if this comment is accurate or am I missing something. Maybe this was done for a very specific CPU.",
+    "diff_hunk_at_comment": "@@ -0,0 +1,401 @@\n+/*\n+ * This file utilizes prefetching keys and data for multiple commands in a batch,\n+ * to improve performance by amortizing memory access costs across multiple operations.\n+ *\n+ * Copyright (c) 2025-Present, Redis Ltd. and contributors.\n+ * All rights reserved.\n+ *\n+ * Copyright (c) 2024-present, Valkey contributors.\n+ * All rights reserved.\n+ *\n+ * Licensed under your choice of (a) the Redis Source Available License 2.0\n+ * (RSALv2); or (b) the Server Side Public License v1 (SSPLv1); or (c) the\n+ * GNU Affero General Public License v3 (AGPLv3).\n+ *\n+ * Portions of this file are available under BSD3 terms; see REDISCONTRIBUTIONS for more information.\n+ */\n+\n+#include \"memory_prefetch.h\"\n+#include \"server.h\"\n+#include \"dict.h\"\n+\n+typedef enum { HT_IDX_FIRST = 0, HT_IDX_SECOND = 1, HT_IDX_INVALID = -1 } HashTableIndex;\n+\n+typedef enum {\n+    PREFETCH_BUCKET,     /* Initial state, determines which hash table to use and prefetch the table's bucket */\n+    PREFETCH_ENTRY,      /* prefetch entries associated with the given key's hash */\n+    PREFETCH_KVOBJ,      /* prefetch the kv object of the entry found in the previous step */\n+    PREFETCH_VALDATA,    /* prefetch the value data of the kv object found in the previous step */\n+    PREFETCH_DONE        /* Indicates that prefetching for this key is complete */\n+} PrefetchState;\n+\n+\n+/************************************ State machine diagram for the prefetch operation. ********************************\n+                                                           │\n+                                                         start\n+                                                           │\n+                                                  ┌────────▼─────────┐\n+                                       ┌─────── …(截断)",
+    "final_snapshot_context": "--- src/memory_prefetch.c @@\n+330     if (!batch) return;\n+331 \n+332     /* Prefetch argv's for all clients */\n+333     for (size_t i = 0; i \u003c batch-\u003eclient_count; i++) {\n+334         client *c = batch-\u003eclients[i];\n+335         if (!c || c-\u003eargc \u003c= 1) continue;\n+336         /* Skip prefetching first argv (cmd name) it was already looked up by\n+337          * the I/O thread, and the main thread will not touch argv[0]. */\n+338         for (int j = 1; j \u003c c-\u003eargc; j++) {\n+339             redis_prefetch_read(c-\u003eargv[j]);\n+340         }\n+341     }\n+342 \n+343     /* Prefetch the argv-\u003eptr if required */\n+344     for (size_t i = 0; i \u003c batch-\u003eclient_count; i++) {\n+345         client *c = batch-\u003eclients[i];\n+346         if (!c || c-\u003eargc \u003c= 1) continue;\n",
+    "token_hints": null
+  },
+  {
+    "case": "redis-14017",
+    "index": 3,
+    "cid": 2112804186,
+    "author": "tezc",
+    "kind": "suggestion",
+    "dimension": "performance",
+    "anchor": "src/memory_prefetch.c:394",
+    "body": "If I'm not mistaken, we can do `batch-\u003ekeys_dicts[batch-\u003ekey_count] = kvstoreGetDict(c-\u003edb-\u003ekeys, (c-\u003eslot \u003e 0 ? c-\u003eslot : 0));` and delete `batch-\u003eslots`.",
+    "diff_hunk_at_comment": "@@ -0,0 +1,401 @@\n+/*\n+ * This file utilizes prefetching keys and data for multiple commands in a batch,\n+ * to improve performance by amortizing memory access costs across multiple operations.\n+ *\n+ * Copyright (c) 2025-Present, Redis Ltd. and contributors.\n+ * All rights reserved.\n+ *\n+ * Copyright (c) 2024-present, Valkey contributors.\n+ * All rights reserved.\n+ *\n+ * Licensed under your choice of (a) the Redis Source Available License 2.0\n+ * (RSALv2); or (b) the Server Side Public License v1 (SSPLv1); or (c) the\n+ * GNU Affero General Public License v3 (AGPLv3).\n+ *\n+ * Portions of this file are available under BSD3 terms; see REDISCONTRIBUTIONS for more information.\n+ */\n+\n+#include \"memory_prefetch.h\"\n+#include \"server.h\"\n+#include \"dict.h\"\n+\n+typedef enum { HT_IDX_FIRST = 0, HT_IDX_SECOND = 1, HT_IDX_INVALID = -1 } HashTableIndex;\n+\n+typedef enum {\n+    PREFETCH_BUCKET,     /* Initial state, determines which hash table to use and prefetch the table's bucket */\n+    PREFETCH_ENTRY,      /* prefetch entries associated with the given key's hash */\n+    PREFETCH_KVOBJ,      /* prefetch the kv object of the entry found in the previous step */\n+    PREFETCH_VALDATA,    /* prefetch the value data of the kv object found in the previous step */\n+    PREFETCH_DONE        /* Indicates that prefetching for this key is complete */\n+} PrefetchState;\n+\n+\n+/************************************ State machine diagram for the prefetch operation. ********************************\n+                                                           │\n+                                                         start\n+                                                           │\n+                                                  ┌────────▼─────────┐\n+                                       ┌─────── …(截断)",
+    "final_snapshot_context": "--- src/memory_prefetch.c @@\n+386         /* Get command's keys positions */\n+387         getKeysResult result = GETKEYS_RESULT_INIT;\n+388         int num_keys = getKeysFromCommand(c-\u003eiolookedcmd, c-\u003eargv, c-\u003eargc, \u0026result);\n+389         for (int i = 0; i \u003c num_keys \u0026\u0026 batch-\u003ekey_count \u003c batch-\u003emax_prefetch_size; i++) {\n+390             batch-\u003ekeys[batch-\u003ekey_count] = c-\u003eargv[result.keys[i].pos];\n+391             batch-\u003ekeys_dicts[batch-\u003ekey_count] =\n+392                 kvstoreGetDict(c-\u003edb-\u003ekeys, c-\u003eslot \u003e 0 ? c-\u003eslot : 0);\n+393             batch-\u003ekey_count++;\n+394         }\n+395         getKeysFreeResult(\u0026result);\n+396     }\n+397 \n+398     return C_OK;\n+399 }\n",
+    "token_hints": [
+      {
+        "token": "batch-\u003eslots",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "redis-14017",
+    "index": 4,
+    "cid": 2097420269,
+    "author": "moticless",
+    "kind": "suggestion",
+    "dimension": "performance",
+    "anchor": "src/memory_prefetch.c:231",
+    "body": "Small kv objects of type string their values is embedded in the kv (i.e. `OBJ_ENCODING_EMBSTR`). In that case, maybe we can optimize and skip the step of `PREFETCH_VALDATA`.",
+    "diff_hunk_at_comment": "@@ -0,0 +1,401 @@\n+/*\n+ * This file utilizes prefetching keys and data for multiple commands in a batch,\n+ * to improve performance by amortizing memory access costs across multiple operations.\n+ *\n+ * Copyright (c) 2025-Present, Redis Ltd. and contributors.\n+ * All rights reserved.\n+ *\n+ * Copyright (c) 2024-present, Valkey contributors.\n+ * All rights reserved.\n+ *\n+ * Licensed under your choice of (a) the Redis Source Available License 2.0\n+ * (RSALv2); or (b) the Server Side Public License v1 (SSPLv1); or (c) the\n+ * GNU Affero General Public License v3 (AGPLv3).\n+ *\n+ * Portions of this file are available under BSD3 terms; see REDISCONTRIBUTIONS for more information.\n+ */\n+\n+#include \"memory_prefetch.h\"\n+#include \"server.h\"\n+#include \"dict.h\"\n+\n+typedef enum { HT_IDX_FIRST = 0, HT_IDX_SECOND = 1, HT_IDX_INVALID = -1 } HashTableIndex;\n+\n+typedef enum {\n+    PREFETCH_BUCKET,     /* Initial state, determines which hash table to use and prefetch the table's bucket */\n+    PREFETCH_ENTRY,      /* prefetch entries associated with the given key's hash */\n+    PREFETCH_KVOBJ,      /* prefetch the kv object of the entry found in the previous step */\n+    PREFETCH_VALDATA,    /* prefetch the value data of the kv object found in the previous step */\n+    PREFETCH_DONE        /* Indicates that prefetching for this key is complete */\n+} PrefetchState;\n+\n+\n+/************************************ State machine diagram for the prefetch operation. ********************************\n+                                                           │\n+                                                         start\n+                                                           │\n+                                                  ┌────────▼─────────┐\n+                                       ┌─────── …(截断)",
+    "final_snapshot_context": "--- src/memory_prefetch.c @@\n+223     info-\u003ecurrent_kv = kv;\n+224     info-\u003estate = PREFETCH_VALDATA;\n+225     /* If the entry is a pointer of kv object, we don't need to prefetch it */\n+226     if (!is_kv) prefetchAndMoveToNextKey(kv);\n+227 }\n+228 \n+229 /* Prefetch the value data of the kv object found in dict entry. */\n+230 static void prefetchValueData(KeyPrefetchInfo *info) {\n+231     size_t i = batch-\u003ecur_idx;\n+232     kvobj *kv = info-\u003ecurrent_kv;\n+233 \n+234     /* 1. If this is the last element, we assume a hit and don't compare the keys\n+235      * 2. This kv object is the target of the lookup. */\n+236     if ((!dictGetNext(info-\u003ecurrent_entry) \u0026\u0026 !dictIsRehashing(batch-\u003ecurrent_dicts[i])) ||\n+237         dictCompareKeys(batch-\u003ecurrent_dicts[i], batch-\u003ekeys[i], kv))\n+238     {\n+239         if (batch-\u003eget_value_data_func) {\n",
+    "token_hints": [
+      {
+        "token": "OBJ_ENCODING_EMBSTR",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "PREFETCH_VALDATA",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      }
+    ]
+  },
+  {
+    "case": "pandas-27237",
+    "index": 0,
+    "cid": 407346544,
+    "author": "jorisvandenbossche",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "pandas/core/indexes/datetimelike.py:191",
+    "body": "We will actually need to check here if `idx` is still a DatetimeIndex? Because otherwise, I assume the below code won't work. For example, when doing `dtidx.sort_values(key=lambda x: x.month)`",
+    "diff_hunk_at_comment": "@@ -168,12 +169,14 @@ def __contains__(self, key: Any) -\u003e bool:\n             is_scalar(res) or isinstance(res, slice) or (is_list_like(res) and len(res))\n         )\n \n-    def sort_values(self, return_indexer=False, ascending=True):\n+    def sort_values(self, return_indexer=False, ascending=True, key=None):\n         \"\"\"\n         Return sorted copy of Index.\n         \"\"\"\n+        idx = ensure_key_mapped(self, key)",
+    "final_snapshot_context": "--- pandas/core/indexes/datetimelike.py @@\n 184             is_scalar(res) or isinstance(res, slice) or (is_list_like(res) and len(res))\n 185         )\n 186 \n-       def sort_values(self, return_indexer=False, ascending=True):\n+187     def sort_values(self, return_indexer=False, ascending=True, key=None):\n 188         \"\"\"\n 189         Return sorted copy of Index.\n 190         \"\"\"\n+191         idx = ensure_key_mapped(self, key)\n+192 \n+193         _as = idx.argsort()\n+194         if not ascending:\n+195             _as = _as[::-1]\n+196         sorted_index = self.take(_as)\n+197 \n 198         if return_indexer:\n-               _as = self.argsort()\n",
+    "token_hints": [
+      {
+        "token": "idx",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      },
+      {
+        "token": "dtidx.sort_values(key=lambda x: x.month)",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "pandas-27237",
+    "index": 1,
+    "cid": 372248894,
+    "author": "jorisvandenbossche",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "pandas/core/frame.py:5234",
+    "body": "Are we OK with this? (I am not really sure myself) It seems a bit inconsistent with DataFrame which gets done column by column. But of course it's also not a fully valid comparison.",
+    "diff_hunk_at_comment": "@@ -5013,6 +5037,15 @@ def sort_index(\n \n             .. versionadded:: 1.0.0\n \n+        key : callable, optional\n+            If not None, apply the key function to the index values\n+            before sorting. This is similar to the `key` argument in the\n+            builtin :meth:`sorted` function, with the notable difference that\n+            this `key` function should be *vectorized*. It should expect an\n+            ``Index`` and return an ``Index`` of the same shape.",
+    "final_snapshot_context": "--- pandas/core/frame.py @@\n 5231 \n 5232         axis = self._get_axis_number(axis)\n 5233         labels = self._get_axis(axis)\n+5234         labels = ensure_key_mapped(labels, key, levels=level)\n 5235 \n 5236         # make sure that the axis is lexsorted to start\n 5237         # if not we need to reconstruct to get the correct indexer\n 5238         labels = labels._sort_levels_monotonic()\n 5239         if level is not None:\n-   \n 5240             new_axis, indexer = labels.sortlevel(\n 5241                 level, ascending=ascending, sort_remaining=sort_remaining\n",
+    "token_hints": null
+  },
+  {
+    "case": "pandas-27237",
+    "index": 2,
+    "cid": 366145493,
+    "author": "jreback",
+    "kind": "suggestion",
+    "dimension": "maintainability",
+    "anchor": "pandas/core/frame.py:5172",
+    "body": "should create something in pandas._typing for this, maybe SortByKey",
+    "diff_hunk_at_comment": "@@ -4889,6 +4899,7 @@ def sort_values(\n         kind=\"quicksort\",\n         na_position=\"last\",\n         ignore_index=False,\n+        key: Optional[Callable[[\"DataFrame\"], Union[\"DataFrame\", AnyArrayLike]]] = None,",
+    "final_snapshot_context": "--- pandas/core/frame.py @@\n 5169 \n 5170             .. versionadded:: 1.0.0\n 5171 \n+5172         key : callable, optional\n+5173             If not None, apply the key function to the index values\n+5174             before sorting. This is similar to the `key` argument in the\n+5175             builtin :meth:`sorted` function, with the notable difference that\n+5176             this `key` function should be *vectorized*. It should expect an\n+5177             ``Index`` and return an ``Index`` of the same shape. For MultiIndex\n+5178             inputs, the key is applied *per level*.\n+5179 \n+5180             .. versionadded:: 1.1.0\n",
+    "token_hints": null
+  },
+  {
+    "case": "pandas-27237",
+    "index": 3,
+    "cid": 407257378,
+    "author": "jreback",
+    "kind": "design",
+    "dimension": "design",
+    "anchor": "pandas/core/sorting.py:287",
+    "body": "is this not wrapped at a higher level? if not, why not?",
+    "diff_hunk_at_comment": "@@ -241,21 +262,33 @@ def lexsort_indexer(keys, orders=None, na_position: str = \"last\"):\n \n \n def nargsort(\n-    items, kind: str = \"quicksort\", ascending: bool = True, na_position: str = \"last\"\n+    items,\n+    kind: str = \"quicksort\",\n+    ascending: bool = True,\n+    na_position: str = \"last\",\n+    key: Optional[Callable] = None,\n ):\n     \"\"\"\n     Intended to be a drop-in replacement for np.argsort which handles NaNs.\n \n-    Adds ascending and na_position parameters.\n+    Adds ascending, na_position, and key parameters.\n \n-    (GH #6399, #5231)\n+    (GH #6399, #5231, #27237)\n \n     Parameters\n     ----------\n     kind : str, default 'quicksort'\n     ascending : bool, default True\n     na_position : {'first', 'last'}, default 'last'\n+    key : Optional[Callable], default None\n     \"\"\"\n+\n+    if key is not None:\n+        items = ensure_key_mapped(items, key)",
+    "final_snapshot_context": "--- pandas/core/sorting.py @@\n 279     ----------\n 280     kind : str, default 'quicksort'\n 281     ascending : bool, default True\n 282     na_position : {'first', 'last'}, default 'last'\n+283     key : Optional[Callable], default None\n 284     \"\"\"\n+285 \n+286     if key is not None:\n+287         items = ensure_key_mapped(items, key)\n+288         return nargsort(\n+289             items, kind=kind, ascending=ascending, na_position=na_position, key=None\n+290         )\n+291 \n 292     items = extract_array(items)\n 293     mask = np.asarray(isna(items))\n 294 \n",
+    "token_hints": null
+  },
+  {
+    "case": "pandas-27237",
+    "index": 4,
+    "cid": 359884679,
+    "author": "TomAugspurger",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "pandas/core/sorting.py:329",
+    "body": "`ABCIndexClass` works, but not `ABCIndex`. That fails on `RangeIndex`. Is that OK?",
+    "diff_hunk_at_comment": "@@ -285,6 +316,24 @@ def nargsort(\n     return indexer\n \n \n+def ensure_key_mapped(values, key):\n+    from pandas import Index\n+\n+    if not key:\n+        return values\n+\n+    if isinstance(values, Index):\n+        return values.map(key, na_action=\"ignore\")\n+    elif isinstance(values, np.ndarray):\n+\n+        def map_f(values, f):",
+    "final_snapshot_context": "--- pandas/core/sorting.py @@\n 321 \n+322 def ensure_key_mapped_multiindex(index, key: Callable, level=None):\n+323     \"\"\"\n+324     Returns a new MultiIndex in which key has been applied\n+325     to all levels specified in level (or all levels if level\n+326     is None). Used for key sorting for MultiIndex.\n+327 \n+328     Parameters\n+329     ----------\n+330     index : MultiIndex\n+331         Index to which to apply the key function on the\n+332         specified levels.\n+333     key : Callable\n+334         Function that takes an Index and returns an Index of\n+335         the same shape. This key is applied to each level\n+336         separately. The name of the level can be used to\n+337         distinguish different levels for application.\n",
+    "token_hints": [
+      {
+        "token": "ABCIndexClass",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "ABCIndex",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      },
+      {
+        "token": "RangeIndex",
+        "in_final_added_lines": false,
+        "in_comment_hunk": false
+      }
+    ]
+  },
+  {
+    "case": "pandas-22862",
+    "index": 0,
+    "cid": 226629141,
+    "author": "jreback",
+    "kind": "defect",
+    "dimension": "correctness",
+    "anchor": "pandas/core/arrays/period.py:166",
+    "body": "I think we *always* need to copy here, e.g. if you pass in an ndarray with copy=False this makes the internals mutable which is not great.",
+    "diff_hunk_at_comment": "@@ -85,94 +108,113 @@ def wrapper(self, other):\n     return compat.set_function_name(wrapper, opname, cls)\n \n \n-class PeriodArrayMixin(DatetimeLikeArrayMixin):\n-    @property\n-    def _box_func(self):\n-        return lambda x: Period._from_ordinal(ordinal=x, freq=self.freq)\n+class PeriodArray(dtl.DatetimeLikeArrayMixin, ExtensionArray):\n+    \"\"\"\n+    Pandas ExtensionArray for storing Period data.\n \n-    @cache_readonly\n-    def dtype(self):\n-        return PeriodDtype.construct_from_string(self.freq)\n+    Users should use :func:`period_array` to create new instances.\n \n-    @property\n-    def _ndarray_values(self):\n-        # Ordinals\n-        return self._data\n+    Notes\n+    -----\n+    There are two components to a PeriodArray\n \n-    @property\n-    def asi8(self):\n-        return self._ndarray_values.view('i8')\n+    - ordinals : integer ndarray\n+    - freq : pd.tseries.offsets.Tick\n \n-    @property\n-    def freq(self):\n-        \"\"\"Return the frequency object if it is set, otherwise None\"\"\"\n-        return self._freq\n-\n-    @freq.setter\n-    def freq(self, value):\n-        msg = ('Setting {cls}.freq has been deprecated and will be '\n-               'removed in a future version; use {cls}.asfreq instead. '\n-               'The {cls}.freq setter is not guaranteed to work.')\n-        warnings.warn(msg.format(cls=type(self).__name__),\n-                      FutureWarning, stacklevel=2)\n-        self._freq = value\n+    The values are physically stored as a 1-D ndarray of integers. These are\n+    called \"ordinals\" and represent some kind of offset from a base.\n \n-    # --------------------------------------------------------------------\n-    # Constructors\n+    The `freq` indicates the span covered by each element of the array.\n+    All elements in the PeriodArray have the s …(截断)",
+    "final_snapshot_context": "--- pandas/core/arrays/period.py @@\n+158 \n+159     # Names others delegate to us\n+160     _other_ops = []\n+161     _bool_ops = ['is_leap_year']\n+162     _object_ops = ['start_time', 'end_time', 'freq']\n+163     _field_ops = ['year', 'month', 'day', 'hour', 'minute', 'second',\n+164                   'weekofyear', 'weekday', 'week', 'dayofweek',\n+165                   'dayofyear', 'quarter', 'qyear',\n+166                   'days_in_month', 'daysinmonth']\n+167     _datetimelike_ops = _field_ops + _object_ops + _bool_ops\n+168     _datetimelike_methods = ['strftime', 'to_timestamp', 'asfreq']\n 169 \n 170     # --------------------------------------------------------------------\n 171     # Constructors\n+172     def __init__(self, values, freq=None, copy=False):\n+173         if freq is not None:\n+174             freq = Period._maybe_convert_freq(freq)\n",
+    "token_hints": null
+  },
+  {
+    "case": "pandas-22862",
+    "index": 1,
+    "cid": 226800296,
+    "author": "jbrockmendel",
+    "kind": "suggestion",
+    "dimension": "correctness",
+    "anchor": "pandas/core/arrays/period.py:75",
+    "body": "Yes, return NotImplemented. Also presumably ABCDataFrame. (Comparison operators should return NotImplemented instead of raising for unsupported operands.)",
+    "diff_hunk_at_comment": "@@ -52,13 +71,17 @@ def _period_array_cmp(cls, op):\n \n     def wrapper(self, other):\n         op = getattr(self._ndarray_values, opname)\n+        if isinstance(other, (ABCSeries, ABCIndexClass)):\n+            # TODO: return NotImplemented?",
+    "final_snapshot_context": "--- pandas/core/arrays/period.py @@\n 70     nat_result = True if opname == '__ne__' else False\n 71 \n 72     def wrapper(self, other):\n-           op = getattr(self._ndarray_values, opname)\n+73         op = getattr(self.asi8, opname)\n+74         # We want to eventually defer to the Series or PeriodIndex (which will\n+75         # return here with an unboxed PeriodArray). But before we do that,\n+76         # we do a bit of validation on type (Period) and freq, so that our\n+77         # error messages are sensible\n+78         not_implemented = isinstance(other, (ABCSeries, ABCIndexClass))\n+79         if not_implemented:\n+80             other = other._values\n+81 \n 82         if isinstance(other, Period):\n 83             if other.freq != self.freq:\n",
+    "token_hints": null
+  },
+  {
+    "case": "pandas-22862",
+    "index": 2,
+    "cid": 224703904,
+    "author": "jorisvandenbossche",
+    "kind": "suggestion",
+    "dimension": "maintainability",
+    "anchor": "pandas/core/arrays/period.py:147",
+    "body": "shouldn't this be simpler and instead just call ``period_array``?",
+    "diff_hunk_at_comment": "@@ -83,88 +103,216 @@ def wrapper(self, other):\n     return compat.set_function_name(wrapper, opname, cls)\n \n \n-class PeriodArrayMixin(DatetimeLikeArrayMixin):\n-    @property\n-    def _box_func(self):\n-        return lambda x: Period._from_ordinal(ordinal=x, freq=self.freq)\n+class PeriodArray(DatetimeLikeArrayMixin, ExtensionArray):\n+    \"\"\"\n+    Pandas ExtensionArray for storing Period data.\n \n-    @cache_readonly\n-    def dtype(self):\n-        return PeriodDtype.construct_from_string(self.freq)\n+    Users should use the :func:`period_array` function to create\n+    new instances of PeriodArray.\n \n-    @property\n-    def _ndarray_values(self):\n-        # Ordinals\n-        return self._data\n+    Notes\n+    -----\n+    There are two components to a PeriodArray\n \n-    @property\n-    def asi8(self):\n-        return self._ndarray_values.view('i8')\n+    - ordinals : integer ndarray\n+    - freq : pd.tseries.offsets.Tick\n \n-    @property\n-    def freq(self):\n-        \"\"\"Return the frequency object if it is set, otherwise None\"\"\"\n-        return self._freq\n+    The values are physically stored as a 1-D ndarray of integers. These are\n+    called \"ordinals\" and represent some kind of offset from a base.\n+\n+    The `freq` indicates the span covered by each element of the array.\n+    All elements in the PeriodArray have the same `freq`.\n \n-    @freq.setter\n-    def freq(self, value):\n-        msg = ('Setting {cls}.freq has been deprecated and will be '\n-               'removed in a future version; use {cls}.asfreq instead. '\n-               'The {cls}.freq setter is not guaranteed to work.')\n-        warnings.warn(msg.format(cls=type(self).__name__),\n-                      FutureWarning, stacklevel=2)\n-        self._freq = value\n+    See Also\n+    --------\n+    period_array : Create  …(截断)",
+    "final_snapshot_context": "--- pandas/core/arrays/period.py @@\n+139     -----\n+140     There are two components to a PeriodArray\n+141 \n+142     - ordinals : integer ndarray\n+143     - freq : pd.tseries.offsets.Offset\n+144 \n+145     The values are physically stored as a 1-D ndarray of integers. These are\n+146     called \"ordinals\" and represent some kind of offset from a base.\n+147 \n+148     The `freq` indicates the span covered by each element of the array.\n+149     All elements in the PeriodArray have the same `freq`.\n+150 \n+151     See Also\n+152     --------\n+153     period_array : Create a new PeriodArray\n+154     pandas.PeriodIndex : Immutable Index for period data\n+155     \"\"\"\n",
+    "token_hints": [
+      {
+        "token": "period_array",
+        "in_final_added_lines": false,
+        "in_comment_hunk": true
+      }
+    ]
+  }
+]

@@ -1,0 +1,28 @@
+HTTP/1.1 200 OK
+Date: Sat, 26 Sep 2026 11:32:09 GMT
+Cache-Control: public, max-age=60, s-maxage=60
+Vary: Accept,Accept-Encoding, Accept, X-Requested-With
+x-github-api-version-selected: 2022-11-28
+Access-Control-Expose-Headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning
+Access-Control-Allow-Origin: *
+Strict-Transport-Security: max-age=31536000; includeSubdomains; preload
+X-Frame-Options: deny
+X-Content-Type-Options: nosniff
+X-XSS-Protection: 0
+Referrer-Policy: origin-when-cross-origin, strict-origin-when-cross-origin
+Content-Security-Policy: default-src 'none'
+Server: github.com
+Content-Type: application/json; charset=utf-8
+X-GitHub-Media-Type: github.v3; format=json
+Link: <https://api.github.com/repositories/156018/pulls/9788/comments?per_page=100&page=1>; rel="prev", <https://api.github.com/repositories/156018/pulls/9788/comments?per_page=100&page=3>; rel="next", <https://api.github.com/repositories/156018/pulls/9788/comments?per_page=100&page=4>; rel="last", <https://api.github.com/repositories/156018/pulls/9788/comments?per_page=100&page=1>; rel="first"
+ETag: W/"a0d2e8488720b80259dedf12e73e08c6d7820894898304619dda28110693a753"
+Accept-Ranges: bytes
+X-RateLimit-Limit: 60
+X-RateLimit-Remaining: 26
+X-RateLimit-Used: 34
+X-RateLimit-Resource: core
+X-RateLimit-Reset: 1790425366
+Content-Length: 970433
+X-GitHub-Request-Id: 41C5:25A9A8:B96419:D7B4CE:6AB7AD37
+x-github-edge-region: westus3
+

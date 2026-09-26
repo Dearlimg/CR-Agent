@@ -1,0 +1,3703 @@
+diff --git a/doc/source/whatsnew/v0.24.0.txt b/doc/source/whatsnew/v0.24.0.txt
+index e4b31b21b11ac..47fef83d3015d 100644
+--- a/doc/source/whatsnew/v0.24.0.txt
++++ b/doc/source/whatsnew/v0.24.0.txt
+@@ -145,11 +145,11 @@ Current Behavior:
+ 
+ .. _whatsnew_0240.enhancements.interval:
+ 
+-Storing Interval Data in Series and DataFrame
+-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
++Storing Interval and Period Data in Series and DataFrame
++^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 
+-Interval data may now be stored in a ``Series`` or ``DataFrame``, in addition to an
+-:class:`IntervalIndex` like previously (:issue:`19453`).
++Interval and Period data may now be stored in a ``Series`` or ``DataFrame``, in addition to an
++:class:`IntervalIndex` and :class:`PeriodIndex` like previously (:issue:`19453`, :issue:`22862`).
+ 
+ .. ipython:: python
+ 
+@@ -157,21 +157,29 @@ Interval data may now be stored in a ``Series`` or ``DataFrame``, in addition to
+    ser
+    ser.dtype
+ 
+-Previously, these would be cast to a NumPy array of ``Interval`` objects. In general,
+-this should result in better performance when storing an array of intervals in
+-a :class:`Series`.
++And for periods:
++
++.. ipython:: python
++
++   pser = pd.Series(pd.date_range("2000", freq="D", periods=5))
++   pser
++   pser.dtype
++
++Previously, these would be cast to a NumPy array with object dtype. In general,
++this should result in better performance when storing an array of intervals or periods
++in a :class:`Series` or column of a :class:`DataFrame`.
+ 
+-Note that the ``.values`` of a ``Series`` containing intervals is no longer a NumPy
++Note that the ``.values`` of a ``Series`` containing one of these types is no longer a NumPy
+ array, but rather an ``ExtensionArray``:
+ 
+ .. ipython:: python
+ 
+    ser.values
++   pser.values
+ 
+ This is the same behavior as ``Series.values`` for categorical data. See
+ :ref:`whatsnew_0240.api_breaking.interval_values` for more.
+ 
+-
+ .. _whatsnew_0240.enhancements.other:
+ 
+ Other Enhancements
+@@ -360,7 +368,7 @@ New Behavior:
+ This mirrors ``CategoricalIndex.values``, which returns a ``Categorical``.
+ 
+ For situations where you need an ``ndarray`` of ``Interval`` objects, use
+-:meth:`numpy.asarray` or ``idx.astype(object)``.
++:meth:`numpy.asarray`.
+ 
+ .. ipython:: python
+ 
+@@ -810,6 +818,7 @@ update the ``ExtensionDtype._metadata`` tuple to match the signature of your
+ - Updated the ``.type`` attribute for ``PeriodDtype``, ``DatetimeTZDtype``, and ``IntervalDtype`` to be instances of the dtype (``Period``, ``Timestamp``, and ``Interval`` respectively) (:issue:`22938`)
+ - :func:`ExtensionArray.isna` is allowed to return an ``ExtensionArray`` (:issue:`22325`).
+ - Support for reduction operations such as ``sum``, ``mean`` via opt-in base class method override (:issue:`22762`)
++- :meth:`Series.unstack` no longer converts extension arrays to object-dtype ndarrays. The output ``DataFrame`` will now have the same dtype as the input. This changes behavior for Categorical and Sparse data (:issue:`23077`).
+ 
+ .. _whatsnew_0240.api.incompatibilities:
+ 
+diff --git a/pandas/core/arrays/__init__.py b/pandas/core/arrays/__init__.py
+index 0537b79541641..ea8837332633a 100644
+--- a/pandas/core/arrays/__init__.py
++++ b/pandas/core/arrays/__init__.py
+@@ -4,7 +4,7 @@
+ from .categorical import Categorical  # noqa
+ from .datetimes import DatetimeArrayMixin  # noqa
+ from .interval import IntervalArray  # noqa
+-from .period import PeriodArrayMixin  # noqa
++from .period import PeriodArray, period_array  # noqa
+ from .timedeltas import TimedeltaArrayMixin  # noqa
+ from .integer import (  # noqa
+     IntegerArray, integer_array)
+diff --git a/pandas/core/arrays/categorical.py b/pandas/core/arrays/categorical.py
+index 1bc0d18bead83..4363f3ccb14e2 100644
+--- a/pandas/core/arrays/categorical.py
++++ b/pandas/core/arrays/categorical.py
+@@ -29,6 +29,7 @@
+     is_categorical_dtype,
+     is_float_dtype,
+     is_integer_dtype,
++    is_object_dtype,
+     is_list_like, is_sequence,
+     is_scalar, is_iterator,
+     is_dict_like)
+@@ -342,7 +343,6 @@ def __init__(self, values, categories=None, ordered=None, dtype=None,
+         #    a.) use categories, ordered
+         #    b.) use values.dtype
+         #    c.) infer from values
+-
+         if dtype is not None:
+             # The dtype argument takes precedence over values.dtype (if any)
+             if isinstance(dtype, compat.string_types):
+@@ -2478,11 +2478,26 @@ def _get_codes_for_values(values, categories):
+     utility routine to turn values into codes given the specified categories
+     """
+     from pandas.core.algorithms import _get_data_algo, _hashtables
+-    if is_dtype_equal(values.dtype, categories.dtype):
++    dtype_equal = is_dtype_equal(values.dtype, categories.dtype)
++
++    if dtype_equal:
+         # To prevent erroneous dtype coercion in _get_data_algo, retrieve
+         # the underlying numpy array. gh-22702
+-        values = getattr(values, 'values', values)
+-        categories = getattr(categories, 'values', categories)
++        values = getattr(values, '_ndarray_values', values)
++        categories = getattr(categories, '_ndarray_values', categories)
++    elif (is_extension_array_dtype(categories.dtype) and
++          is_object_dtype(values)):
++        # Support inferring the correct extension dtype from an array of
++        # scalar objects. e.g.
++        # Categorical(array[Period, Period], categories=PeriodIndex(...))
++        try:
++            values = (
++                categories.dtype.construct_array_type()._from_sequence(values)
++            )
++        except Exception:
++            # but that may fail for any reason, so fall back to object
++            values = ensure_object(values)
++            categories = ensure_object(categories)
+     else:
+         values = ensure_object(values)
+         categories = ensure_object(categories)
+diff --git a/pandas/core/arrays/datetimelike.py b/pandas/core/arrays/datetimelike.py
+index 72bc5c2209d04..943c8a94e1e6a 100644
+--- a/pandas/core/arrays/datetimelike.py
++++ b/pandas/core/arrays/datetimelike.py
+@@ -474,17 +474,8 @@ def _addsub_int_array(self, other, op):
+         result : same class as self
+         """
+         assert op in [operator.add, operator.sub]
+-        if is_period_dtype(self):
+-            # easy case for PeriodIndex
+-            if op is operator.sub:
+-                other = -other
+-            res_values = checked_add_with_arr(self.asi8, other,
+-                                              arr_mask=self._isnan)
+-            res_values = res_values.view('i8')
+-            res_values[self._isnan] = iNaT
+-            return self._from_ordinals(res_values, freq=self.freq)
+-
+-        elif self.freq is None:
++
++        if self.freq is None:
+             # GH#19123
+             raise NullFrequencyError("Cannot shift with no freq")
+ 
+@@ -524,10 +515,9 @@ def _addsub_offset_array(self, other, op):
+         left = lib.values_from_object(self.astype('O'))
+ 
+         res_values = op(left, np.array(other))
+-        kwargs = {}
+         if not is_period_dtype(self):
+-            kwargs['freq'] = 'infer'
+-        return type(self)(res_values, **kwargs)
++            return type(self)(res_values, freq='infer')
++        return self._from_sequence(res_values)
+ 
+     @deprecate_kwarg(old_arg_name='n', new_arg_name='periods')
+     def shift(self, periods, freq=None):
+diff --git a/pandas/core/arrays/datetimes.py b/pandas/core/arrays/datetimes.py
+index b6574c121c087..e269f2e02ddfd 100644
+--- a/pandas/core/arrays/datetimes.py
++++ b/pandas/core/arrays/datetimes.py
+@@ -832,7 +832,7 @@ def to_period(self, freq=None):
+         pandas.PeriodIndex: Immutable ndarray holding ordinal values
+         pandas.DatetimeIndex.to_pydatetime: Return DatetimeIndex as object
+         """
+-        from pandas.core.arrays import PeriodArrayMixin
++        from pandas.core.arrays import PeriodArray
+ 
+         if self.tz is not None:
+             warnings.warn("Converting to PeriodArray/Index representation "
+@@ -847,7 +847,7 @@ def to_period(self, freq=None):
+ 
+             freq = get_period_alias(freq)
+ 
+-        return PeriodArrayMixin(self.values, freq=freq)
++        return PeriodArray._from_datetime64(self.values, freq, tz=self.tz)
+ 
+     def to_perioddelta(self, freq):
+         """
+diff --git a/pandas/core/arrays/period.py b/pandas/core/arrays/period.py
+index 1426b9690f4df..085298d8324c5 100644
+--- a/pandas/core/arrays/period.py
++++ b/pandas/core/arrays/period.py
+@@ -1,41 +1,60 @@
+ # -*- coding: utf-8 -*-
+ from datetime import timedelta
+ import operator
+-import warnings
+ 
+ import numpy as np
+ 
++from pandas import compat
++from pandas.compat.numpy import function as nv
+ from pandas._libs import lib
+ from pandas._libs.tslib import NaT, iNaT
+ from pandas._libs.tslibs.period import (
+     Period, IncompatibleFrequency, DIFFERENT_FREQ_INDEX,
+-    get_period_field_arr, period_asfreq_arr)
++    get_period_field_arr, period_asfreq_arr,
++)
+ from pandas._libs.tslibs import period as libperiod
+ from pandas._libs.tslibs.timedeltas import delta_to_nanoseconds, Timedelta
+ from pandas._libs.tslibs.fields import isleapyear_arr
++from pandas.util._decorators import cache_readonly
++from pandas.util._validators import validate_fillna_kwargs
++import pandas.core.algorithms as algos
++from pandas.core.dtypes.common import (
++    is_integer_dtype, is_float_dtype, is_period_dtype,
++    pandas_dtype,
++    is_datetime64_dtype,
++    is_categorical_dtype,
++    is_timedelta64_dtype,
++    is_list_like,
++    is_array_like,
++    is_object_dtype,
++    is_string_dtype,
++    is_datetime_or_timedelta_dtype,
++    is_dtype_equal,
++    ensure_object,
++    _TD_DTYPE,
++)
+ 
+-from pandas import compat
+-from pandas.util._decorators import (cache_readonly, deprecate_kwarg)
+ 
+-from pandas.core.dtypes.common import (
+-    is_integer_dtype, is_float_dtype, is_period_dtype, is_timedelta64_dtype,
+-    is_datetime64_dtype, _TD_DTYPE)
+ from pandas.core.dtypes.dtypes import PeriodDtype
+-from pandas.core.dtypes.generic import ABCSeries
++from pandas.core.dtypes.generic import (
++    ABCSeries, ABCIndexClass, ABCPeriodIndex
++)
++from pandas.core.dtypes.missing import isna
++from pandas.core.missing import pad_1d, backfill_1d
+ 
+ import pandas.core.common as com
+ 
+ from pandas.tseries import frequencies
+ from pandas.tseries.offsets import Tick, DateOffset
+ 
++from pandas.core.arrays import ExtensionArray
+ from pandas.core.arrays import datetimelike as dtl
+-from pandas.core.arrays.datetimelike import DatetimeLikeArrayMixin
+ 
+ 
+ def _field_accessor(name, alias, docstring=None):
+     def f(self):
+         base, mult = frequencies.get_freq_code(self.freq)
+-        result = get_period_field_arr(alias, self._ndarray_values, base)
++        result = get_period_field_arr(alias, self.asi8, base)
+         return result
+ 
+     f.__name__ = name
+@@ -51,19 +70,29 @@ def _period_array_cmp(cls, op):
+     nat_result = True if opname == '__ne__' else False
+ 
+     def wrapper(self, other):
+-        op = getattr(self._ndarray_values, opname)
++        op = getattr(self.asi8, opname)
++        # We want to eventually defer to the Series or PeriodIndex (which will
++        # return here with an unboxed PeriodArray). But before we do that,
++        # we do a bit of validation on type (Period) and freq, so that our
++        # error messages are sensible
++        not_implemented = isinstance(other, (ABCSeries, ABCIndexClass))
++        if not_implemented:
++            other = other._values
++
+         if isinstance(other, Period):
+             if other.freq != self.freq:
+                 msg = DIFFERENT_FREQ_INDEX.format(self.freqstr, other.freqstr)
+                 raise IncompatibleFrequency(msg)
+ 
+             result = op(other.ordinal)
+-        elif isinstance(other, PeriodArrayMixin):
++        elif isinstance(other, cls):
+             if other.freq != self.freq:
+                 msg = DIFFERENT_FREQ_INDEX.format(self.freqstr, other.freqstr)
+                 raise IncompatibleFrequency(msg)
+ 
+-            result = op(other._ndarray_values)
++            if not_implemented:
++                return NotImplemented
++            result = op(other.asi8)
+ 
+             mask = self._isnan | other._isnan
+             if mask.any():
+@@ -71,7 +100,7 @@ def wrapper(self, other):
+ 
+             return result
+         elif other is NaT:
+-            result = np.empty(len(self._ndarray_values), dtype=bool)
++            result = np.empty(len(self.asi8), dtype=bool)
+             result.fill(nat_result)
+         else:
+             other = Period(other, freq=self.freq)
+@@ -85,94 +114,131 @@ def wrapper(self, other):
+     return compat.set_function_name(wrapper, opname, cls)
+ 
+ 
+-class PeriodArrayMixin(DatetimeLikeArrayMixin):
+-    @property
+-    def _box_func(self):
+-        return lambda x: Period._from_ordinal(ordinal=x, freq=self.freq)
+-
+-    @cache_readonly
+-    def dtype(self):
+-        return PeriodDtype.construct_from_string(self.freq)
+-
+-    @property
+-    def _ndarray_values(self):
+-        # Ordinals
+-        return self._data
+-
+-    @property
+-    def asi8(self):
+-        return self._ndarray_values.view('i8')
+-
+-    @property
+-    def freq(self):
+-        """Return the frequency object if it is set, otherwise None"""
+-        return self._freq
+-
+-    @freq.setter
+-    def freq(self, value):
+-        msg = ('Setting {cls}.freq has been deprecated and will be '
+-               'removed in a future version; use {cls}.asfreq instead. '
+-               'The {cls}.freq setter is not guaranteed to work.')
+-        warnings.warn(msg.format(cls=type(self).__name__),
+-                      FutureWarning, stacklevel=2)
+-        self._freq = value
++class PeriodArray(dtl.DatetimeLikeArrayMixin, ExtensionArray):
++    """
++    Pandas ExtensionArray for storing Period data.
++
++    Users should use :func:`period_array` to create new instances.
++
++    Parameters
++    ----------
++    values : Union[PeriodArray, Series[period], ndarary[int], PeriodIndex]
++        The data to store. These should be arrays that can be directly
++        converted to ordinals without inference or copy (PeriodArray,
++        ndarray[int64]), or a box around such an array (Series[period],
++        PeriodIndex).
++    freq : str or DateOffset
++        The `freq` to use for the array. Mostly applicable when `values`
++        is an ndarray of integers, when `freq` is required. When `values`
++        is a PeriodArray (or box around), it's checked that ``values.freq``
++        matches `freq`.
++    copy : bool, default False
++        Whether to copy the ordinals before storing.
++
++    Notes
++    -----
++    There are two components to a PeriodArray
++
++    - ordinals : integer ndarray
++    - freq : pd.tseries.offsets.Offset
++
++    The values are physically stored as a 1-D ndarray of integers. These are
++    called "ordinals" and represent some kind of offset from a base.
++
++    The `freq` indicates the span covered by each element of the array.
++    All elements in the PeriodArray have the same `freq`.
++
++    See Also
++    --------
++    period_array : Create a new PeriodArray
++    pandas.PeriodIndex : Immutable Index for period data
++    """
++    _attributes = ["freq"]
++    _typ = "periodarray"  # ABCPeriodArray
++
++    # Names others delegate to us
++    _other_ops = []
++    _bool_ops = ['is_leap_year']
++    _object_ops = ['start_time', 'end_time', 'freq']
++    _field_ops = ['year', 'month', 'day', 'hour', 'minute', 'second',
++                  'weekofyear', 'weekday', 'week', 'dayofweek',
++                  'dayofyear', 'quarter', 'qyear',
++                  'days_in_month', 'daysinmonth']
++    _datetimelike_ops = _field_ops + _object_ops + _bool_ops
++    _datetimelike_methods = ['strftime', 'to_timestamp', 'asfreq']
+ 
+     # --------------------------------------------------------------------
+     # Constructors
++    def __init__(self, values, freq=None, copy=False):
++        if freq is not None:
++            freq = Period._maybe_convert_freq(freq)
+ 
+-    _attributes = ["freq"]
++        if isinstance(values, ABCSeries):
++            values = values._values
++            if not isinstance(values, type(self)):
++                raise TypeError("Incorrect dtype")
+ 
+-    def __new__(cls, values, freq=None, **kwargs):
+-        if is_period_dtype(values):
+-            # PeriodArray, PeriodIndex
+-            if freq is not None and values.freq != freq:
+-                raise IncompatibleFrequency(freq, values.freq)
+-            freq = values.freq
+-            values = values.asi8
++        elif isinstance(values, ABCPeriodIndex):
++            values = values._values
+ 
+-        elif is_datetime64_dtype(values):
+-            # TODO: what if it has tz?
+-            values = dt64arr_to_periodarr(values, freq)
++        if isinstance(values, type(self)):
++            if freq is not None and freq != values.freq:
++                msg = DIFFERENT_FREQ_INDEX.format(values.freq.freqstr,
++                                                  freq.freqstr)
++                raise IncompatibleFrequency(msg)
++            values, freq = values._data, values.freq
+ 
+-        return cls._simple_new(values, freq=freq, **kwargs)
++        values = np.array(values, dtype='int64', copy=copy)
++        self._data = values
++        if freq is None:
++            raise ValueError('freq is not specified and cannot be inferred')
++        self._dtype = PeriodDtype(freq)
+ 
+     @classmethod
+     def _simple_new(cls, values, freq=None, **kwargs):
+-        """
+-        Values can be any type that can be coerced to Periods.
+-        Ordinals in an ndarray are fastpath-ed to `_from_ordinals`
+-        """
++        # TODO(DatetimeArray): remove once all constructors are aligned.
++        # alias from PeriodArray.__init__
++        return cls(values, freq=freq, **kwargs)
+ 
+-        if is_period_dtype(values):
+-            freq = dtl.validate_dtype_freq(values.dtype, freq)
+-            values = values.asi8
++    @classmethod
++    def _from_sequence(cls, scalars, dtype=None, copy=False):
++        # type: (Sequence[Optional[Period]], PeriodDtype, bool) -> PeriodArray
++        if dtype:
++            freq = dtype.freq
++        else:
++            freq = None
++        periods = np.asarray(scalars, dtype=object)
++        if copy:
++            periods = periods.copy()
+ 
+-        if not is_integer_dtype(values):
+-            values = np.array(values, copy=False)
+-            if len(values) > 0 and is_float_dtype(values):
+-                raise TypeError("{cls} can't take floats"
+-                                .format(cls=cls.__name__))
+-            return cls(values, freq=freq, **kwargs)
++        freq = freq or libperiod.extract_freq(periods)
++        ordinals = libperiod.extract_ordinals(periods, freq)
++        return cls(ordinals, freq=freq)
+ 
+-        return cls._from_ordinals(values, freq=freq, **kwargs)
++    def _values_for_factorize(self):
++        return self.asi8, iNaT
+ 
+     @classmethod
+-    def _from_ordinals(cls, values, freq=None, **kwargs):
+-        """
+-        Values should be int ordinals
+-        `__new__` & `_simple_new` cooerce to ordinals and call this method
+-        """
+-        # **kwargs are included so that the signature matches PeriodIndex,
+-        #  letting us share _simple_new
++    def _from_factorized(cls, values, original):
++        # type: (Sequence[Optional[Period]], PeriodArray) -> PeriodArray
++        return cls(values, freq=original.freq)
+ 
+-        values = np.array(values, dtype='int64', copy=False)
++    @classmethod
++    def _from_datetime64(cls, data, freq, tz=None):
++        """Construct a PeriodArray from a datetime64 array
+ 
+-        result = object.__new__(cls)
+-        result._data = values
+-        if freq is None:
+-            raise ValueError('freq is not specified and cannot be inferred')
+-        result._freq = Period._maybe_convert_freq(freq)
+-        return result
++        Parameters
++        ----------
++        data : ndarray[datetime64[ns], datetime64[ns, tz]]
++        freq : str or Tick
++        tz : tzinfo, optional
++
++        Returns
++        -------
++        PeriodArray[freq]
++        """
++        data, freq = dt64arr_to_periodarr(data, freq, tz)
++        return cls(data, freq=freq)
+ 
+     @classmethod
+     def _generate_range(cls, start, end, periods, freq, fields):
+@@ -195,6 +261,39 @@ def _generate_range(cls, start, end, periods, freq, fields):
+ 
+         return subarr, freq
+ 
++    @classmethod
++    def _concat_same_type(cls, to_concat):
++        freq = {x.freq for x in to_concat}
++        assert len(freq) == 1
++        freq = list(freq)[0]
++        values = np.concatenate([x._data for x in to_concat])
++        return cls(values, freq=freq)
++
++    # --------------------------------------------------------------------
++    # Data / Attributes
++    @property
++    def nbytes(self):
++        # TODO(DatetimeArray): remove
++        return self._data.nbytes
++
++    @cache_readonly
++    def dtype(self):
++        return self._dtype
++
++    @property
++    def _ndarray_values(self):
++        # Ordinals
++        return self._data
++
++    @property
++    def asi8(self):
++        return self._data
++
++    @property
++    def freq(self):
++        """Return the frequency object for this PeriodArray."""
++        return self.dtype.freq
++
+     # --------------------------------------------------------------------
+     # Vectorized analogues of Period properties
+ 
+@@ -230,6 +329,183 @@ def start_time(self):
+     def end_time(self):
+         return self.to_timestamp(how='end')
+ 
++    def __repr__(self):
++        return '<{}>\n{}\nLength: {}, dtype: {}'.format(
++            self.__class__.__name__,
++            [str(s) for s in self],
++            len(self),
++            self.dtype
++        )
++
++    def __setitem__(
++            self,
++            key,   # type: Union[int, Sequence[int], Sequence[bool]]
++            value  # type: Union[NaTType, Period, Sequence[Period]]
++    ):
++        # type: (...) -> None
++        # n.b. the type on `value` is a bit too restrictive.
++        # we also accept a sequence of stuff coercible to a PeriodArray
++        # by period_array, which includes things like ndarray[object],
++        # ndarray[datetime64ns]. I think ndarray[int] / ndarray[str] won't
++        # work, since the freq can't be inferred.
++        if is_list_like(value):
++            if len(key) != len(value) and not com.is_bool_indexer(key):
++                msg = ("shape mismatch: value array of length '{}' does not "
++                       "match indexing result of length '{}'.")
++                raise ValueError(msg.format(len(key), len(value)))
++            if len(key) == 0:
++                return
++
++            value = period_array(value)
++
++            if self.freqstr != value.freqstr:
++                msg = DIFFERENT_FREQ_INDEX.format(self.freqstr, value.freqstr)
++                raise IncompatibleFrequency(msg)
++
++            value = value.asi8
++        elif isinstance(value, Period):
++
++            if self.freqstr != value.freqstr:
++                msg = DIFFERENT_FREQ_INDEX.format(self.freqstr, value.freqstr)
++                raise IncompatibleFrequency(msg)
++
++            value = value.ordinal
++        elif isna(value):
++            value = iNaT
++        else:
++            msg = ("'value' should be a 'Period', 'NaT', or array of those. "
++                   "Got '{}' instead.".format(type(value).__name__))
++            raise TypeError(msg)
++        self._data[key] = value
++
++    def take(self, indices, allow_fill=False, fill_value=None):
++        if allow_fill:
++            if isna(fill_value):
++                fill_value = iNaT
++            elif isinstance(fill_value, Period):
++                if self.freq != fill_value.freq:
++                    msg = DIFFERENT_FREQ_INDEX.format(
++                        self.freq.freqstr,
++                        fill_value.freqstr
++                    )
++                    raise IncompatibleFrequency(msg)
++
++                fill_value = fill_value.ordinal
++            else:
++                msg = "'fill_value' should be a Period. Got '{}'."
++                raise ValueError(msg.format(fill_value))
++
++        new_values = algos.take(self._data,
++                                indices,
++                                allow_fill=allow_fill,
++                                fill_value=fill_value)
++
++        return type(self)(new_values, self.freq)
++
++    def isna(self):
++        return self._data == iNaT
++
++    def fillna(self, value=None, method=None, limit=None):
++        # TODO(#20300)
++        # To avoid converting to object, we re-implement here with the changes
++        # 1. Passing `_data` to func instead of self.astype(object)
++        # 2. Re-boxing output of 1.
++        # #20300 should let us do this kind of logic on ExtensionArray.fillna
++        # and we can use it.
++
++        if isinstance(value, ABCSeries):
++            value = value._values
++
++        value, method = validate_fillna_kwargs(value, method)
++
++        mask = self.isna()
++
++        if is_array_like(value):
++            if len(value) != len(self):
++                raise ValueError("Length of 'value' does not match. Got ({}) "
++                                 " expected {}".format(len(value), len(self)))
++            value = value[mask]
++
++        if mask.any():
++            if method is not None:
++                func = pad_1d if method == 'pad' else backfill_1d
++                new_values = func(self._data, limit=limit,
++                                  mask=mask)
++                new_values = type(self)(new_values, freq=self.freq)
++            else:
++                # fill with value
++                new_values = self.copy()
++                new_values[mask] = value
++        else:
++            new_values = self.copy()
++        return new_values
++
++    def copy(self, deep=False):
++        return type(self)(self._data.copy(), freq=self.freq)
++
++    def value_counts(self, dropna=False):
++        from pandas import Series, PeriodIndex
++
++        if dropna:
++            values = self[~self.isna()]._data
++        else:
++            values = self._data
++
++        cls = type(self)
++
++        result = algos.value_counts(values, sort=False)
++        index = PeriodIndex(cls(result.index, freq=self.freq),
++                            name=result.index.name)
++        return Series(result.values, index=index, name=result.name)
++
++    def shift(self, periods=1):
++        """
++        Shift values by desired number.
++
++        Newly introduced missing values are filled with
++        ``self.dtype.na_value``.
++
++        .. versionadded:: 0.24.0
++
++        Parameters
++        ----------
++        periods : int, default 1
++            The number of periods to shift. Negative values are allowed
++            for shifting backwards.
++
++        Returns
++        -------
++        shifted : PeriodArray
++        """
++        # TODO(DatetimeArray): remove
++        # The semantics for Index.shift differ from EA.shift
++        # then just call super.
++        return ExtensionArray.shift(self, periods)
++
++    def _time_shift(self, n, freq=None):
++        """
++        Shift each value by `periods`.
++
++        Note this is different from ExtensionArray.shift, which
++        shifts the *position* of each element, padding the end with
++        missing values.
++
++        Parameters
++        ----------
++        periods : int
++            Number of periods to shift by.
++        freq : pandas.DateOffset, pandas.Timedelta, or string
++            Frequency increment to shift by.
++        """
++        values = self._data + n * self.freq.n
++        if self.hasnans:
++            values[self._isnan] = iNaT
++        return type(self)(values, freq=self.freq)
++
++    @property
++    def _box_func(self):
++        return lambda x: Period._from_ordinal(ordinal=x, freq=self.freq)
++
+     def asfreq(self, freq=None, how='E'):
+         """
+         Convert the Period Array/Index to the specified frequency `freq`.
+@@ -287,7 +563,7 @@ def asfreq(self, freq=None, how='E'):
+         if self.hasnans:
+             new_data[self._isnan] = iNaT
+ 
+-        return self._shallow_copy(new_data, freq=freq)
++        return type(self)(new_data, freq=freq)
+ 
+     def to_timestamp(self, freq=None, how='start'):
+         """
+@@ -327,126 +603,9 @@ def to_timestamp(self, freq=None, how='start'):
+         base, mult = frequencies.get_freq_code(freq)
+         new_data = self.asfreq(freq, how=how)
+ 
+-        new_data = libperiod.periodarr_to_dt64arr(new_data._ndarray_values,
+-                                                  base)
++        new_data = libperiod.periodarr_to_dt64arr(new_data.asi8, base)
+         return DatetimeArrayMixin(new_data, freq='infer')
+ 
+-    # ------------------------------------------------------------------
+-    # Arithmetic Methods
+-
+-    _create_comparison_method = classmethod(_period_array_cmp)
+-
+-    def _sub_datelike(self, other):
+-        assert other is not NaT
+-        return NotImplemented
+-
+-    def _sub_period(self, other):
+-        # If the operation is well-defined, we return an object-Index
+-        # of DateOffsets.  Null entries are filled with pd.NaT
+-        if self.freq != other.freq:
+-            msg = DIFFERENT_FREQ_INDEX.format(self.freqstr, other.freqstr)
+-            raise IncompatibleFrequency(msg)
+-
+-        asi8 = self.asi8
+-        new_data = asi8 - other.ordinal
+-        new_data = np.array([self.freq * x for x in new_data])
+-
+-        if self.hasnans:
+-            new_data[self._isnan] = NaT
+-
+-        return new_data
+-
+-    def _add_offset(self, other):
+-        assert not isinstance(other, Tick)
+-        base = frequencies.get_base_alias(other.rule_code)
+-        if base != self.freq.rule_code:
+-            msg = DIFFERENT_FREQ_INDEX.format(self.freqstr, other.freqstr)
+-            raise IncompatibleFrequency(msg)
+-        return self._time_shift(other.n)
+-
+-    def _add_delta_td(self, other):
+-        assert isinstance(self.freq, Tick)  # checked by calling function
+-        assert isinstance(other, (timedelta, np.timedelta64, Tick))
+-
+-        delta = self._check_timedeltalike_freq_compat(other)
+-
+-        # Note: when calling parent class's _add_delta_td, it will call
+-        #  delta_to_nanoseconds(delta).  Because delta here is an integer,
+-        #  delta_to_nanoseconds will return it unchanged.
+-        return DatetimeLikeArrayMixin._add_delta_td(self, delta)
+-
+-    def _add_delta_tdi(self, other):
+-        assert isinstance(self.freq, Tick)  # checked by calling function
+-
+-        delta = self._check_timedeltalike_freq_compat(other)
+-        return self._addsub_int_array(delta, operator.add)
+-
+-    def _add_delta(self, other):
+-        """
+-        Add a timedelta-like, Tick, or TimedeltaIndex-like object
+-        to self.
+-
+-        Parameters
+-        ----------
+-        other : {timedelta, np.timedelta64, Tick,
+-                 TimedeltaIndex, ndarray[timedelta64]}
+-
+-        Returns
+-        -------
+-        result : same type as self
+-        """
+-        if not isinstance(self.freq, Tick):
+-            # We cannot add timedelta-like to non-tick PeriodArray
+-            raise IncompatibleFrequency("Input has different freq from "
+-                                        "{cls}(freq={freqstr})"
+-                                        .format(cls=type(self).__name__,
+-                                                freqstr=self.freqstr))
+-
+-        # TODO: standardize across datetimelike subclasses whether to return
+-        #  i8 view or _shallow_copy
+-        if isinstance(other, (Tick, timedelta, np.timedelta64)):
+-            new_values = self._add_delta_td(other)
+-            return self._shallow_copy(new_values)
+-        elif is_timedelta64_dtype(other):
+-            # ndarray[timedelta64] or TimedeltaArray/index
+-            new_values = self._add_delta_tdi(other)
+-            return self._shallow_copy(new_values)
+-        else:  # pragma: no cover
+-            raise TypeError(type(other).__name__)
+-
+-    @deprecate_kwarg(old_arg_name='n', new_arg_name='periods')
+-    def shift(self, periods):
+-        """
+-        Shift index by desired number of increments.
+-
+-        This method is for shifting the values of period indexes
+-        by a specified time increment.
+-
+-        Parameters
+-        ----------
+-        periods : int
+-            Number of periods (or increments) to shift by,
+-            can be positive or negative.
+-
+-            .. versionchanged:: 0.24.0
+-
+-        Returns
+-        -------
+-        pandas.PeriodIndex
+-            Shifted index.
+-
+-        See Also
+-        --------
+-        DatetimeIndex.shift : Shift values of DatetimeIndex.
+-        """
+-        return self._time_shift(periods)
+-
+-    def _time_shift(self, n):
+-        values = self._ndarray_values + n * self.freq.n
+-        if self.hasnans:
+-            values[self._isnan] = iNaT
+-        return self._shallow_copy(values=values)
+-
+     def _maybe_convert_timedelta(self, other):
+         """
+         Convert timedelta-like input to an integer multiple of self.freq
+@@ -489,6 +648,29 @@ def _maybe_convert_timedelta(self, other):
+         raise IncompatibleFrequency(msg.format(cls=type(self).__name__,
+                                                freqstr=self.freqstr))
+ 
++    # ------------------------------------------------------------------
++    # Formatting
++    def _format_native_types(self, na_rep=u'NaT', date_format=None,
++                             **kwargs):
++        """ actually format my specific types """
++        # TODO(DatetimeArray): remove
++        values = self.astype(object)
++
++        if date_format:
++            formatter = lambda dt: dt.strftime(date_format)
++        else:
++            formatter = lambda dt: u'%s' % dt
++
++        if self.hasnans:
++            mask = self._isnan
++            values[mask] = na_rep
++            imask = ~mask
++            values[imask] = np.array([formatter(dt) for dt
++                                      in values[imask]])
++        else:
++            values = np.array([formatter(dt) for dt in values])
++        return values
++
+     def _check_timedeltalike_freq_compat(self, other):
+         """
+         Arithmetic operations with timedelta-like scalars or array `other`
+@@ -541,21 +723,298 @@ def _check_timedeltalike_freq_compat(self, other):
+                                     .format(cls=type(self).__name__,
+                                             freqstr=self.freqstr))
+ 
++    def repeat(self, repeats, *args, **kwargs):
++        """
++        Repeat elements of a Categorical.
++
++        See also
++        --------
++        numpy.ndarray.repeat
++        """
++        # TODO(DatetimeArray): remove
++        nv.validate_repeat(args, kwargs)
++        values = self._data.repeat(repeats)
++        return type(self)(values, self.freq)
++
++    # Delegation...
++    def strftime(self, date_format):
++        return self._format_native_types(date_format=date_format)
++
++    def astype(self, dtype, copy=True):
++        # TODO: Figure out something better here...
++        # We have DatetimeLikeArrayMixin ->
++        #     super(...), which ends up being... DatetimeIndexOpsMixin?
++        # this is complicated.
++        # need a pandas_astype(arr, dtype).
++        from pandas import Categorical
++
++        dtype = pandas_dtype(dtype)
++
++        if is_object_dtype(dtype):
++            return np.asarray(self, dtype=object)
++        elif is_string_dtype(dtype) and not is_categorical_dtype(dtype):
++            return self._format_native_types()
++        elif is_integer_dtype(dtype):
++            values = self._data
++
++            if values.dtype != dtype:
++                # int32 vs. int64
++                values = values.astype(dtype)
++
++            elif copy:
++                values = values.copy()
++
++            return values
++        elif (is_datetime_or_timedelta_dtype(dtype) and
++              not is_dtype_equal(self.dtype, dtype)) or is_float_dtype(dtype):
++            # disallow conversion between datetime/timedelta,
++            # and conversions for any datetimelike to float
++            msg = 'Cannot cast {name} to dtype {dtype}'
++            raise TypeError(msg.format(name=type(self).__name__, dtype=dtype))
++        elif is_categorical_dtype(dtype):
++            return Categorical(self, dtype=dtype)
++        elif is_period_dtype(dtype):
++            return self.asfreq(dtype.freq)
++        else:
++            return np.asarray(self, dtype=dtype)
++
++    @property
++    def flags(self):
++        # TODO: remove
++        # We need this since reduction.SeriesBinGrouper uses values.flags
++        # Ideally, we wouldn't be passing objects down there in the first
++        # place.
++        return self._data.flags
++
++    # ------------------------------------------------------------------
++    # Arithmetic Methods
++    _create_comparison_method = classmethod(_period_array_cmp)
++
++    def _sub_datelike(self, other):
++        assert other is not NaT
++        return NotImplemented
++
++    def _sub_period(self, other):
++        # If the operation is well-defined, we return an object-Index
++        # of DateOffsets.  Null entries are filled with pd.NaT
++        if self.freq != other.freq:
++            msg = DIFFERENT_FREQ_INDEX.format(self.freqstr, other.freqstr)
++            raise IncompatibleFrequency(msg)
++
++        asi8 = self.asi8
++        new_data = asi8 - other.ordinal
++        new_data = np.array([self.freq * x for x in new_data])
++
++        if self.hasnans:
++            new_data[self._isnan] = NaT
+ 
+-PeriodArrayMixin._add_comparison_ops()
+-PeriodArrayMixin._add_datetimelike_methods()
++        return new_data
++
++    def _addsub_int_array(
++            self,
++            other,  # type: Union[Index, ExtensionArray, np.ndarray[int]]
++            op,     # type: Callable[Any, Any]
++    ):
++        # type: (...) -> PeriodArray
++        assert op in [operator.add, operator.sub]
++        # easy case for PeriodIndex
++        if op is operator.sub:
++            other = -other
++        res_values = algos.checked_add_with_arr(self.asi8, other,
++                                                arr_mask=self._isnan)
++        res_values = res_values.view('i8')
++        res_values[self._isnan] = iNaT
++        return type(self)(res_values, freq=self.freq)
++
++    def _add_offset(self, other):
++        assert not isinstance(other, Tick)
++        base = frequencies.get_base_alias(other.rule_code)
++        if base != self.freq.rule_code:
++            msg = DIFFERENT_FREQ_INDEX.format(self.freqstr, other.freqstr)
++            raise IncompatibleFrequency(msg)
++        return self._time_shift(other.n)
++
++    def _add_delta_td(self, other):
++        assert isinstance(self.freq, Tick)  # checked by calling function
++        assert isinstance(other, (timedelta, np.timedelta64, Tick))
++
++        delta = self._check_timedeltalike_freq_compat(other)
++
++        # Note: when calling parent class's _add_delta_td, it will call
++        #  delta_to_nanoseconds(delta).  Because delta here is an integer,
++        #  delta_to_nanoseconds will return it unchanged.
++        ordinals = super(PeriodArray, self)._add_delta_td(delta)
++        return type(self)(ordinals, self.freq)
++
++    def _add_delta_tdi(self, other):
++        assert isinstance(self.freq, Tick)  # checked by calling function
++
++        delta = self._check_timedeltalike_freq_compat(other)
++        return self._addsub_int_array(delta, operator.add)
++
++    def _add_delta(self, other):
++        """
++        Add a timedelta-like, Tick, or TimedeltaIndex-like object
++        to self.
++
++        Parameters
++        ----------
++        other : {timedelta, np.timedelta64, Tick,
++                 TimedeltaIndex, ndarray[timedelta64]}
++
++        Returns
++        -------
++        result : same type as self
++        """
++        if not isinstance(self.freq, Tick):
++            # We cannot add timedelta-like to non-tick PeriodArray
++            raise IncompatibleFrequency("Input has different freq from "
++                                        "{cls}(freq={freqstr})"
++                                        .format(cls=type(self).__name__,
++                                                freqstr=self.freqstr))
++
++        # TODO: standardize across datetimelike subclasses whether to return
++        #  i8 view or _shallow_copy
++        if isinstance(other, (Tick, timedelta, np.timedelta64)):
++            return self._add_delta_td(other)
++        elif is_timedelta64_dtype(other):
++            # ndarray[timedelta64] or TimedeltaArray/index
++            return self._add_delta_tdi(other)
++        else:  # pragma: no cover
++            raise TypeError(type(other).__name__)
++
++
++PeriodArray._add_comparison_ops()
++PeriodArray._add_datetimelike_methods()
+ 
+ 
+ # -------------------------------------------------------------------
+ # Constructor Helpers
+ 
++def period_array(data, freq=None, copy=False):
++    # type: (Sequence[Optional[Period]], Optional[Tick]) -> PeriodArray
++    """
++    Construct a new PeriodArray from a sequence of Period scalars.
++
++    Parameters
++    ----------
++    data : Sequence of Period objects
++        A sequence of Period objects. These are required to all have
++        the same ``freq.`` Missing values can be indicated by ``None``
++        or ``pandas.NaT``.
++    freq : str, Tick, or Offset
++        The frequency of every element of the array. This can be specified
++        to avoid inferring the `freq` from `data`.
++    copy : bool, default False
++        Whether to ensure a copy of the data is made.
++
++    Returns
++    -------
++    PeriodArray
++
++    See Also
++    --------
++    PeriodArray
++    pandas.PeriodIndex
++
++    Examples
++    --------
++    >>> period_array([pd.Period('2017', freq='A'),
++    ...               pd.Period('2018', freq='A')])
++    <PeriodArray>
++    ['2017', '2018']
++    Length: 2, dtype: period[A-DEC]
++
++    >>> period_array([pd.Period('2017', freq='A'),
++    ...               pd.Period('2018', freq='A'),
++    ...               pd.NaT])
++    <PeriodArray>
++    ['2017', '2018', 'NaT']
++    Length: 3, dtype: period[A-DEC]
++
++    Integers that look like years are handled
++
++    >>> period_array([2000, 2001, 2002], freq='D')
++    ['2000-01-01', '2001-01-01', '2002-01-01']
++    Length: 3, dtype: period[D]
++
++    Datetime-like strings may also be passed
++
++    >>> period_array(['2000-Q1', '2000-Q2', '2000-Q3', '2000-Q4'], freq='Q')
++    <PeriodArray>
++    ['2000Q1', '2000Q2', '2000Q3', '2000Q4']
++    Length: 4, dtype: period[Q-DEC]
++    """
++    if is_datetime64_dtype(data):
++        return PeriodArray._from_datetime64(data, freq)
++    if isinstance(data, (ABCPeriodIndex, ABCSeries, PeriodArray)):
++        return PeriodArray(data, freq)
++
++    # other iterable of some kind
++    if not isinstance(data, (np.ndarray, list, tuple)):
++        data = list(data)
++
++    data = np.asarray(data)
++
++    if freq:
++        dtype = PeriodDtype(freq)
++    else:
++        dtype = None
++
++    if is_float_dtype(data) and len(data) > 0:
++        raise TypeError("PeriodIndex does not allow "
++                        "floating point in construction")
++
++    data = ensure_object(data)
++
++    return PeriodArray._from_sequence(data, dtype=dtype)
++
++
+ def dt64arr_to_periodarr(data, freq, tz=None):
++    """
++    Convert an datetime-like array to values Period ordinals.
++
++    Parameters
++    ----------
++    data : Union[Series[datetime64[ns]], DatetimeIndex, ndarray[datetime64ns]]
++    freq : Optional[Union[str, Tick]]
++        Must match the `freq` on the `data` if `data` is a DatetimeIndex
++        or Series.
++    tz : Optional[tzinfo]
++
++    Returns
++    -------
++    ordinals : ndarray[int]
++    freq : Tick
++        The frequencey extracted from the Series or DatetimeIndex if that's
++        used.
++
++    """
+     if data.dtype != np.dtype('M8[ns]'):
+         raise ValueError('Wrong dtype: %s' % data.dtype)
+ 
+-    freq = Period._maybe_convert_freq(freq)
++    if freq is not None:
++        freq = Period._maybe_convert_freq(freq)
++
++    if isinstance(data, ABCIndexClass):
++        if freq is None:
++            freq = data.freq
++        elif freq != data.freq:
++            msg = DIFFERENT_FREQ_INDEX.format(freq.freqstr, data.freq.freqstr)
++            raise IncompatibleFrequency(msg)
++        data = data._values
++
++    elif isinstance(data, ABCSeries):
++        if freq is None:
++            freq = data.dt.freq
++        elif freq != data.dt.freq:
++            msg = DIFFERENT_FREQ_INDEX.format(freq.freqstr,
++                                              data.dt.freq.freqstr)
++            raise IncompatibleFrequency(msg)
++        data = data._values
++
+     base, mult = frequencies.get_freq_code(freq)
+-    return libperiod.dt64arr_to_periodarr(data.view('i8'), base, tz)
++    return libperiod.dt64arr_to_periodarr(data.view('i8'), base, tz), freq
+ 
+ 
+ def _get_ordinal_range(start, end, periods, freq, mult=1):
+diff --git a/pandas/core/dtypes/common.py b/pandas/core/dtypes/common.py
+index af5e1523c7cec..da26c2ef74b41 100644
+--- a/pandas/core/dtypes/common.py
++++ b/pandas/core/dtypes/common.py
+@@ -14,7 +14,7 @@
+ from pandas.core.dtypes.generic import (
+     ABCCategorical, ABCPeriodIndex, ABCDatetimeIndex, ABCSeries,
+     ABCSparseArray, ABCSparseSeries, ABCCategoricalIndex, ABCIndexClass,
+-    ABCDateOffset)
++    ABCDateOffset, ABCPeriodArray)
+ from pandas.core.dtypes.inference import (  # noqa:F401
+     is_bool, is_integer, is_float, is_number, is_decimal, is_complex,
+     is_re, is_re_compilable, is_dict_like, is_string_like, is_file_like,
+@@ -638,10 +638,10 @@ def is_period_arraylike(arr):
+     True
+     """
+ 
+-    if isinstance(arr, ABCPeriodIndex):
++    if isinstance(arr, (ABCPeriodIndex, ABCPeriodArray)):
+         return True
+     elif isinstance(arr, (np.ndarray, ABCSeries)):
+-        return arr.dtype == object and lib.infer_dtype(arr) == 'period'
++        return is_period_dtype(arr.dtype)
+     return getattr(arr, 'inferred_type', None) == 'period'
+ 
+ 
+diff --git a/pandas/core/dtypes/concat.py b/pandas/core/dtypes/concat.py
+index df67afd406d06..702a0246a95dd 100644
+--- a/pandas/core/dtypes/concat.py
++++ b/pandas/core/dtypes/concat.py
+@@ -470,10 +470,10 @@ def _concat_datetime(to_concat, axis=0, typs=None):
+                                axis=axis).view(_TD_DTYPE)
+ 
+     elif any(typ.startswith('period') for typ in typs):
+-        # PeriodIndex must be handled by PeriodIndex,
+-        # Thus can't meet this condition ATM
+-        # Must be changed when we adding PeriodDtype
+-        raise NotImplementedError("unable to concat PeriodDtype")
++        assert len(typs) == 1
++        cls = to_concat[0]
++        new_values = cls._concat_same_type(to_concat)
++        return new_values
+ 
+ 
+ def _convert_datetimelike_to_object(x):
+diff --git a/pandas/core/dtypes/dtypes.py b/pandas/core/dtypes/dtypes.py
+index f07fb3cd80eab..961c8f1dbe537 100644
+--- a/pandas/core/dtypes/dtypes.py
++++ b/pandas/core/dtypes/dtypes.py
+@@ -588,7 +588,7 @@ def __eq__(self, other):
+                 str(self.tz) == str(other.tz))
+ 
+ 
+-class PeriodDtype(PandasExtensionDtype):
++class PeriodDtype(ExtensionDtype, PandasExtensionDtype):
+     """
+     A Period duck-typed class, suitable for holding a period with freq dtype.
+ 
+@@ -706,6 +706,12 @@ def is_dtype(cls, dtype):
+                 return False
+         return super(PeriodDtype, cls).is_dtype(dtype)
+ 
++    @classmethod
++    def construct_array_type(cls):
++        from pandas.core.arrays import PeriodArray
++
++        return PeriodArray
++
+ 
+ @register_extension_dtype
+ class IntervalDtype(PandasExtensionDtype, ExtensionDtype):
+diff --git a/pandas/core/dtypes/generic.py b/pandas/core/dtypes/generic.py
+index cb54c94d29205..f6926a192a724 100644
+--- a/pandas/core/dtypes/generic.py
++++ b/pandas/core/dtypes/generic.py
+@@ -53,12 +53,17 @@ def _check(cls, inst):
+                                         ('sparse_array', 'sparse_series'))
+ ABCCategorical = create_pandas_abc_type("ABCCategorical", "_typ",
+                                         ("categorical"))
++ABCPeriodArray = create_pandas_abc_type("ABCPeriodArray", "_typ",
++                                        ("periodarray", ))
+ ABCPeriod = create_pandas_abc_type("ABCPeriod", "_typ", ("period", ))
+ ABCDateOffset = create_pandas_abc_type("ABCDateOffset", "_typ",
+                                        ("dateoffset",))
+ ABCInterval = create_pandas_abc_type("ABCInterval", "_typ", ("interval", ))
+ ABCExtensionArray = create_pandas_abc_type("ABCExtensionArray", "_typ",
+-                                           ("extension", "categorical",))
++                                           ("extension",
++                                            "categorical",
++                                            "periodarray",
++                                            ))
+ 
+ 
+ class _ABCGeneric(type):
+diff --git a/pandas/core/dtypes/missing.py b/pandas/core/dtypes/missing.py
+index e48d09ae9a96a..1800c32add9b1 100644
+--- a/pandas/core/dtypes/missing.py
++++ b/pandas/core/dtypes/missing.py
+@@ -187,10 +187,18 @@ def _use_inf_as_na(key):
+ 
+ 
+ def _isna_ndarraylike(obj):
+-    values = getattr(obj, 'values', obj)
++    is_extension = is_extension_array_dtype(obj)
++
++    if not is_extension:
++        # Avoid accessing `.values` on things like
++        # PeriodIndex, which may be expensive.
++        values = getattr(obj, 'values', obj)
++    else:
++        values = obj
++
+     dtype = values.dtype
+ 
+-    if is_extension_array_dtype(obj):
++    if is_extension:
+         if isinstance(obj, (ABCIndexClass, ABCSeries)):
+             values = obj._values
+         else:
+diff --git a/pandas/core/indexes/accessors.py b/pandas/core/indexes/accessors.py
+index a1868980faed3..35b9799579628 100644
+--- a/pandas/core/indexes/accessors.py
++++ b/pandas/core/indexes/accessors.py
+@@ -15,7 +15,7 @@
+ from pandas.core.accessor import PandasDelegate, delegate_names
+ from pandas.core.base import NoNewAttributesMixin, PandasObject
+ from pandas.core.indexes.datetimes import DatetimeIndex
+-from pandas.core.indexes.period import PeriodIndex
++from pandas.core.indexes.period import PeriodArray
+ from pandas.core.indexes.timedeltas import TimedeltaIndex
+ from pandas.core.algorithms import take_1d
+ 
+@@ -46,7 +46,8 @@ def _get_values(self):
+ 
+         else:
+             if is_period_arraylike(data):
+-                return PeriodIndex(data, copy=False, name=self.name)
++                # TODO: use to_period_array
++                return PeriodArray(data, copy=False)
+             if is_datetime_arraylike(data):
+                 return DatetimeIndex(data, copy=False, name=self.name)
+ 
+@@ -270,11 +271,11 @@ def freq(self):
+         return self._get_values().inferred_freq
+ 
+ 
+-@delegate_names(delegate=PeriodIndex,
+-                accessors=PeriodIndex._datetimelike_ops,
++@delegate_names(delegate=PeriodArray,
++                accessors=PeriodArray._datetimelike_ops,
+                 typ="property")
+-@delegate_names(delegate=PeriodIndex,
+-                accessors=PeriodIndex._datetimelike_methods,
++@delegate_names(delegate=PeriodArray,
++                accessors=PeriodArray._datetimelike_methods,
+                 typ="method")
+ class PeriodProperties(Properties):
+     """
+diff --git a/pandas/core/indexes/base.py b/pandas/core/indexes/base.py
+index e5760f0141efb..e9b0b087179c9 100644
+--- a/pandas/core/indexes/base.py
++++ b/pandas/core/indexes/base.py
+@@ -317,6 +317,11 @@ def __new__(cls, data=None, dtype=None, copy=False, name=None,
+             else:
+                 return result
+ 
++        elif is_period_dtype(data) and not is_object_dtype(dtype):
++            from pandas import PeriodIndex
++            result = PeriodIndex(data, copy=copy, name=name, **kwargs)
++            return result
++
+         # extension dtype
+         elif is_extension_array_dtype(data) or is_extension_array_dtype(dtype):
+             data = np.asarray(data)
+@@ -389,8 +394,7 @@ def __new__(cls, data=None, dtype=None, copy=False, name=None,
+             # maybe coerce to a sub-class
+             from pandas.core.indexes.period import (
+                 PeriodIndex, IncompatibleFrequency)
+-            if isinstance(data, PeriodIndex):
+-                return PeriodIndex(data, copy=copy, name=name, **kwargs)
++
+             if is_signed_integer_dtype(data.dtype):
+                 from .numeric import Int64Index
+                 return Int64Index(data, copy=copy, dtype=dtype, name=name)
+diff --git a/pandas/core/indexes/datetimelike.py b/pandas/core/indexes/datetimelike.py
+index 53f8d42f46d55..14325f42ff0d8 100644
+--- a/pandas/core/indexes/datetimelike.py
++++ b/pandas/core/indexes/datetimelike.py
+@@ -35,6 +35,7 @@
+ 
+ import pandas.io.formats.printing as printing
+ 
++from pandas.core.arrays import PeriodArray
+ from pandas.core.arrays.datetimelike import DatetimeLikeArrayMixin
+ from pandas.core.indexes.base import Index, _index_shared_docs
+ from pandas.util._decorators import Appender, cache_readonly
+@@ -369,6 +370,9 @@ def sort_values(self, return_indexer=False, ascending=True):
+             if not ascending:
+                 sorted_values = sorted_values[::-1]
+ 
++            sorted_values = self._maybe_box_as_values(sorted_values,
++                                                      **attribs)
++
+             return self._simple_new(sorted_values, **attribs)
+ 
+     @Appender(_index_shared_docs['take'] % _index_doc_kwargs)
+@@ -685,14 +689,28 @@ def _concat_same_dtype(self, to_concat, name):
+             return _concat._concat_datetimetz(to_concat, name)
+         else:
+             new_data = np.concatenate([c.asi8 for c in to_concat])
++
++        new_data = self._maybe_box_as_values(new_data, **attribs)
+         return self._simple_new(new_data, **attribs)
+ 
++    def _maybe_box_as_values(self, values, **attribs):
++        # TODO(DatetimeArray): remove
++        # This is a temporary shim while PeriodArray is an ExtensoinArray,
++        # but others are not. When everyone is an ExtensionArray, this can
++        # be removed. Currently used in
++        # - sort_values
++        # - _concat_same_dtype
++        return values
++
+     def astype(self, dtype, copy=True):
+         if is_object_dtype(dtype):
+             return self._box_values_as_index()
+         elif is_string_dtype(dtype) and not is_categorical_dtype(dtype):
+             return Index(self.format(), name=self.name, dtype=object)
+         elif is_integer_dtype(dtype):
++            # TODO(DatetimeArray): use self._values here.
++            # Can't use ._values currently, because that returns a
++            # DatetimeIndex, which throws us in an infinite loop.
+             return Index(self.values.astype('i8', copy=copy), name=self.name,
+                          dtype='i8')
+         elif (is_datetime_or_timedelta_dtype(dtype) and
+@@ -727,7 +745,7 @@ def _ensure_datetimelike_to_i8(other, to_utc=False):
+     """
+     if is_scalar(other) and isna(other):
+         return iNaT
+-    elif isinstance(other, ABCIndexClass):
++    elif isinstance(other, (PeriodArray, ABCIndexClass)):
+         # convert tz if needed
+         if getattr(other, 'tz', None) is not None:
+             if to_utc:
+diff --git a/pandas/core/indexes/period.py b/pandas/core/indexes/period.py
+index ff875c71683ac..d23d56cba98ae 100644
+--- a/pandas/core/indexes/period.py
++++ b/pandas/core/indexes/period.py
+@@ -1,61 +1,106 @@
+ # pylint: disable=E1101,E1103,W0232
+ from datetime import datetime
+ import numpy as np
++import operator
+ import warnings
+ 
+ from pandas.core import common as com
+ from pandas.core.dtypes.common import (
+     is_integer,
+     is_float,
++    is_float_dtype,
+     is_integer_dtype,
+-    is_scalar,
+-    is_datetime64_dtype,
+     is_datetime64_any_dtype,
+-    is_period_dtype,
+     is_bool_dtype,
+     pandas_dtype,
+-    ensure_object)
+-
+-from pandas.tseries.frequencies import get_freq_code as _gfc
++)
+ 
++from pandas.core.accessor import PandasDelegate, delegate_names
+ from pandas.core.indexes.datetimes import DatetimeIndex, Int64Index, Index
+ from pandas.core.indexes.datetimelike import (
+-    DatelikeOps, DatetimeIndexOpsMixin,
+-    wrap_array_method, wrap_field_accessor)
++    DatelikeOps, DatetimeIndexOpsMixin, wrap_arithmetic_op
++)
+ from pandas.core.tools.datetimes import parse_time_string
+ 
+-from pandas._libs.lib import infer_dtype
+ from pandas._libs import tslib, index as libindex
+ from pandas._libs.tslibs.period import (Period, IncompatibleFrequency,
+                                         DIFFERENT_FREQ_INDEX)
+-from pandas._libs.tslibs import resolution, period
++
++from pandas._libs.tslibs import resolution
+ 
+ from pandas.core.algorithms import unique1d
+-from pandas.core.arrays import datetimelike as dtl
+-from pandas.core.arrays.period import PeriodArrayMixin, dt64arr_to_periodarr
++from pandas.core.dtypes.dtypes import PeriodDtype
++from pandas.core.arrays.period import PeriodArray, period_array
+ from pandas.core.base import _shared_docs
+ from pandas.core.indexes.base import _index_shared_docs, ensure_index
+ 
+ from pandas import compat
+-from pandas.util._decorators import Appender, Substitution, cache_readonly
++from pandas.util._decorators import (
++    Appender, Substitution, cache_readonly, deprecate_kwarg
++)
+ 
+ import pandas.core.indexes.base as ibase
+ _index_doc_kwargs = dict(ibase._index_doc_kwargs)
+ _index_doc_kwargs.update(
+     dict(target_klass='PeriodIndex or list of Periods'))
+ 
++
++def _wrap_field_accessor(name):
++    fget = getattr(PeriodArray, name).fget
++
++    def f(self):
++        result = fget(self)
++        return Index(result, name=self.name)
++
++    f.__name__ = name
++    f.__doc__ = fget.__doc__
++    return property(f)
++
+ # --- Period index sketch
+ 
+ 
+ def _new_PeriodIndex(cls, **d):
+     # GH13277 for unpickling
+-    if d['data'].dtype == 'int64':
+-        values = d.pop('data')
+-    return cls._from_ordinals(values=values, **d)
++    values = d.pop('data')
++    if values.dtype == 'int64':
++        freq = d.pop('freq', None)
++        values = PeriodArray(values, freq=freq)
++        return cls._simple_new(values, **d)
++    else:
++        return cls(values, **d)
++
++
++class PeriodDelegateMixin(PandasDelegate):
++    """
++    Delegate from PeriodIndex to PeriodArray.
++    """
++    def _delegate_property_get(self, name, *args, **kwargs):
++        result = getattr(self._data, name)
++        box_ops = (
++            set(PeriodArray._datetimelike_ops) - set(PeriodArray._bool_ops)
++        )
++        if name in box_ops:
++            result = Index(result, name=self.name)
++        return result
++
++    def _delegate_property_set(self, name, value, *args, **kwargs):
++        setattr(self._data, name, value)
+ 
++    def _delegate_method(self, name, *args, **kwargs):
++        result = operator.methodcaller(name, *args, **kwargs)(self._data)
++        return Index(result, name=self.name)
+ 
+-class PeriodIndex(PeriodArrayMixin, DatelikeOps, DatetimeIndexOpsMixin,
+-                  Int64Index):
++
++@delegate_names(PeriodArray,
++                PeriodArray._datetimelike_ops + ['size', 'asi8', 'shape'],
++                typ='property')
++@delegate_names(PeriodArray,
++                [x for x in PeriodArray._datetimelike_methods
++                 if x not in {"asfreq", "to_timestamp"}],
++                typ="method",
++                overwrite=True)
++class PeriodIndex(DatelikeOps, DatetimeIndexOpsMixin,
++                  Int64Index, PeriodDelegateMixin):
+     """
+     Immutable ndarray holding ordinal values indicating regular periods in
+     time such as particular years, quarters, months, etc.
+@@ -137,23 +182,16 @@ class PeriodIndex(PeriodArrayMixin, DatelikeOps, DatetimeIndexOpsMixin,
+     _attributes = ['name', 'freq']
+ 
+     # define my properties & methods for delegation
+-    _other_ops = []
+-    _bool_ops = ['is_leap_year']
+-    _object_ops = ['start_time', 'end_time', 'freq']
+-    _field_ops = ['year', 'month', 'day', 'hour', 'minute', 'second',
+-                  'weekofyear', 'weekday', 'week', 'dayofweek',
+-                  'dayofyear', 'quarter', 'qyear',
+-                  'days_in_month', 'daysinmonth']
+-    _datetimelike_ops = _field_ops + _object_ops + _bool_ops
+-    _datetimelike_methods = ['strftime', 'to_timestamp', 'asfreq']
+-
+     _is_numeric_dtype = False
+     _infer_as_myclass = True
+ 
+-    _freq = None
++    _data = None  # type: PeriodArray
+ 
+     _engine_type = libindex.PeriodEngine
+ 
++    # ------------------------------------------------------------------------
++    # Index Constructors
++
+     def __new__(cls, data=None, ordinal=None, freq=None, start=None, end=None,
+                 periods=None, tz=None, dtype=None, copy=False, name=None,
+                 **fields):
+@@ -168,85 +206,214 @@ def __new__(cls, data=None, ordinal=None, freq=None, start=None, end=None,
+         if name is None and hasattr(data, 'name'):
+             name = data.name
+ 
+-        freq = dtl.validate_dtype_freq(dtype, freq)
++        if data is None and ordinal is None:
++            # range-based.
++            if periods is not None:
++                if is_float(periods):
++                    periods = int(periods)
+ 
+-        # coerce freq to freq object, otherwise it can be coerced elementwise
+-        # which is slow
+-        if freq:
+-            freq = Period._maybe_convert_freq(freq)
++                elif not is_integer(periods):
++                    msg = 'periods must be a number, got {periods}'
++                    raise TypeError(msg.format(periods=periods))
+ 
+-        if data is None:
+-            if ordinal is not None:
+-                data = np.asarray(ordinal, dtype=np.int64)
+-            else:
+-                data, freq = cls._generate_range(start, end, periods,
+-                                                 freq, fields)
+-            return cls._simple_new(data, name=name, freq=freq)
+-
+-        if isinstance(data, PeriodIndex):
+-            if freq is None or freq == data.freq:  # no freq change
+-                freq = data.freq
+-                data = data._ndarray_values
++            data, freq = PeriodArray._generate_range(start, end, periods,
++                                                     freq, fields)
++            data = PeriodArray(data, freq=freq)
++        else:
++            if freq is None and dtype is not None:
++                freq = PeriodDtype(dtype).freq
++            elif freq and dtype:
++                freq = PeriodDtype(freq).freq
++                dtype = PeriodDtype(dtype).freq
++
++                if freq != dtype:
++                    msg = "specified freq and dtype are different"
++                    raise IncompatibleFrequency(msg)
++
++            # PeriodIndex allow PeriodIndex(period_index, freq=different)
++            # Let's not encourage that kind of behavior in PeriodArray.
++
++            if freq and isinstance(data, cls) and data.freq != freq:
++                # TODO: We can do some of these with no-copy / coercion?
++                # e.g. D -> 2D seems to be OK
++                data = data.asfreq(freq)
++
++            if data is None and ordinal is not None:
++                # we strangely ignore `ordinal` if data is passed.
++                ordinal = np.asarray(ordinal, dtype=np.int64)
++                data = PeriodArray(ordinal, freq)
+             else:
+-                base1, _ = _gfc(data.freq)
+-                base2, _ = _gfc(freq)
+-                data = period.period_asfreq_arr(data._ndarray_values,
+-                                                base1, base2, 1)
+-            return cls._simple_new(data, name=name, freq=freq)
+-
+-        # not array / index
+-        if not isinstance(data, (np.ndarray, PeriodIndex,
+-                                 DatetimeIndex, Int64Index)):
+-            if is_scalar(data):
+-                cls._scalar_data_error(data)
+-
+-            # other iterable of some kind
+-            if not isinstance(data, (list, tuple)):
+-                data = list(data)
+-
+-            data = np.asarray(data)
+-
+-        # datetime other than period
+-        if is_datetime64_dtype(data.dtype):
+-            data = dt64arr_to_periodarr(data, freq, tz)
+-            return cls._simple_new(data, name=name, freq=freq)
+-
+-        # check not floats
+-        if infer_dtype(data) == 'floating' and len(data) > 0:
+-            raise TypeError("PeriodIndex does not allow "
+-                            "floating point in construction")
+-
+-        # anything else, likely an array of strings or periods
+-        data = ensure_object(data)
+-        freq = freq or period.extract_freq(data)
+-        data = period.extract_ordinals(data, freq)
+-        return cls._simple_new(data, name=name, freq=freq)
++                # don't pass copy here, since we copy later.
++                data = period_array(data=data, freq=freq)
+ 
+-    @cache_readonly
+-    def _engine(self):
+-        return self._engine_type(lambda: self, len(self))
++        if copy:
++            data = data.copy()
++
++        return cls._simple_new(data, name=name)
+ 
+     @classmethod
+-    def _simple_new(cls, values, freq=None, name=None, **kwargs):
+-        result = super(PeriodIndex, cls)._simple_new(values, freq)
++    def _simple_new(cls, values, name=None, freq=None, **kwargs):
++        """
++        Create a new PeriodIndex.
++
++        Parameters
++        ----------
++        values : PeriodArray, PeriodIndex, Index[int64], ndarray[int64]
++            Values that can be converted to a PeriodArray without inference
++            or coercion.
+ 
++        """
++        # TODO: raising on floats is tested, but maybe not useful.
++        # Should the callers know not to pass floats?
++        # At the very least, I think we can ensure that lists aren't passed.
++        if isinstance(values, list):
++            values = np.asarray(values)
++        if is_float_dtype(values):
++            raise TypeError("PeriodIndex._simple_new does not accept floats.")
++        values = PeriodArray(values, freq=freq)
++
++        if not isinstance(values, PeriodArray):
++            raise TypeError("PeriodIndex._simple_new only accepts PeriodArray")
++        result = object.__new__(cls)
++        result._data = values
+         result.name = name
+         result._reset_identity()
+         return result
+ 
+-    def _shallow_copy_with_infer(self, values, **kwargs):
++    # ------------------------------------------------------------------------
++    # Data
++    @property
++    def _ndarray_values(self):
++        return self._data._ndarray_values
++
++    @property
++    def values(self):
++        return np.asarray(self)
++
++    @property
++    def _values(self):
++        return self._data
++
++    @property
++    def freq(self):
++        # TODO(DatetimeArray): remove
++        # Can't simply use delegate_names since our base class is defining
++        # freq
++        return self._data.freq
++
++    @freq.setter
++    def freq(self, value):
++        value = Period._maybe_convert_freq(value)
++        msg = ('Setting {cls}.freq has been deprecated and will be '
++               'removed in a future version; use {cls}.asfreq instead. '
++               'The {cls}.freq setter is not guaranteed to work.')
++        warnings.warn(msg.format(cls=type(self).__name__),
++                      FutureWarning, stacklevel=2)
++        # PeriodArray._freq isn't actually mutable. We set the private _freq
++        # here, but people shouldn't be doing this anyway.
++        self._data._freq = value
++
++    def _shallow_copy(self, values=None, **kwargs):
++        # TODO: simplify, figure out type of values
++        if values is None:
++            values = self._data
++
++        if isinstance(values, type(self)):
++            values = values._values
++
++        if not isinstance(values, PeriodArray):
++            if (isinstance(values, np.ndarray) and
++                    is_integer_dtype(values.dtype)):
++                values = PeriodArray(values, freq=self.freq)
++            else:
++                # in particular, I would like to avoid period_array here.
++                # Some people seem to be calling use with unexpected types
++                # Index.difference -> ndarray[Period]
++                # DatetimelikeIndexOpsMixin.repeat -> ndarray[ordinal]
++                # I think that once all of Datetime* are EAs, we can simplify
++                # this quite a bit.
++                values = period_array(values, freq=self.freq)
++
++        # I don't like overloading shallow_copy with freq changes.
++        # See if it's used anywhere outside of test_resample_empty_dataframe
++        attributes = self._get_attributes_dict()
++        freq = kwargs.pop("freq", None)
++        if freq:
++            values = values.asfreq(freq)
++            attributes.pop("freq", None)
++
++        attributes.update(kwargs)
++        if not len(values) and 'dtype' not in kwargs:
++            attributes['dtype'] = self.dtype
++        return self._simple_new(values, **attributes)
++
++    def _shallow_copy_with_infer(self, values=None, **kwargs):
+         """ we always want to return a PeriodIndex """
+         return self._shallow_copy(values=values, **kwargs)
+ 
+-    def _coerce_scalar_to_index(self, item):
+-        """
+-        we need to coerce a scalar to a compat for our index type
++    @property
++    def _box_func(self):
++        """Maybe box an ordinal or Period"""
++        # TODO(DatetimeArray): Avoid double-boxing
++        # PeriodArray takes care of boxing already, so we need to check
++        # whether we're given an ordinal or a Period. It seems like some
++        # places outside of indexes/period.py are calling this _box_func,
++        # but passing data that's already boxed.
++        def func(x):
++            if isinstance(x, Period) or x is tslib.NaT:
++                return x
++            else:
++                return Period._from_ordinal(ordinal=x, freq=self.freq)
++        return func
+ 
+-        Parameters
+-        ----------
+-        item : scalar item to coerce
++    def _maybe_box_as_values(self, values, **attribs):
++        """Box an array of ordinals to a PeriodArray
++
++        This is purely for compatibility between PeriodIndex
++        and Datetime/TimedeltaIndex. Once these are all backed by
++        an ExtensionArray, this can be removed
+         """
+-        return PeriodIndex([item], **self._get_attributes_dict())
++        # TODO(DatetimeArray): remove
++        freq = attribs['freq']
++        return PeriodArray(values, freq=freq)
++
++    # ------------------------------------------------------------------------
++    # Dispatch and maybe box. Not done in delegate_names because we box
++    # different from those (which use Index).
++
++    def asfreq(self, freq=None, how='E'):
++        result = self._data.asfreq(freq=freq, how=how)
++        return self._simple_new(result, name=self.name)
++
++    def _nat_new(self, box=True):
++        # TODO(DatetimeArray): remove this
++        result = self._data._nat_new(box=box)
++        if box:
++            result = self._simple_new(result, name=self.name)
++        return result
++
++    def to_timestamp(self, freq=None, how='start'):
++        from pandas import DatetimeIndex
++        result = self._data.to_timestamp(freq=freq, how=how)
++        return DatetimeIndex._simple_new(result,
++                                         name=self.name,
++                                         freq=result.freq)
++
++    def _format_native_types(self, na_rep=u'NaT', quoting=None, **kwargs):
++        # just dispatch, return ndarray
++        return self._data._format_native_types(na_rep=na_rep,
++                                               quoting=quoting,
++                                               **kwargs)
++
++    def _maybe_convert_timedelta(self, other):
++        # just dispatch, return ndarray
++        return self._data._maybe_convert_timedelta(other)
++
++    # ------------------------------------------------------------------------
++    # Indexing
++    @cache_readonly
++    def _engine(self):
++        return self._engine_type(lambda: self, len(self))
+ 
+     @Appender(_index_shared_docs['__contains__'])
+     def __contains__(self, key):
+@@ -268,9 +435,46 @@ def __contains__(self, key):
+     def _int64index(self):
+         return Int64Index._simple_new(self.asi8, name=self.name)
+ 
+-    @property
+-    def values(self):
+-        return self.astype(object).values
++    # ------------------------------------------------------------------------
++    # Index Methods
++
++    @deprecate_kwarg(old_arg_name='n', new_arg_name='periods')
++    def shift(self, periods):
++        """
++        Shift index by desired number of increments.
++
++        This method is for shifting the values of period indexes
++        by a specified time increment.
++
++        Parameters
++        ----------
++        periods : int, default 1
++            Number of periods (or increments) to shift by,
++            can be positive or negative.
++
++            .. versionchanged:: 0.24.0
++
++        Returns
++        -------
++        pandas.PeriodIndex
++            Shifted index.
++
++        See Also
++        --------
++        DatetimeIndex.shift : Shift values of DatetimeIndex.
++        """
++        i8values = self._data._time_shift(periods)
++        return self._simple_new(i8values, name=self.name, freq=self.freq)
++
++    def _coerce_scalar_to_index(self, item):
++        """
++        we need to coerce a scalar to a compat for our index type
++
++        Parameters
++        ----------
++        item : scalar item to coerce
++        """
++        return PeriodIndex([item], **self._get_attributes_dict())
+ 
+     def __array__(self, dtype=None):
+         if is_integer_dtype(dtype):
+@@ -312,16 +516,6 @@ def __array_wrap__(self, result, context=None):
+         # cannot pass _simple_new as it is
+         return type(self)(result, freq=self.freq, name=self.name)
+ 
+-    @property
+-    def size(self):
+-        # Avoid materializing self._values
+-        return self._ndarray_values.size
+-
+-    @property
+-    def shape(self):
+-        # Avoid materializing self._values
+-        return self._ndarray_values.shape
+-
+     @property
+     def _formatter_func(self):
+         return lambda x: "'%s'" % x
+@@ -351,14 +545,17 @@ def asof_locs(self, where, mask):
+     @Appender(_index_shared_docs['astype'])
+     def astype(self, dtype, copy=True, how='start'):
+         dtype = pandas_dtype(dtype)
+-        if is_integer_dtype(dtype):
+-            return self._int64index.copy() if copy else self._int64index
+-        elif is_datetime64_any_dtype(dtype):
++
++        # We have a few special-cases for `dtype`.
++        # Failing those, we fall back to astyping the values
++
++        if is_datetime64_any_dtype(dtype):
++            # 'how' is index-speicifc, isn't part of the EA interface.
+             tz = getattr(dtype, 'tz', None)
+             return self.to_timestamp(how=how).tz_localize(tz)
+-        elif is_period_dtype(dtype):
+-            return self.asfreq(freq=dtype.freq)
+-        return super(PeriodIndex, self).astype(dtype, copy=copy)
++
++        result = self._data.astype(dtype, copy=copy)
++        return Index(result, name=self.name, dtype=dtype, copy=False)
+ 
+     @Substitution(klass='PeriodIndex')
+     @Appender(_shared_docs['searchsorted'])
+@@ -391,34 +588,6 @@ def is_full(self):
+         values = self.asi8
+         return ((values[1:] - values[:-1]) < 2).all()
+ 
+-    year = wrap_field_accessor(PeriodArrayMixin.year)
+-    month = wrap_field_accessor(PeriodArrayMixin.month)
+-    day = wrap_field_accessor(PeriodArrayMixin.day)
+-    hour = wrap_field_accessor(PeriodArrayMixin.hour)
+-    minute = wrap_field_accessor(PeriodArrayMixin.minute)
+-    second = wrap_field_accessor(PeriodArrayMixin.second)
+-    weekofyear = wrap_field_accessor(PeriodArrayMixin.week)
+-    week = weekofyear
+-    dayofweek = wrap_field_accessor(PeriodArrayMixin.dayofweek)
+-    weekday = dayofweek
+-    dayofyear = day_of_year = wrap_field_accessor(PeriodArrayMixin.dayofyear)
+-    quarter = wrap_field_accessor(PeriodArrayMixin.quarter)
+-    qyear = wrap_field_accessor(PeriodArrayMixin.qyear)
+-    days_in_month = wrap_field_accessor(PeriodArrayMixin.days_in_month)
+-    daysinmonth = days_in_month
+-
+-    to_timestamp = wrap_array_method(PeriodArrayMixin.to_timestamp, True)
+-
+-    @property
+-    @Appender(PeriodArrayMixin.start_time.__doc__)
+-    def start_time(self):
+-        return PeriodArrayMixin.start_time.fget(self)
+-
+-    @property
+-    @Appender(PeriodArrayMixin.end_time.__doc__)
+-    def end_time(self):
+-        return PeriodArrayMixin.end_time.fget(self)
+-
+     def _mpl_repr(self):
+         # how to represent ourselves to matplotlib
+         return self.astype(object).values
+@@ -677,25 +846,6 @@ def _apply_meta(self, rawarr):
+                                              name=self.name)
+         return rawarr
+ 
+-    def _format_native_types(self, na_rep=u'NaT', date_format=None, **kwargs):
+-
+-        values = self.astype(object).values
+-
+-        if date_format:
+-            formatter = lambda dt: dt.strftime(date_format)
+-        else:
+-            formatter = lambda dt: u'%s' % dt
+-
+-        if self.hasnans:
+-            mask = self._isnan
+-            values[mask] = na_rep
+-            imask = ~mask
+-            values[imask] = np.array([formatter(dt) for dt
+-                                      in values[imask]])
+-        else:
+-            values = np.array([formatter(dt) for dt in values])
+-        return values
+-
+     def __setstate__(self, state):
+         """Necessary for making this object picklable"""
+ 
+@@ -711,12 +861,14 @@ def __setstate__(self, state):
+                 np.ndarray.__setstate__(data, nd_state)
+ 
+                 # backcompat
+-                self._freq = Period._maybe_convert_freq(own_state[1])
++                freq = Period._maybe_convert_freq(own_state[1])
+ 
+             else:  # pragma: no cover
+                 data = np.empty(state)
+                 np.ndarray.__setstate__(self, state)
++                freq = None  # ?
+ 
++            data = PeriodArray(data, freq=freq)
+             self._data = data
+ 
+         else:
+@@ -724,6 +876,105 @@ def __setstate__(self, state):
+ 
+     _unpickle_compat = __setstate__
+ 
++    @classmethod
++    def _add_datetimelike_methods(cls):
++        """
++        add in the datetimelike methods (as we may have to override the
++        superclass)
++        """
++        # TODO(DatetimeArray): move this up to DatetimeArrayMixin
++
++        def __add__(self, other):
++            # dispatch to ExtensionArray implementation
++            result = self._data.__add__(other)
++            return wrap_arithmetic_op(self, other, result)
++
++        cls.__add__ = __add__
++
++        def __radd__(self, other):
++            # alias for __add__
++            return self.__add__(other)
++        cls.__radd__ = __radd__
++
++        def __sub__(self, other):
++            # dispatch to ExtensionArray implementation
++            result = self._data.__sub__(other)
++            return wrap_arithmetic_op(self, other, result)
++
++        cls.__sub__ = __sub__
++
++        def __rsub__(self, other):
++            result = self._data.__rsub__(other)
++            return wrap_arithmetic_op(self, other, result)
++
++        cls.__rsub__ = __rsub__
++
++    @classmethod
++    def _create_comparison_method(cls, op):
++        """
++        Create a comparison method that dispatches to ``cls.values``.
++        """
++        # TODO(DatetimeArray): move to base class.
++        def wrapper(self, other):
++            return op(self._data, other)
++
++        wrapper.__doc__ = op.__doc__
++        wrapper.__name__ = '__{}__'.format(op.__name__)
++        return wrapper
++
++    def repeat(self, repeats, *args, **kwargs):
++        # TODO(DatetimeArray): Just use Index.repeat
++        return Index.repeat(self, repeats, *args, **kwargs)
++
++    def view(self, dtype=None, type=None):
++        # TODO(DatetimeArray): remove
++        if dtype is None or dtype is __builtins__['type'](self):
++            return self
++        return self._ndarray_values.view(dtype=dtype)
++
++    @property
++    def flags(self):
++        """ return the ndarray.flags for the underlying data """
++        warnings.warn("{obj}.flags is deprecated and will be removed "
++                      "in a future version".format(obj=type(self).__name__),
++                      FutureWarning, stacklevel=2)
++        return self._ndarray_values.flags
++
++    @property
++    def asi8(self):
++        # TODO(DatetimeArray): remove
++        return self.view('i8')
++
++    def item(self):
++        """ return the first element of the underlying data as a python
++        scalar
++        """
++        # TODO(DatetimeArray): remove
++        if len(self) == 1:
++            return self[0]
++        else:
++            # copy numpy's message here because Py26 raises an IndexError
++            raise ValueError('can only convert an array of size 1 to a '
++                             'Python scalar')
++
++    @property
++    def data(self):
++        """ return the data pointer of the underlying data """
++        warnings.warn("{obj}.data is deprecated and will be removed "
++                      "in a future version".format(obj=type(self).__name__),
++                      FutureWarning, stacklevel=2)
++        return np.asarray(self._data).data
++
++    @property
++    def base(self):
++        """ return the base object if the memory of the underlying data is
++        shared
++        """
++        warnings.warn("{obj}.base is deprecated and will be removed "
++                      "in a future version".format(obj=type(self).__name__),
++                      FutureWarning, stacklevel=2)
++        return np.asarray(self._data)
++
+ 
+ PeriodIndex._add_comparison_ops()
+ PeriodIndex._add_numeric_methods_disabled()
+diff --git a/pandas/core/series.py b/pandas/core/series.py
+index 7ebbe0dfb4bb7..d3ea005d3aae7 100644
+--- a/pandas/core/series.py
++++ b/pandas/core/series.py
+@@ -24,7 +24,7 @@
+ from pandas.compat.numpy import function as nv
+ from pandas.core import base, generic
+ from pandas.core.accessor import CachedAccessor
+-from pandas.core.arrays import ExtensionArray
++from pandas.core.arrays import ExtensionArray, period_array
+ from pandas.core.arrays.categorical import Categorical, CategoricalAccessor
+ from pandas.core.config import get_option
+ from pandas.core.dtypes.cast import (
+@@ -135,8 +135,9 @@ class Series(base.IndexOpsMixin, generic.NDFrame):
+         RangeIndex (0, 1, 2, ..., n) if not provided. If both a dict and index
+         sequence are used, the index will override the keys found in the
+         dict.
+-    dtype : numpy.dtype or None
+-        If None, dtype will be inferred
++    dtype : str, numpy.dtype, or ExtensionDtype, optional
++        dtype for the output Series. If not specified, this will be
++        inferred from `data`.
+     copy : boolean, default False
+         Copy input data
+     """
+@@ -643,7 +644,8 @@ def __array_prepare__(self, result, context=None):
+ 
+         # nice error message for non-ufunc types
+         if (context is not None and
+-                not isinstance(self._values, (np.ndarray, ABCSparseArray))):
++                (not isinstance(self._values, (np.ndarray, ExtensionArray))
++                 or isinstance(self._values, Categorical))):
+             obj = context[1][0]
+             raise TypeError("{obj} with dtype {dtype} cannot perform "
+                             "the numpy op {op}".format(
+@@ -4357,4 +4359,12 @@ def _try_cast(arr, take_fast_path):
+                 data = np.array(data, dtype=dtype, copy=False)
+             subarr = np.array(data, dtype=object, copy=copy)
+ 
++    if is_object_dtype(subarr.dtype) and dtype != 'object':
++        inferred = lib.infer_dtype(subarr)
++        if inferred == 'period':
++            try:
++                subarr = period_array(subarr)
++            except tslibs.period.IncompatibleFrequency:
++                pass
++
+     return subarr
+diff --git a/pandas/io/packers.py b/pandas/io/packers.py
+index 73b9e1dfc24e7..764e27a60abb5 100644
+--- a/pandas/io/packers.py
++++ b/pandas/io/packers.py
+@@ -53,7 +53,7 @@
+ )
+ from pandas.compat import u, u_safe
+ from pandas.core import internals
+-from pandas.core.arrays import IntervalArray
++from pandas.core.arrays import IntervalArray, PeriodArray
+ from pandas.core.arrays.sparse import BlockIndex, IntIndex
+ from pandas.core.dtypes.common import (
+     is_categorical_dtype, is_object_dtype, needs_i8_conversion, pandas_dtype
+@@ -599,7 +599,9 @@ def decode(obj):
+     elif typ == u'period_index':
+         data = unconvert(obj[u'data'], np.int64, obj.get(u'compress'))
+         d = dict(name=obj[u'name'], freq=obj[u'freq'])
+-        return globals()[obj[u'klass']]._from_ordinals(data, **d)
++        freq = d.pop('freq', None)
++        return globals()[obj[u'klass']](PeriodArray(data, freq), **d)
++
+     elif typ == u'datetime_index':
+         data = unconvert(obj[u'data'], np.int64, obj.get(u'compress'))
+         d = dict(name=obj[u'name'], freq=obj[u'freq'], verify_integrity=False)
+diff --git a/pandas/tests/arithmetic/test_period.py b/pandas/tests/arithmetic/test_period.py
+index 4ccebd4305b90..cff2c25231220 100644
+--- a/pandas/tests/arithmetic/test_period.py
++++ b/pandas/tests/arithmetic/test_period.py
+@@ -270,8 +270,8 @@ def test_ops_frame_period(self):
+                                  pd.Period('2015-02', freq='M')],
+                            'B': [pd.Period('2014-01', freq='M'),
+                                  pd.Period('2014-02', freq='M')]})
+-        assert df['A'].dtype == object
+-        assert df['B'].dtype == object
++        assert df['A'].dtype == 'Period[M]'
++        assert df['B'].dtype == 'Period[M]'
+ 
+         p = pd.Period('2015-03', freq='M')
+         off = p.freq
+@@ -285,8 +285,8 @@ def test_ops_frame_period(self):
+                                   pd.Period('2015-06', freq='M')],
+                             'B': [pd.Period('2015-05', freq='M'),
+                                   pd.Period('2015-06', freq='M')]})
+-        assert df2['A'].dtype == object
+-        assert df2['B'].dtype == object
++        assert df2['A'].dtype == 'Period[M]'
++        assert df2['B'].dtype == 'Period[M]'
+ 
+         exp = pd.DataFrame({'A': np.array([4 * off, 4 * off], dtype=object),
+                             'B': np.array([16 * off, 16 * off], dtype=object)})
+@@ -642,7 +642,7 @@ def test_pi_sub_isub_timedeltalike_daily(self, three_days):
+     def test_pi_add_sub_timedeltalike_freq_mismatch_daily(self, not_daily):
+         other = not_daily
+         rng = pd.period_range('2014-05-01', '2014-05-15', freq='D')
+-        msg = 'Input has different freq(=.+)? from PeriodIndex\\(freq=D\\)'
++        msg = 'Input has different freq(=.+)? from Period.*?\\(freq=D\\)'
+         with tm.assert_raises_regex(period.IncompatibleFrequency, msg):
+             rng + other
+         with tm.assert_raises_regex(period.IncompatibleFrequency, msg):
+@@ -667,7 +667,7 @@ def test_pi_add_iadd_timedeltalike_hourly(self, two_hours):
+     def test_pi_add_timedeltalike_mismatched_freq_hourly(self, not_hourly):
+         other = not_hourly
+         rng = pd.period_range('2014-01-01 10:00', '2014-01-05 10:00', freq='H')
+-        msg = 'Input has different freq(=.+)? from PeriodIndex\\(freq=H\\)'
++        msg = 'Input has different freq(=.+)? from Period.*?\\(freq=H\\)'
+ 
+         with tm.assert_raises_regex(period.IncompatibleFrequency, msg):
+             rng + other
+@@ -702,7 +702,7 @@ def test_pi_add_sub_timedeltalike_freq_mismatch_annual(self,
+         other = mismatched_freq
+         rng = pd.period_range('2014', '2024', freq='A')
+         msg = ('Input has different freq(=.+)? '
+-               'from PeriodIndex\\(freq=A-DEC\\)')
++               'from Period.*?\\(freq=A-DEC\\)')
+         with tm.assert_raises_regex(period.IncompatibleFrequency, msg):
+             rng + other
+         with tm.assert_raises_regex(period.IncompatibleFrequency, msg):
+@@ -726,7 +726,7 @@ def test_pi_add_sub_timedeltalike_freq_mismatch_monthly(self,
+                                                             mismatched_freq):
+         other = mismatched_freq
+         rng = pd.period_range('2014-01', '2016-12', freq='M')
+-        msg = 'Input has different freq(=.+)? from PeriodIndex\\(freq=M\\)'
++        msg = 'Input has different freq(=.+)? from Period.*?\\(freq=M\\)'
+         with tm.assert_raises_regex(period.IncompatibleFrequency, msg):
+             rng + other
+         with tm.assert_raises_regex(period.IncompatibleFrequency, msg):
+@@ -742,7 +742,7 @@ def test_ops_series_timedelta(self):
+         # GH 13043
+         ser = pd.Series([pd.Period('2015-01-01', freq='D'),
+                          pd.Period('2015-01-02', freq='D')], name='xxx')
+-        assert ser.dtype == object
++        assert ser.dtype == 'Period[D]'
+ 
+         expected = pd.Series([pd.Period('2015-01-02', freq='D'),
+                               pd.Period('2015-01-03', freq='D')], name='xxx')
+@@ -763,7 +763,7 @@ def test_ops_series_period(self):
+         # GH 13043
+         ser = pd.Series([pd.Period('2015-01-01', freq='D'),
+                          pd.Period('2015-01-02', freq='D')], name='xxx')
+-        assert ser.dtype == object
++        assert ser.dtype == "Period[D]"
+ 
+         per = pd.Period('2015-01-10', freq='D')
+         off = per.freq
+@@ -774,7 +774,7 @@ def test_ops_series_period(self):
+ 
+         s2 = pd.Series([pd.Period('2015-01-05', freq='D'),
+                         pd.Period('2015-01-04', freq='D')], name='xxx')
+-        assert s2.dtype == object
++        assert s2.dtype == "Period[D]"
+ 
+         expected = pd.Series([4 * off, 2 * off], name='xxx', dtype=object)
+         tm.assert_series_equal(s2 - ser, expected)
+@@ -916,9 +916,8 @@ def test_pi_offset_errors(self):
+ 
+         # Series op is applied per Period instance, thus error is raised
+         # from Period
+-        msg_idx = r"Input has different freq from PeriodIndex\(freq=D\)"
+-        msg_s = r"Input cannot be converted to Period\(freq=D\)"
+-        for obj, msg in [(idx, msg_idx), (ser, msg_s)]:
++        msg = r"Input has different freq from Period.*?\(freq=D\)"
++        for obj in [idx, ser]:
+             with tm.assert_raises_regex(period.IncompatibleFrequency, msg):
+                 obj + pd.offsets.Hour(2)
+ 
+diff --git a/pandas/tests/arrays/test_datetimelike.py b/pandas/tests/arrays/test_datetimelike.py
+index d0099aed00285..8baf53e65ba22 100644
+--- a/pandas/tests/arrays/test_datetimelike.py
++++ b/pandas/tests/arrays/test_datetimelike.py
+@@ -7,7 +7,7 @@
+ 
+ from pandas.core.arrays import (DatetimeArrayMixin,
+                                 TimedeltaArrayMixin,
+-                                PeriodArrayMixin)
++                                PeriodArray)
+ 
+ 
+ # TODO: more freq variants
+@@ -100,7 +100,7 @@ def test_to_period(self, datetime_index, freqstr):
+ 
+         expected = dti.to_period(freq=freqstr)
+         result = arr.to_period(freq=freqstr)
+-        assert isinstance(result, PeriodArrayMixin)
++        assert isinstance(result, PeriodArray)
+ 
+         # placeholder until these become actual EA subclasses and we can use
+         #  an EA-specific tm.assert_ function
+@@ -181,7 +181,7 @@ class TestPeriodArray(object):
+ 
+     def test_from_pi(self, period_index):
+         pi = period_index
+-        arr = PeriodArrayMixin(pi)
++        arr = PeriodArray(pi)
+         assert list(arr) == list(pi)
+ 
+         # Check that Index.__new__ knows what to do with PeriodArray
+@@ -191,7 +191,7 @@ def test_from_pi(self, period_index):
+ 
+     def test_astype_object(self, period_index):
+         pi = period_index
+-        arr = PeriodArrayMixin(pi)
++        arr = PeriodArray(pi)
+         asobj = arr.astype('O')
+         assert isinstance(asobj, np.ndarray)
+         assert asobj.dtype == 'O'
+@@ -200,7 +200,7 @@ def test_astype_object(self, period_index):
+     @pytest.mark.parametrize('how', ['S', 'E'])
+     def test_to_timestamp(self, how, period_index):
+         pi = period_index
+-        arr = PeriodArrayMixin(pi)
++        arr = PeriodArray(pi)
+ 
+         expected = DatetimeArrayMixin(pi.to_timestamp(how=how))
+         result = arr.to_timestamp(how=how)
+@@ -210,21 +210,21 @@ def test_to_timestamp(self, how, period_index):
+         #  an EA-specific tm.assert_ function
+         tm.assert_index_equal(pd.Index(result), pd.Index(expected))
+ 
+-    @pytest.mark.parametrize('propname', pd.PeriodIndex._bool_ops)
++    @pytest.mark.parametrize('propname', PeriodArray._bool_ops)
+     def test_bool_properties(self, period_index, propname):
+         # in this case _bool_ops is just `is_leap_year`
+         pi = period_index
+-        arr = PeriodArrayMixin(pi)
++        arr = PeriodArray(pi)
+ 
+         result = getattr(arr, propname)
+         expected = np.array(getattr(pi, propname))
+ 
+         tm.assert_numpy_array_equal(result, expected)
+ 
+-    @pytest.mark.parametrize('propname', pd.PeriodIndex._field_ops)
++    @pytest.mark.parametrize('propname', PeriodArray._field_ops)
+     def test_int_properties(self, period_index, propname):
+         pi = period_index
+-        arr = PeriodArrayMixin(pi)
++        arr = PeriodArray(pi)
+ 
+         result = getattr(arr, propname)
+         expected = np.array(getattr(pi, propname))
+diff --git a/pandas/tests/arrays/test_period.py b/pandas/tests/arrays/test_period.py
+new file mode 100644
+index 0000000000000..780df579d2778
+--- /dev/null
++++ b/pandas/tests/arrays/test_period.py
+@@ -0,0 +1,206 @@
++import numpy as np
++import pytest
++
++import pandas as pd
++import pandas.util.testing as tm
++from pandas._libs.tslibs import iNaT
++from pandas._libs.tslibs.period import IncompatibleFrequency
++from pandas.core.arrays import PeriodArray, period_array
++from pandas.core.dtypes.common import pandas_dtype
++from pandas.core.dtypes.dtypes import PeriodDtype
++
++# ----------------------------------------------------------------------------
++# Constructors
++
++# period_array
++
++
++@pytest.mark.parametrize("data, freq, expected", [
++    ([pd.Period("2017", "D")], None, [17167]),
++    ([pd.Period("2017", "D")], "D", [17167]),
++    ([2017], "D", [17167]),
++    (["2017"], "D", [17167]),
++    ([pd.Period("2017", "D")], pd.tseries.offsets.Day(), [17167]),
++    ([pd.Period("2017", "D"), None], None, [17167, iNaT]),
++    (pd.Series(pd.date_range("2017", periods=3)), None,
++     [17167, 17168, 17169]),
++    (pd.date_range("2017", periods=3), None, [17167, 17168, 17169]),
++])
++def test_period_array_ok(data, freq, expected):
++    result = period_array(data, freq=freq).asi8
++    expected = np.asarray(expected, dtype=np.int64)
++    tm.assert_numpy_array_equal(result, expected)
++
++
++def test_from_datetime64_raises():
++    arr = pd.date_range("2017", periods=3, freq="D")
++    with tm.assert_raises_regex(IncompatibleFrequency, "freq"):
++        PeriodArray._from_datetime64(arr, freq="M")
++
++
++@pytest.mark.parametrize("data, freq, msg", [
++    ([pd.Period('2017', 'D'),
++      pd.Period('2017', 'A')],
++     None,
++     "Input has different freq"),
++    ([pd.Period('2017', 'D')],
++     "A",
++     "Input has different freq"),
++])
++def test_period_array_raises(data, freq, msg):
++    with tm.assert_raises_regex(IncompatibleFrequency, msg):
++        period_array(data, freq)
++
++
++def test_period_array_non_period_series_raies():
++    ser = pd.Series([1, 2, 3])
++    with tm.assert_raises_regex(TypeError, 'dtype'):
++        PeriodArray(ser, freq='D')
++
++
++def test_period_array_freq_mismatch():
++    arr = period_array(['2000', '2001'], freq='D')
++    with tm.assert_raises_regex(IncompatibleFrequency, 'freq'):
++        PeriodArray(arr, freq='M')
++
++    with tm.assert_raises_regex(IncompatibleFrequency, 'freq'):
++        PeriodArray(arr, freq=pd.tseries.offsets.MonthEnd())
++
++
++def test_asi8():
++    result = period_array(['2000', '2001', None], freq='D').asi8
++    expected = np.array([10957, 11323, iNaT])
++    tm.assert_numpy_array_equal(result, expected)
++
++
++def test_take_raises():
++    arr = period_array(['2000', '2001'], freq='D')
++    with tm.assert_raises_regex(IncompatibleFrequency, 'freq'):
++        arr.take([0, -1], allow_fill=True,
++                 fill_value=pd.Period('2000', freq='W'))
++
++    with tm.assert_raises_regex(ValueError, 'foo'):
++        arr.take([0, -1], allow_fill=True, fill_value='foo')
++
++
++@pytest.mark.parametrize('dtype', [int, np.int32, np.int64])
++def test_astype(dtype):
++    # Need to ensure ordinals are astyped correctly for both
++    # int32 and 64
++    arr = period_array(['2000', '2001', None], freq='D')
++    result = arr.astype(dtype)
++    # need pandas_dtype to handle int32 vs. int64 correctly
++    expected = pandas_dtype(dtype)
++    assert result.dtype == expected
++
++
++def test_astype_copies():
++    arr = period_array(['2000', '2001', None], freq='D')
++    result = arr.astype(np.int64, copy=False)
++    assert result is arr._data
++
++    result = arr.astype(np.int64, copy=True)
++    assert result is not arr._data
++
++
++def test_astype_categorical():
++    arr = period_array(['2000', '2001', '2001', None], freq='D')
++    result = arr.astype('category')
++    categories = pd.PeriodIndex(['2000', '2001'], freq='D')
++    expected = pd.Categorical.from_codes([0, 1, 1, -1], categories=categories)
++    tm.assert_categorical_equal(result, expected)
++
++
++def test_astype_period():
++    arr = period_array(['2000', '2001', None], freq='D')
++    result = arr.astype(PeriodDtype("M"))
++    expected = period_array(['2000', '2001', None], freq='M')
++    tm.assert_period_array_equal(result, expected)
++
++
++@pytest.mark.parametrize('other', [
++    'datetime64[ns]', 'timedelta64[ns]',
++])
++def test_astype_datetime(other):
++    arr = period_array(['2000', '2001', None], freq='D')
++    # slice off the [ns] so that the regex matches.
++    with tm.assert_raises_regex(TypeError, other[:-4]):
++        arr.astype(other)
++
++
++def test_fillna_raises():
++    arr = period_array(['2000', '2001', '2002'], freq='D')
++    with tm.assert_raises_regex(ValueError, 'Length'):
++        arr.fillna(arr[:2])
++
++
++def test_fillna_copies():
++    arr = period_array(['2000', '2001', '2002'], freq='D')
++    result = arr.fillna(pd.Period("2000", "D"))
++    assert result is not arr
++
++
++# ----------------------------------------------------------------------------
++# setitem
++
++@pytest.mark.parametrize('key, value, expected', [
++    ([0], pd.Period("2000", "D"), [10957, 1, 2]),
++    ([0], None, [iNaT, 1, 2]),
++    ([0], np.nan, [iNaT, 1, 2]),
++    ([0, 1, 2], pd.Period("2000", "D"), [10957] * 3),
++    ([0, 1, 2], [pd.Period("2000", "D"),
++                 pd.Period("2001", "D"),
++                 pd.Period("2002", "D")],
++     [10957, 11323, 11688]),
++])
++def test_setitem(key, value, expected):
++    arr = PeriodArray(np.arange(3), freq="D")
++    expected = PeriodArray(expected, freq="D")
++    arr[key] = value
++    tm.assert_period_array_equal(arr, expected)
++
++
++def test_setitem_raises_incompatible_freq():
++    arr = PeriodArray(np.arange(3), freq="D")
++    with tm.assert_raises_regex(IncompatibleFrequency, "freq"):
++        arr[0] = pd.Period("2000", freq="A")
++
++    other = period_array(['2000', '2001'], freq='A')
++    with tm.assert_raises_regex(IncompatibleFrequency, "freq"):
++        arr[[0, 1]] = other
++
++
++def test_setitem_raises_length():
++    arr = PeriodArray(np.arange(3), freq="D")
++    with tm.assert_raises_regex(ValueError, "length"):
++        arr[[0, 1]] = [pd.Period("2000", freq="D")]
++
++
++def test_setitem_raises_type():
++    arr = PeriodArray(np.arange(3), freq="D")
++    with tm.assert_raises_regex(TypeError, "int"):
++        arr[0] = 1
++
++
++# ----------------------------------------------------------------------------
++# Ops
++
++def tet_sub_period():
++    arr = period_array(['2000', '2001'], freq='D')
++    other = pd.Period("2000", freq="M")
++    with tm.assert_raises_regex(IncompatibleFrequency, "freq"):
++        arr - other
++
++
++# ----------------------------------------------------------------------------
++# other
++
++def test_maybe_convert_timedelta():
++    arr = period_array(['2000', '2001'], freq='D')
++    offset = pd.tseries.offsets.Day(2)
++    assert arr._maybe_convert_timedelta(offset) == 2
++    assert arr._maybe_convert_timedelta(2) == 2
++
++    offset = pd.tseries.offsets.BusinessDay()
++    with tm.assert_raises_regex(ValueError, 'freq'):
++        arr._maybe_convert_timedelta(offset)
+diff --git a/pandas/tests/dtypes/test_concat.py b/pandas/tests/dtypes/test_concat.py
+index b6c5c119ffb6f..35623415571c0 100644
+--- a/pandas/tests/dtypes/test_concat.py
++++ b/pandas/tests/dtypes/test_concat.py
+@@ -38,16 +38,14 @@ def test_get_dtype_kinds(klass, to_concat, expected):
+ 
+ 
+ @pytest.mark.parametrize('to_concat, expected', [
+-    # because we don't have Period dtype (yet),
+-    # Series results in object dtype
+     ([PeriodIndex(['2011-01'], freq='M'),
+       PeriodIndex(['2011-01'], freq='M')], ['period[M]']),
+     ([Series([Period('2011-01', freq='M')]),
+-      Series([Period('2011-02', freq='M')])], ['object']),
++      Series([Period('2011-02', freq='M')])], ['period[M]']),
+     ([PeriodIndex(['2011-01'], freq='M'),
+       PeriodIndex(['2011-01'], freq='D')], ['period[M]', 'period[D]']),
+     ([Series([Period('2011-01', freq='M')]),
+-      Series([Period('2011-02', freq='D')])], ['object'])])
++      Series([Period('2011-02', freq='D')])], ['period[M]', 'period[D]'])])
+ def test_get_dtype_kinds_period(to_concat, expected):
+     result = _concat.get_dtype_kinds(to_concat)
+     assert result == set(expected)
+diff --git a/pandas/tests/dtypes/test_dtypes.py b/pandas/tests/dtypes/test_dtypes.py
+index c53c2e5059cde..2927442f9b6ee 100644
+--- a/pandas/tests/dtypes/test_dtypes.py
++++ b/pandas/tests/dtypes/test_dtypes.py
+@@ -381,11 +381,9 @@ def test_basic(self):
+         assert is_period(pidx)
+ 
+         s = Series(pidx, name='A')
+-        # dtypes
+-        # series results in object dtype currently,
+-        # is_period checks period_arraylike
+-        assert not is_period_dtype(s.dtype)
+-        assert not is_period_dtype(s)
++
++        assert is_period_dtype(s.dtype)
++        assert is_period_dtype(s)
+         assert is_period(s)
+ 
+         assert not is_period_dtype(np.dtype('float64'))
+diff --git a/pandas/tests/extension/test_common.py b/pandas/tests/extension/test_common.py
+index b6223ea96d7dd..a0a8f86a5d7b5 100644
+--- a/pandas/tests/extension/test_common.py
++++ b/pandas/tests/extension/test_common.py
+@@ -78,7 +78,6 @@ def test_astype_no_copy():
+ 
+ @pytest.mark.parametrize('dtype', [
+     dtypes.DatetimeTZDtype('ns', 'US/Central'),
+-    dtypes.PeriodDtype("D"),
+ ])
+ def test_is_not_extension_array_dtype(dtype):
+     assert not isinstance(dtype, dtypes.ExtensionDtype)
+diff --git a/pandas/tests/extension/test_integer.py b/pandas/tests/extension/test_integer.py
+index 668939e775148..26b09d545378b 100644
+--- a/pandas/tests/extension/test_integer.py
++++ b/pandas/tests/extension/test_integer.py
+@@ -143,11 +143,6 @@ def test_error(self, data, all_arithmetic_operators):
+         # other specific errors tested in the integer array specific tests
+         pass
+ 
+-    def test_add_series_with_extension_array(self, data):
+-        super(TestArithmeticOps, self).test_add_series_with_extension_array(
+-            data
+-        )
+-
+ 
+ class TestComparisonOps(base.BaseComparisonOpsTests):
+ 
+diff --git a/pandas/tests/extension/test_period.py b/pandas/tests/extension/test_period.py
+new file mode 100644
+index 0000000000000..6f59cbb66a145
+--- /dev/null
++++ b/pandas/tests/extension/test_period.py
+@@ -0,0 +1,155 @@
++import numpy as np
++import pytest
++
++import pandas as pd
++import pandas.util.testing as tm
++from pandas._libs.tslib import iNaT
++from pandas.core.arrays import PeriodArray
++from pandas.core.dtypes.dtypes import PeriodDtype
++from pandas.tests.extension import base
++
++
++@pytest.fixture
++def dtype():
++    return PeriodDtype(freq='D')
++
++
++@pytest.fixture
++def data(dtype):
++    return PeriodArray(np.arange(1970, 2070), freq=dtype.freq)
++
++
++@pytest.fixture
++def data_for_sorting(dtype):
++    return PeriodArray([2018, 2019, 2017], freq=dtype.freq)
++
++
++@pytest.fixture
++def data_missing(dtype):
++    return PeriodArray([iNaT, 2017], freq=dtype.freq)
++
++
++@pytest.fixture
++def data_missing_for_sorting(dtype):
++    return PeriodArray([2018, iNaT, 2017], freq=dtype.freq)
++
++
++@pytest.fixture
++def data_for_grouping(dtype):
++    B = 2018
++    NA = iNaT
++    A = 2017
++    C = 2019
++    return PeriodArray([B, B, NA, NA, A, A, B, C], freq=dtype.freq)
++
++
++@pytest.fixture
++def na_value():
++    return pd.NaT
++
++
++class BasePeriodTests(object):
++    pass
++
++
++class TestPeriodDtype(BasePeriodTests, base.BaseDtypeTests):
++    pass
++
++
++class TestConstructors(BasePeriodTests, base.BaseConstructorsTests):
++    pass
++
++
++class TestGetitem(BasePeriodTests, base.BaseGetitemTests):
++    pass
++
++
++class TestMethods(BasePeriodTests, base.BaseMethodsTests):
++
++    def test_combine_add(self, data_repeated):
++        # Period + Period is not defined.
++        pass
++
++
++class TestInterface(BasePeriodTests, base.BaseInterfaceTests):
++
++    def test_no_values_attribute(self, data):
++        # We have a values attribute.
++        pass
++
++
++class TestArithmeticOps(BasePeriodTests, base.BaseArithmeticOpsTests):
++    implements = {'__sub__', '__rsub__'}
++
++    def test_arith_series_with_scalar(self, data, all_arithmetic_operators):
++        # we implement substitution...
++        if all_arithmetic_operators in self.implements:
++            s = pd.Series(data)
++            self.check_opname(s, all_arithmetic_operators, s.iloc[0],
++                              exc=None)
++        else:
++            # ... but not the rest.
++            super(TestArithmeticOps, self).test_arith_series_with_scalar(
++                data, all_arithmetic_operators
++            )
++
++    def test_arith_series_with_array(self, data, all_arithmetic_operators):
++        if all_arithmetic_operators in self.implements:
++            s = pd.Series(data)
++            self.check_opname(s, all_arithmetic_operators, s.iloc[0],
++                              exc=None)
++        else:
++            # ... but not the rest.
++            super(TestArithmeticOps, self).test_arith_series_with_scalar(
++                data, all_arithmetic_operators
++            )
++
++    def _check_divmod_op(self, s, op, other, exc=NotImplementedError):
++        super(TestArithmeticOps, self)._check_divmod_op(
++            s, op, other, exc=TypeError
++        )
++
++    def test_add_series_with_extension_array(self, data):
++        # we don't implement + for Period
++        s = pd.Series(data)
++        msg = (r"unsupported operand type\(s\) for \+: "
++               r"\'PeriodArray\' and \'PeriodArray\'")
++        with tm.assert_raises_regex(TypeError, msg):
++            s + data
++
++    def test_error(self):
++        pass
++
++    def test_direct_arith_with_series_returns_not_implemented(self, data):
++        # Override to use __sub__ instead of __add__
++        other = pd.Series(data)
++        result = data.__sub__(other)
++        assert result is NotImplemented
++
++
++class TestCasting(BasePeriodTests, base.BaseCastingTests):
++    pass
++
++
++class TestComparisonOps(BasePeriodTests, base.BaseComparisonOpsTests):
++
++    def _compare_other(self, s, data, op_name, other):
++        # the base test is not appropriate for us. We raise on comparison
++        # with (some) integers, depending on the value.
++        pass
++
++
++class TestMissing(BasePeriodTests, base.BaseMissingTests):
++    pass
++
++
++class TestReshaping(BasePeriodTests, base.BaseReshapingTests):
++    pass
++
++
++class TestSetitem(BasePeriodTests, base.BaseSetitemTests):
++    pass
++
++
++class TestGroupby(BasePeriodTests, base.BaseGroupbyTests):
++    pass
+diff --git a/pandas/tests/frame/test_combine_concat.py b/pandas/tests/frame/test_combine_concat.py
+index ece9559313ba0..a43c5c7257daa 100644
+--- a/pandas/tests/frame/test_combine_concat.py
++++ b/pandas/tests/frame/test_combine_concat.py
+@@ -741,6 +741,7 @@ def test_combine_first_timedelta(self):
+         tm.assert_frame_equal(res, exp)
+         assert res['TD'].dtype == 'timedelta64[ns]'
+ 
++    @pytest.mark.xfail(reason="GH-23079", strict=True)
+     def test_combine_first_period(self):
+         data1 = pd.PeriodIndex(['2011-01', 'NaT', '2011-03',
+                                 '2011-04'], freq='M')
+@@ -755,7 +756,7 @@ def test_combine_first_period(self):
+                                  freq='M')
+         exp = pd.DataFrame({'P': exp_dts}, index=[1, 2, 3, 4, 5, 7])
+         tm.assert_frame_equal(res, exp)
+-        assert res['P'].dtype == 'object'
++        assert res['P'].dtype == data1.dtype
+ 
+         # different freq
+         dts2 = pd.PeriodIndex(['2012-01-01', '2012-01-02',
+diff --git a/pandas/tests/frame/test_constructors.py b/pandas/tests/frame/test_constructors.py
+index 3a45e0b61184c..dbce4c88aefd7 100644
+--- a/pandas/tests/frame/test_constructors.py
++++ b/pandas/tests/frame/test_constructors.py
+@@ -582,14 +582,14 @@ def test_constructor_period(self):
+         a = pd.PeriodIndex(['2012-01', 'NaT', '2012-04'], freq='M')
+         b = pd.PeriodIndex(['2012-02-01', '2012-03-01', 'NaT'], freq='D')
+         df = pd.DataFrame({'a': a, 'b': b})
+-        assert df['a'].dtype == 'object'
+-        assert df['b'].dtype == 'object'
++        assert df['a'].dtype == a.dtype
++        assert df['b'].dtype == b.dtype
+ 
+         # list of periods
+         df = pd.DataFrame({'a': a.astype(object).tolist(),
+                            'b': b.astype(object).tolist()})
+-        assert df['a'].dtype == 'object'
+-        assert df['b'].dtype == 'object'
++        assert df['a'].dtype == a.dtype
++        assert df['b'].dtype == b.dtype
+ 
+     def test_nested_dict_frame_constructor(self):
+         rng = pd.period_range('1/1/2000', periods=5)
+diff --git a/pandas/tests/frame/test_operators.py b/pandas/tests/frame/test_operators.py
+index b2781952ea86d..20ca4bc7de43e 100644
+--- a/pandas/tests/frame/test_operators.py
++++ b/pandas/tests/frame/test_operators.py
+@@ -552,7 +552,8 @@ def test_arith_non_pandas_object(self):
+         df = self.simple
+ 
+         val1 = df.xs('a').values
+-        added = DataFrame(df.values + val1, index=df.index, columns=df.columns)
++        added = DataFrame(df.values + val1, index=df.index,
++                          columns=df.columns)
+         assert_frame_equal(df + val1, added)
+ 
+         added = DataFrame((df.values.T + val1).T,
+diff --git a/pandas/tests/frame/test_replace.py b/pandas/tests/frame/test_replace.py
+index 49dba1c769572..bf755b1dac4b8 100644
+--- a/pandas/tests/frame/test_replace.py
++++ b/pandas/tests/frame/test_replace.py
+@@ -984,8 +984,11 @@ def test_replace_period(self):
+                            'out_augmented_AUG_2011.json',
+                            'out_augmented_JAN_2011.json'], columns=['fname'])
+         assert set(df.fname.values) == set(d['fname'].keys())
++        # We don't support converting object -> specialized EA in
++        # replace yet.
+         expected = DataFrame({'fname': [d['fname'][k]
+-                                        for k in df.fname.values]})
++                                        for k in df.fname.values]},
++                             dtype=object)
+         result = df.replace(d)
+         assert_frame_equal(result, expected)
+ 
+diff --git a/pandas/tests/frame/test_reshape.py b/pandas/tests/frame/test_reshape.py
+index 9f6735c7ba2bf..ed3cc39052183 100644
+--- a/pandas/tests/frame/test_reshape.py
++++ b/pandas/tests/frame/test_reshape.py
+@@ -277,6 +277,8 @@ def test_unstack_fill_frame_timedelta(self):
+                              index=['x', 'y', 'z'])
+         assert_frame_equal(result, expected)
+ 
++    @pytest.mark.xfail(reason="GH-23077",
++                       strict=True)
+     def test_unstack_fill_frame_period(self):
+ 
+         # Test unstacking with period
+diff --git a/pandas/tests/indexes/common.py b/pandas/tests/indexes/common.py
+index ee91b3075b0a1..dc936af04e045 100644
+--- a/pandas/tests/indexes/common.py
++++ b/pandas/tests/indexes/common.py
+@@ -309,7 +309,8 @@ def test_ensure_copied_data(self):
+             index_type = index.__class__
+             result = index_type(index.values, copy=True, **init_kwargs)
+             tm.assert_index_equal(index, result)
+-            tm.assert_numpy_array_equal(index.values, result.values,
++            tm.assert_numpy_array_equal(index._ndarray_values,
++                                        result._ndarray_values,
+                                         check_same='copy')
+ 
+             if isinstance(index, PeriodIndex):
+diff --git a/pandas/tests/indexes/period/test_astype.py b/pandas/tests/indexes/period/test_astype.py
+index f2126487496c4..a5042b8c714c8 100644
+--- a/pandas/tests/indexes/period/test_astype.py
++++ b/pandas/tests/indexes/period/test_astype.py
+@@ -14,7 +14,7 @@ class TestPeriodIndexAsType(object):
+     def test_astype_raises(self, dtype):
+         # GH#13149, GH#13209
+         idx = PeriodIndex(['2016-05-16', 'NaT', NaT, np.NaN], freq='D')
+-        msg = 'Cannot cast PeriodIndex to dtype'
++        msg = 'Cannot cast PeriodArray to dtype'
+         with tm.assert_raises_regex(TypeError, msg):
+             idx.astype(dtype)
+ 
+@@ -27,7 +27,7 @@ def test_astype_conversion(self):
+                          [Period(NaT, freq='D')] * 3, dtype='object')
+         tm.assert_index_equal(result, expected)
+ 
+-        result = idx.astype(int)
++        result = idx.astype(np.int64)
+         expected = Int64Index([16937] + [-9223372036854775808] * 3,
+                               dtype=np.int64)
+         tm.assert_index_equal(result, expected)
+diff --git a/pandas/tests/indexes/period/test_construction.py b/pandas/tests/indexes/period/test_construction.py
+index d54dac5867845..e1cefaf5905ad 100644
+--- a/pandas/tests/indexes/period/test_construction.py
++++ b/pandas/tests/indexes/period/test_construction.py
+@@ -7,6 +7,7 @@
+ from pandas.compat import lrange, PY3, text_type, lmap
+ from pandas import (Period, PeriodIndex, period_range, offsets, date_range,
+                     Series, Index)
++from pandas.core.dtypes.dtypes import PeriodDtype
+ 
+ 
+ class TestPeriodIndex(object):
+@@ -270,16 +271,6 @@ def test_constructor_simple_new(self):
+         result = idx._simple_new(idx.astype('i8'), name='p', freq=idx.freq)
+         tm.assert_index_equal(result, idx)
+ 
+-        result = idx._simple_new([pd.Period('2007-01', freq='M'),
+-                                  pd.Period('2007-02', freq='M')],
+-                                 name='p', freq=idx.freq)
+-        tm.assert_index_equal(result, idx)
+-
+-        result = idx._simple_new(np.array([pd.Period('2007-01', freq='M'),
+-                                           pd.Period('2007-02', freq='M')]),
+-                                 name='p', freq=idx.freq)
+-        tm.assert_index_equal(result, idx)
+-
+     def test_constructor_simple_new_empty(self):
+         # GH13079
+         idx = PeriodIndex([], freq='M', name='p')
+@@ -288,7 +279,6 @@ def test_constructor_simple_new_empty(self):
+ 
+     @pytest.mark.parametrize('floats', [[1.1, 2.1], np.array([1.1, 2.1])])
+     def test_constructor_floats(self, floats):
+-        # GH#13079
+         with pytest.raises(TypeError):
+             pd.PeriodIndex._simple_new(floats, freq='M')
+ 
+@@ -484,6 +474,7 @@ def test_constructor_cant_cast_period(self):
+                    dtype=float)
+ 
+     def test_constructor_cast_object(self):
+-        s = Series(period_range('1/1/2000', periods=10), dtype=object)
++        s = Series(period_range('1/1/2000', periods=10),
++                   dtype=PeriodDtype("D"))
+         exp = Series(period_range('1/1/2000', periods=10))
+         tm.assert_series_equal(s, exp)
+diff --git a/pandas/tests/indexes/period/test_formats.py b/pandas/tests/indexes/period/test_formats.py
+index daf44a559cf5c..2a893ae16e30d 100644
+--- a/pandas/tests/indexes/period/test_formats.py
++++ b/pandas/tests/indexes/period/test_formats.py
+@@ -116,41 +116,41 @@ def test_representation_to_series(self):
+         idx8 = pd.period_range('2013Q1', periods=2, freq="Q")
+         idx9 = pd.period_range('2013Q1', periods=3, freq="Q")
+ 
+-        exp1 = """Series([], dtype: object)"""
++        exp1 = """Series([], dtype: period[D])"""
+ 
+-        exp2 = """0   2011-01-01
+-dtype: object"""
++        exp2 = """0    2011-01-01
++dtype: period[D]"""
+ 
+-        exp3 = """0   2011-01-01
+-1   2011-01-02
+-dtype: object"""
++        exp3 = """0    2011-01-01
++1    2011-01-02
++dtype: period[D]"""
+ 
+-        exp4 = """0   2011-01-01
+-1   2011-01-02
+-2   2011-01-03
+-dtype: object"""
++        exp4 = """0    2011-01-01
++1    2011-01-02
++2    2011-01-03
++dtype: period[D]"""
+ 
+-        exp5 = """0   2011
+-1   2012
+-2   2013
+-dtype: object"""
++        exp5 = """0    2011
++1    2012
++2    2013
++dtype: period[A-DEC]"""
+ 
+-        exp6 = """0   2011-01-01 09:00
+-1   2012-02-01 10:00
+-2                NaT
+-dtype: object"""
++        exp6 = """0    2011-01-01 09:00
++1    2012-02-01 10:00
++2                 NaT
++dtype: period[H]"""
+ 
+-        exp7 = """0   2013Q1
+-dtype: object"""
++        exp7 = """0    2013Q1
++dtype: period[Q-DEC]"""
+ 
+-        exp8 = """0   2013Q1
+-1   2013Q2
+-dtype: object"""
++        exp8 = """0    2013Q1
++1    2013Q2
++dtype: period[Q-DEC]"""
+ 
+-        exp9 = """0   2013Q1
+-1   2013Q2
+-2   2013Q3
+-dtype: object"""
++        exp9 = """0    2013Q1
++1    2013Q2
++2    2013Q3
++dtype: period[Q-DEC]"""
+ 
+         for idx, expected in zip([idx1, idx2, idx3, idx4, idx5,
+                                   idx6, idx7, idx8, idx9],
+diff --git a/pandas/tests/indexes/period/test_indexing.py b/pandas/tests/indexes/period/test_indexing.py
+index 60ba0491f1ffd..609c4a828adec 100644
+--- a/pandas/tests/indexes/period/test_indexing.py
++++ b/pandas/tests/indexes/period/test_indexing.py
+@@ -564,7 +564,7 @@ def test_get_loc2(self):
+                                     'unit abbreviation w/o a number'):
+             idx.get_loc('2000-01-10', method='nearest', tolerance='foo')
+ 
+-        msg = 'Input has different freq from PeriodIndex\\(freq=D\\)'
++        msg = 'Input has different freq from PeriodArray\\(freq=D\\)'
+         with tm.assert_raises_regex(ValueError, msg):
+             idx.get_loc('2000-01-10', method='nearest', tolerance='1 hour')
+         with pytest.raises(KeyError):
+@@ -594,7 +594,7 @@ def test_get_indexer2(self):
+                                                     tolerance='1 hour'),
+                                     np.array([0, -1, 1], dtype=np.intp))
+ 
+-        msg = 'Input has different freq from PeriodIndex\\(freq=H\\)'
++        msg = 'Input has different freq from PeriodArray\\(freq=H\\)'
+         with tm.assert_raises_regex(ValueError, msg):
+             idx.get_indexer(target, 'nearest', tolerance='1 minute')
+ 
+diff --git a/pandas/tests/indexes/period/test_ops.py b/pandas/tests/indexes/period/test_ops.py
+index a59efe57f83c4..33858a28ec81b 100644
+--- a/pandas/tests/indexes/period/test_ops.py
++++ b/pandas/tests/indexes/period/test_ops.py
+@@ -7,6 +7,7 @@
+ import pandas.util.testing as tm
+ from pandas import DatetimeIndex, PeriodIndex, Series, Period, Index
+ 
++from pandas.core.arrays import PeriodArray
+ from pandas.tests.test_base import Ops
+ 
+ 
+@@ -21,9 +22,9 @@ def setup_method(self, method):
+ 
+     def test_ops_properties(self):
+         f = lambda x: isinstance(x, PeriodIndex)
+-        self.check_ops_properties(PeriodIndex._field_ops, f)
+-        self.check_ops_properties(PeriodIndex._object_ops, f)
+-        self.check_ops_properties(PeriodIndex._bool_ops, f)
++        self.check_ops_properties(PeriodArray._field_ops, f)
++        self.check_ops_properties(PeriodArray._object_ops, f)
++        self.check_ops_properties(PeriodArray._bool_ops, f)
+ 
+     def test_minmax(self):
+ 
+@@ -92,7 +93,7 @@ def test_value_counts_unique(self):
+         # GH 7735
+         idx = pd.period_range('2011-01-01 09:00', freq='H', periods=10)
+         # create repeated values, 'n'th element is repeated by n+1 times
+-        idx = PeriodIndex(np.repeat(idx.values, range(1, len(idx) + 1)),
++        idx = PeriodIndex(np.repeat(idx._values, range(1, len(idx) + 1)),
+                           freq='H')
+ 
+         exp_idx = PeriodIndex(['2011-01-01 18:00', '2011-01-01 17:00',
+@@ -390,7 +391,9 @@ def test_equals(self, freq):
+         assert not idx.equals(pd.Series(idx2))
+ 
+         # same internal, different tz
+-        idx3 = pd.PeriodIndex._simple_new(idx.asi8, freq='H')
++        idx3 = pd.PeriodIndex._simple_new(
++            idx._values._simple_new(idx._values.asi8, freq="H")
++        )
+         tm.assert_numpy_array_equal(idx.asi8, idx3.asi8)
+         assert not idx.equals(idx3)
+         assert not idx.equals(idx3.copy())
+@@ -501,3 +504,12 @@ def test_pi_comp_period_nat(self):
+         f = lambda x: tslib.NaT >= x
+         exp = np.array([False, False, False, False], dtype=np.bool)
+         self._check(idx, f, exp)
++
++
++@pytest.mark.parametrize("other", ["2017", 2017])
++def test_eq(other):
++    idx = pd.PeriodIndex(['2017', '2017', '2018'], freq="D")
++    expected = np.array([True, True, False])
++    result = idx == other
++
++    tm.assert_numpy_array_equal(result, expected)
+diff --git a/pandas/tests/indexes/period/test_tools.py b/pandas/tests/indexes/period/test_tools.py
+index a5c58eb40cc0d..a7bd2f370996b 100644
+--- a/pandas/tests/indexes/period/test_tools.py
++++ b/pandas/tests/indexes/period/test_tools.py
+@@ -101,6 +101,12 @@ def _get_with_delta(delta, freq='A-DEC'):
+         tm.assert_index_equal(result.index, exp_index)
+         assert result.name == 'foo'
+ 
++    def test_to_timestamp_freq(self):
++        idx = pd.period_range('2017', periods=12, freq="A-DEC")
++        result = idx.to_timestamp()
++        expected = pd.date_range("2017", periods=12, freq="AS-JAN")
++        tm.assert_index_equal(result, expected)
++
+     def test_to_timestamp_repr_is_code(self):
+         zs = [Timestamp('99-04-17 00:00:00', tz='UTC'),
+               Timestamp('2001-04-17 00:00:00', tz='UTC'),
+diff --git a/pandas/tests/io/formats/test_format.py b/pandas/tests/io/formats/test_format.py
+index 03e830fb09ad6..28aa8a92cc410 100644
+--- a/pandas/tests/io/formats/test_format.py
++++ b/pandas/tests/io/formats/test_format.py
+@@ -1720,9 +1720,11 @@ def test_period(self):
+                                  pd.Period('2011-03-01 09:00', freq='H'),
+                                  pd.Period('2011-04', freq='M')],
+                            'C': list('abcd')})
+-        exp = ("        A                B  C\n0 2013-01          2011-01  a\n"
+-               "1 2013-02       2011-02-01  b\n2 2013-03 2011-03-01 09:00  c\n"
+-               "3 2013-04          2011-04  d")
++        exp = ("         A                 B  C\n"
++               "0  2013-01           2011-01  a\n"
++               "1  2013-02        2011-02-01  b\n"
++               "2  2013-03  2011-03-01 09:00  c\n"
++               "3  2013-04           2011-04  d")
+         assert str(df) == exp
+ 
+ 
+@@ -2110,21 +2112,31 @@ def test_period(self):
+         # GH 12615
+         index = pd.period_range('2013-01', periods=6, freq='M')
+         s = Series(np.arange(6, dtype='int64'), index=index)
+-        exp = ("2013-01    0\n2013-02    1\n2013-03    2\n2013-04    3\n"
+-               "2013-05    4\n2013-06    5\nFreq: M, dtype: int64")
++        exp = ("2013-01    0\n"
++               "2013-02    1\n"
++               "2013-03    2\n"
++               "2013-04    3\n"
++               "2013-05    4\n"
++               "2013-06    5\n"
++               "Freq: M, dtype: int64")
+         assert str(s) == exp
+ 
+         s = Series(index)
+-        exp = ("0   2013-01\n1   2013-02\n2   2013-03\n3   2013-04\n"
+-               "4   2013-05\n5   2013-06\ndtype: object")
++        exp = ("0    2013-01\n"
++               "1    2013-02\n"
++               "2    2013-03\n"
++               "3    2013-04\n"
++               "4    2013-05\n"
++               "5    2013-06\n"
++               "dtype: period[M]")
+         assert str(s) == exp
+ 
+         # periods with mixed freq
+         s = Series([pd.Period('2011-01', freq='M'),
+                     pd.Period('2011-02-01', freq='D'),
+                     pd.Period('2011-03-01 09:00', freq='H')])
+-        exp = ("0            2011-01\n1         2011-02-01\n"
+-               "2   2011-03-01 09:00\ndtype: object")
++        exp = ("0             2011-01\n1          2011-02-01\n"
++               "2    2011-03-01 09:00\ndtype: object")
+         assert str(s) == exp
+ 
+     def test_max_multi_index_display(self):
+diff --git a/pandas/tests/io/test_feather.py b/pandas/tests/io/test_feather.py
+index 36118fb1303fc..82f9f7253e65c 100644
+--- a/pandas/tests/io/test_feather.py
++++ b/pandas/tests/io/test_feather.py
+@@ -100,7 +100,8 @@ def test_unsupported_other(self):
+ 
+         # period
+         df = pd.DataFrame({'a': pd.period_range('2013', freq='M', periods=3)})
+-        self.check_error_on_write(df, ValueError)
++        # Some versions raise ValueError, others raise ArrowInvalid.
++        self.check_error_on_write(df, Exception)
+ 
+     @pytest.mark.skipif(fv < LooseVersion('0.4.0'), reason='new in 0.4.0')
+     def test_rw_nthreads(self):
+diff --git a/pandas/tests/io/test_parquet.py b/pandas/tests/io/test_parquet.py
+index c92d9a489b5c3..4c58d8ce29d8b 100644
+--- a/pandas/tests/io/test_parquet.py
++++ b/pandas/tests/io/test_parquet.py
+@@ -441,7 +441,9 @@ def test_duplicate_columns(self, pa):
+     def test_unsupported(self, pa):
+         # period
+         df = pd.DataFrame({'a': pd.period_range('2013', freq='M', periods=3)})
+-        self.check_error_on_write(df, pa, ValueError)
++        # pyarrow 0.11 raises ArrowTypeError
++        # older pyarrows raise ArrowInvalid
++        self.check_error_on_write(df, pa, Exception)
+ 
+         # timedelta
+         df = pd.DataFrame({'a': pd.timedelta_range('1 day',
+@@ -450,7 +452,9 @@ def test_unsupported(self, pa):
+ 
+         # mixed python objects
+         df = pd.DataFrame({'a': ['a', 1, 2.0]})
+-        self.check_error_on_write(df, pa, ValueError)
++        # pyarrow 0.11 raises ArrowTypeError
++        # older pyarrows raise ArrowInvalid
++        self.check_error_on_write(df, pa, Exception)
+ 
+     def test_categorical(self, pa_ge_070):
+         pa = pa_ge_070
+diff --git a/pandas/tests/reshape/merge/test_merge.py b/pandas/tests/reshape/merge/test_merge.py
+index 50ef622a4147f..2b4a7952ae738 100644
+--- a/pandas/tests/reshape/merge/test_merge.py
++++ b/pandas/tests/reshape/merge/test_merge.py
+@@ -666,8 +666,8 @@ def test_merge_on_periods(self):
+                               'value_y': [pd.NaT] + list(exp_y)})
+         result = pd.merge(left, right, on='key', how='outer')
+         assert_frame_equal(result, expected)
+-        assert result['value_x'].dtype == 'object'
+-        assert result['value_y'].dtype == 'object'
++        assert result['value_x'].dtype == 'Period[D]'
++        assert result['value_y'].dtype == 'Period[D]'
+ 
+     def test_indicator(self):
+         # PR #10054. xref #7412 and closes #8790.
+diff --git a/pandas/tests/reshape/test_concat.py b/pandas/tests/reshape/test_concat.py
+index d39c9fafe5749..e65a2e9f9d4fa 100644
+--- a/pandas/tests/reshape/test_concat.py
++++ b/pandas/tests/reshape/test_concat.py
+@@ -93,7 +93,7 @@ def _check_expected_dtype(self, obj, label):
+                 assert obj.dtype == label
+         elif isinstance(obj, pd.Series):
+             if label.startswith('period'):
+-                assert obj.dtype == 'object'
++                assert obj.dtype == 'Period[M]'
+             else:
+                 assert obj.dtype == label
+         else:
+@@ -1995,12 +1995,11 @@ def test_concat_NaT_dataframes(self, tz):
+     def test_concat_period_series(self):
+         x = Series(pd.PeriodIndex(['2015-11-01', '2015-12-01'], freq='D'))
+         y = Series(pd.PeriodIndex(['2015-10-01', '2016-01-01'], freq='D'))
+-        expected = Series([x[0], x[1], y[0], y[1]], dtype='object')
++        expected = Series([x[0], x[1], y[0], y[1]], dtype='Period[D]')
+         result = concat([x, y], ignore_index=True)
+         tm.assert_series_equal(result, expected)
+-        assert result.dtype == 'object'
+ 
+-        # different freq
++    def test_concat_period_multiple_freq_series(self):
+         x = Series(pd.PeriodIndex(['2015-11-01', '2015-12-01'], freq='D'))
+         y = Series(pd.PeriodIndex(['2015-10-01', '2016-01-01'], freq='M'))
+         expected = Series([x[0], x[1], y[0], y[1]], dtype='object')
+@@ -2008,6 +2007,7 @@ def test_concat_period_series(self):
+         tm.assert_series_equal(result, expected)
+         assert result.dtype == 'object'
+ 
++    def test_concat_period_other_series(self):
+         x = Series(pd.PeriodIndex(['2015-11-01', '2015-12-01'], freq='D'))
+         y = Series(pd.PeriodIndex(['2015-11-01', '2015-12-01'], freq='M'))
+         expected = Series([x[0], x[1], y[0], y[1]], dtype='object')
+diff --git a/pandas/tests/scalar/test_nat.py b/pandas/tests/scalar/test_nat.py
+index bc8582d9b7d29..b978ccf4a2f6a 100644
+--- a/pandas/tests/scalar/test_nat.py
++++ b/pandas/tests/scalar/test_nat.py
+@@ -5,8 +5,9 @@
+ 
+ import numpy as np
+ from pandas import (NaT, Index, Timestamp, Timedelta, Period,
+-                    DatetimeIndex, PeriodIndex,
++                    DatetimeIndex,
+                     TimedeltaIndex, Series, isna)
++from pandas.core.arrays import PeriodArray
+ from pandas.util import testing as tm
+ from pandas._libs.tslib import iNaT
+ 
+@@ -15,7 +16,7 @@
+ 
+ @pytest.mark.parametrize('nat, idx', [(Timestamp('NaT'), DatetimeIndex),
+                                       (Timedelta('NaT'), TimedeltaIndex),
+-                                      (Period('NaT', freq='M'), PeriodIndex)])
++                                      (Period('NaT', freq='M'), PeriodArray)])
+ def test_nat_fields(nat, idx):
+ 
+     for field in idx._field_ops:
+diff --git a/pandas/tests/series/test_api.py b/pandas/tests/series/test_api.py
+index 3b82242626c20..3e68d4fc03f1f 100644
+--- a/pandas/tests/series/test_api.py
++++ b/pandas/tests/series/test_api.py
+@@ -14,7 +14,8 @@
+ 
+ from pandas.compat import range, lzip, isidentifier, string_types
+ from pandas import (compat, Categorical, period_range, timedelta_range,
+-                    DatetimeIndex, PeriodIndex, TimedeltaIndex)
++                    DatetimeIndex, TimedeltaIndex)
++from pandas.core.arrays import PeriodArray
+ import pandas.io.formats.printing as printing
+ from pandas.util.testing import (assert_series_equal,
+                                  ensure_clean)
+@@ -698,7 +699,7 @@ def test_dt_accessor_api_for_categorical(self):
+ 
+         test_data = [
+             ("Datetime", get_ops(DatetimeIndex), s_dr, c_dr),
+-            ("Period", get_ops(PeriodIndex), s_pr, c_pr),
++            ("Period", get_ops(PeriodArray), s_pr, c_pr),
+             ("Timedelta", get_ops(TimedeltaIndex), s_tdr, c_tdr)]
+ 
+         assert isinstance(c_dr.dt, Properties)
+diff --git a/pandas/tests/series/test_apply.py b/pandas/tests/series/test_apply.py
+index 20215279cf031..509cd8d0f3241 100644
+--- a/pandas/tests/series/test_apply.py
++++ b/pandas/tests/series/test_apply.py
+@@ -119,11 +119,11 @@ def test_apply_box(self):
+         exp = pd.Series(['Timedelta_1', 'Timedelta_2'])
+         tm.assert_series_equal(res, exp)
+ 
+-        # period (object dtype, not boxed)
++        # period
+         vals = [pd.Period('2011-01-01', freq='M'),
+                 pd.Period('2011-01-02', freq='M')]
+         s = pd.Series(vals)
+-        assert s.dtype == 'object'
++        assert s.dtype == 'Period[M]'
+         res = s.apply(lambda x: '{0}_{1}'.format(x.__class__.__name__,
+                                                  x.freqstr))
+         exp = pd.Series(['Period_M', 'Period_M'])
+@@ -599,11 +599,11 @@ def test_map_box(self):
+         exp = pd.Series(['Timedelta_1', 'Timedelta_2'])
+         tm.assert_series_equal(res, exp)
+ 
+-        # period (object dtype, not boxed)
++        # period
+         vals = [pd.Period('2011-01-01', freq='M'),
+                 pd.Period('2011-01-02', freq='M')]
+         s = pd.Series(vals)
+-        assert s.dtype == 'object'
++        assert s.dtype == 'Period[M]'
+         res = s.map(lambda x: '{0}_{1}'.format(x.__class__.__name__,
+                                                x.freqstr))
+         exp = pd.Series(['Period_M', 'Period_M'])
+diff --git a/pandas/tests/series/test_constructors.py b/pandas/tests/series/test_constructors.py
+index 57a3f54fadbcc..83990bddcee5d 100644
+--- a/pandas/tests/series/test_constructors.py
++++ b/pandas/tests/series/test_constructors.py
+@@ -18,7 +18,7 @@
+ from pandas import (Index, Series, isna, date_range, Timestamp,
+                     NaT, period_range, timedelta_range, MultiIndex,
+                     IntervalIndex, Categorical, DataFrame)
+-
++from pandas.core.arrays import period_array
+ from pandas._libs import lib
+ from pandas._libs.tslib import iNaT
+ 
+@@ -856,17 +856,33 @@ def test_construction_consistency(self):
+         result = Series(s.values, dtype=s.dtype)
+         tm.assert_series_equal(result, s)
+ 
++    def test_constructor_infer_period(self):
++        data = [pd.Period('2000', 'D'), pd.Period('2001', 'D'), None]
++        result = pd.Series(data)
++        expected = pd.Series(period_array(data))
++        tm.assert_series_equal(result, expected)
++        assert result.dtype == 'Period[D]'
++
++        data = np.asarray(data, dtype=object)
++        tm.assert_series_equal(result, expected)
++        assert result.dtype == 'Period[D]'
++
++    def test_constructor_period_incompatible_frequency(self):
++        data = [pd.Period('2000', 'D'), pd.Period('2001', 'A')]
++        result = pd.Series(data)
++        assert result.dtype == object
++        assert result.tolist() == data
++
+     def test_constructor_periodindex(self):
+         # GH7932
+         # converting a PeriodIndex when put in a Series
+ 
+         pi = period_range('20130101', periods=5, freq='D')
+         s = Series(pi)
++        assert s.dtype == 'Period[D]'
+         expected = Series(pi.astype(object))
+         assert_series_equal(s, expected)
+ 
+-        assert s.dtype == 'object'
+-
+     def test_constructor_dict(self):
+         d = {'a': 0., 'b': 1., 'c': 2.}
+         result = Series(d, index=['b', 'c', 'd', 'a'])
+@@ -1141,7 +1157,12 @@ def test_convert_non_ns(self):
+     def test_constructor_cant_cast_datetimelike(self, index):
+ 
+         # floats are not ok
+-        msg = "Cannot cast {} to ".format(type(index).__name__)
++        msg = "Cannot cast {}.*? to ".format(
++            # strip Index to convert PeriodIndex -> Period
++            # We don't care whether the error message says
++            # PeriodIndex or PeriodArray
++            type(index).__name__.rstrip("Index")
++        )
+         with tm.assert_raises_regex(TypeError, msg):
+             Series(index, dtype=float)
+ 
+diff --git a/pandas/tests/series/test_datetime_values.py b/pandas/tests/series/test_datetime_values.py
+index e06d3a67db662..7f8bd375cb1a4 100644
+--- a/pandas/tests/series/test_datetime_values.py
++++ b/pandas/tests/series/test_datetime_values.py
+@@ -18,6 +18,7 @@
+                     PeriodIndex, DatetimeIndex, TimedeltaIndex,
+                     compat)
+ import pandas.core.common as com
++from pandas.core.arrays import PeriodArray
+ from pandas._libs.tslibs.timezones import maybe_get_tz
+ 
+ from pandas.util.testing import assert_series_equal
+@@ -31,7 +32,7 @@ def test_dt_namespace_accessor(self):
+         # GH 7207, 11128
+         # test .dt namespace accessor
+ 
+-        ok_for_period = PeriodIndex._datetimelike_ops
++        ok_for_period = PeriodArray._datetimelike_ops
+         ok_for_period_methods = ['strftime', 'to_timestamp', 'asfreq']
+         ok_for_dt = DatetimeIndex._datetimelike_ops
+         ok_for_dt_methods = ['to_period', 'to_pydatetime', 'tz_localize',
+diff --git a/pandas/tests/series/test_operators.py b/pandas/tests/series/test_operators.py
+index 55e3dfde3ceb7..32a687be77b95 100644
+--- a/pandas/tests/series/test_operators.py
++++ b/pandas/tests/series/test_operators.py
+@@ -553,8 +553,11 @@ def test_unequal_categorical_comparison_raises_type_error(self):
+         ([pd.Timedelta('1 days'), NaT, pd.Timedelta('3 days')],
+          [NaT, NaT, pd.Timedelta('3 days')]),
+ 
+-        ([pd.Period('2011-01', freq='M'), NaT, pd.Period('2011-03', freq='M')],
+-         [NaT, NaT, pd.Period('2011-03', freq='M')])])
++        ([pd.Period('2011-01', freq='M'), NaT,
++          pd.Period('2011-03', freq='M')],
++         [NaT, NaT, pd.Period('2011-03', freq='M')]),
++
++    ])
+     @pytest.mark.parametrize('reverse', [True, False])
+     @pytest.mark.parametrize('box', [Series, Index])
+     @pytest.mark.parametrize('dtype', [None, object])
+diff --git a/pandas/tests/series/test_period.py b/pandas/tests/series/test_period.py
+index 24c2f30bef569..7a095b6dc6663 100644
+--- a/pandas/tests/series/test_period.py
++++ b/pandas/tests/series/test_period.py
+@@ -4,6 +4,7 @@
+ import pandas as pd
+ import pandas.util.testing as tm
+ import pandas.core.indexes.period as period
++from pandas.core.arrays import PeriodArray
+ from pandas import Series, period_range, DataFrame, Period
+ 
+ 
+@@ -18,11 +19,11 @@ def setup_method(self, method):
+ 
+     def test_auto_conversion(self):
+         series = Series(list(period_range('2000-01-01', periods=10, freq='D')))
+-        assert series.dtype == 'object'
++        assert series.dtype == 'Period[D]'
+ 
+         series = pd.Series([pd.Period('2011-01-01', freq='D'),
+                             pd.Period('2011-02-01', freq='D')])
+-        assert series.dtype == 'object'
++        assert series.dtype == 'Period[D]'
+ 
+     def test_getitem(self):
+         assert self.series[1] == pd.Period('2000-01-02', freq='D')
+@@ -30,9 +31,9 @@ def test_getitem(self):
+         result = self.series[[2, 4]]
+         exp = pd.Series([pd.Period('2000-01-03', freq='D'),
+                          pd.Period('2000-01-05', freq='D')],
+-                        index=[2, 4])
++                        index=[2, 4], dtype='Period[D]')
+         tm.assert_series_equal(result, exp)
+-        assert result.dtype == 'object'
++        assert result.dtype == 'Period[D]'
+ 
+     def test_isna(self):
+         # GH 13737
+@@ -50,12 +51,7 @@ def test_fillna(self):
+         exp = Series([pd.Period('2011-01', freq='M'),
+                       pd.Period('2012-01', freq='M')])
+         tm.assert_series_equal(res, exp)
+-        assert res.dtype == 'object'
+-
+-        res = s.fillna('XXX')
+-        exp = Series([pd.Period('2011-01', freq='M'), 'XXX'])
+-        tm.assert_series_equal(res, exp)
+-        assert res.dtype == 'object'
++        assert res.dtype == 'Period[M]'
+ 
+     def test_dropna(self):
+         # GH 13737
+@@ -91,19 +87,20 @@ def test_NaT_cast(self):
+         expected = Series([pd.NaT])
+         tm.assert_series_equal(result, expected)
+ 
+-    def test_set_none_nan(self):
+-        # currently Period is stored as object dtype, not as NaT
++    def test_set_none(self):
+         self.series[3] = None
+-        assert self.series[3] is None
++        assert self.series[3] is pd.NaT
+ 
+         self.series[3:5] = None
+-        assert self.series[4] is None
++        assert self.series[4] is pd.NaT
+ 
++    def test_set_nan(self):
++        # Do we want to allow this?
+         self.series[5] = np.nan
+-        assert np.isnan(self.series[5])
++        assert self.series[5] is pd.NaT
+ 
+         self.series[5:7] = np.nan
+-        assert np.isnan(self.series[6])
++        assert self.series[6] is pd.NaT
+ 
+     def test_intercept_astype_object(self):
+         expected = self.series.astype('object')
+@@ -184,6 +181,7 @@ def test_end_time_timevalues(self, input_vals):
+         # GH 17157
+         # Check that the time part of the Period is adjusted by end_time
+         # when using the dt accessor on a Series
++        input_vals = PeriodArray._from_sequence(np.asarray(input_vals))
+ 
+         s = Series(input_vals)
+         result = s.dt.end_time
+diff --git a/pandas/tests/test_base.py b/pandas/tests/test_base.py
+index bbc5bd96bad55..fe2956adc35af 100644
+--- a/pandas/tests/test_base.py
++++ b/pandas/tests/test_base.py
+@@ -1179,11 +1179,11 @@ def test_iter_box(self):
+             assert isinstance(res, Timedelta)
+             assert res == exp
+ 
+-        # period (object dtype, not boxed)
++        # period
+         vals = [pd.Period('2011-01-01', freq='M'),
+                 pd.Period('2011-01-02', freq='M')]
+         s = Series(vals)
+-        assert s.dtype == 'object'
++        assert s.dtype == 'Period[M]'
+         for res, exp in zip(s, vals):
+             assert isinstance(res, pd.Period)
+             assert res.freq == 'M'
+@@ -1198,7 +1198,8 @@ def test_iter_box(self):
+     (pd.DatetimeIndex(['2017', '2018'], tz="US/Central"), pd.DatetimeIndex,
+      'datetime64[ns, US/Central]'),
+     (pd.TimedeltaIndex([10**10]), np.ndarray, 'm8[ns]'),
+-    (pd.PeriodIndex([2018, 2019], freq='A'), np.ndarray, 'object'),
++    (pd.PeriodIndex([2018, 2019], freq='A'), pd.core.arrays.PeriodArray,
++     pd.core.dtypes.dtypes.PeriodDtype("A-DEC")),
+     (pd.IntervalIndex.from_breaks([0, 1, 2]), pd.core.arrays.IntervalArray,
+      'interval'),
+ ])
+@@ -1214,6 +1215,8 @@ def test_values_consistent(array, expected_type, dtype):
+         tm.assert_index_equal(l_values, r_values)
+     elif pd.api.types.is_categorical(l_values):
+         tm.assert_categorical_equal(l_values, r_values)
++    elif pd.api.types.is_period_dtype(l_values):
++        tm.assert_period_array_equal(l_values, r_values)
+     elif pd.api.types.is_interval_dtype(l_values):
+         tm.assert_interval_array_equal(l_values, r_values)
+     else:
+@@ -1232,12 +1235,8 @@ def test_values_consistent(array, expected_type, dtype):
+     (pd.DatetimeIndex(['2017-01-01T00:00:00'], tz="US/Eastern"),
+      np.array(['2017-01-01T05:00:00'], dtype='M8[ns]')),
+     (pd.TimedeltaIndex([10**10]), np.array([10**10], dtype='m8[ns]')),
+-    pytest.param(
+-        pd.PeriodIndex(['2017', '2018'], freq='D'),
+-        np.array([17167, 17532]),
+-        marks=pytest.mark.xfail(reason="PeriodArray Not implemented",
+-                                strict=True)
+-    ),
++    (pd.PeriodIndex(['2017', '2018'], freq='D'),
++     np.array([17167, 17532], dtype=np.int64)),
+ ])
+ def test_ndarray_values(array, expected):
+     l_values = pd.Series(array)._ndarray_values
+diff --git a/pandas/util/testing.py b/pandas/util/testing.py
+index a93487a21696d..44163479dfd27 100644
+--- a/pandas/util/testing.py
++++ b/pandas/util/testing.py
+@@ -19,7 +19,11 @@
+ import numpy as np
+ 
+ import pandas as pd
+-from pandas.core.arrays import ExtensionArray, IntervalArray
++from pandas.core.arrays import (
++    ExtensionArray,
++    IntervalArray,
++    PeriodArray,
++)
+ from pandas.core.dtypes.missing import array_equivalent
+ from pandas.core.dtypes.common import (
+     is_datetimelike_v_numeric,
+@@ -1050,6 +1054,14 @@ def assert_interval_array_equal(left, right, exact='equiv',
+     assert_attr_equal('closed', left, right, obj=obj)
+ 
+ 
++def assert_period_array_equal(left, right, obj='PeriodArray'):
++    _check_isinstance(left, right, PeriodArray)
++
++    assert_numpy_array_equal(left._data, right._data,
++                             obj='{obj}.values'.format(obj=obj))
++    assert_attr_equal('freq', left, right, obj=obj)
++
++
+ def raise_assert_detail(obj, message, left, right, diff=None):
+     __tracebackhide__ = True
+ 
+@@ -1543,6 +1555,10 @@ def assert_equal(left, right, **kwargs):
+         assert_series_equal(left, right, **kwargs)
+     elif isinstance(left, pd.DataFrame):
+         assert_frame_equal(left, right, **kwargs)
++    elif isinstance(left, IntervalArray):
++        assert_interval_array_equal(left, right, **kwargs)
++    elif isinstance(left, PeriodArray):
++        assert_period_array_equal(left, right, **kwargs)
+     elif isinstance(left, ExtensionArray):
+         assert_extension_array_equal(left, right, **kwargs)
+     elif isinstance(left, np.ndarray):

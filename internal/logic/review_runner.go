@@ -261,12 +261,13 @@ func (s *Service) runCheckpointed(
 			updateReviewCheck(&job.ReviewScope, "finding_verification", "incomplete", "模型输出格式无效，未能完成 finding 核验")
 			return
 		}
-		withEvidence, rejectedEvidence := validateFindingEvidence(findings, artifacts.SanitizedDiff)
+		withEvidence, rejectedEvidence, rejectedReasons := validateFindingEvidence(findings, artifacts.SanitizedDiff)
 		for index := range withEvidence {
 			withEvidence[index] = redactCheckpointFinding(withEvidence[index])
 		}
 		checkpoint.Candidates = withEvidence
 		checkpoint.RejectedEvidence = rejectedEvidence
+		checkpoint.RejectedReasons = rejectedReasons
 		checkpoint.ModelTraceID = traceID
 		checkpoint.CandidateSource = snapshotForCheckpoint(initialSourceSnapshot)
 		checkpoint.IncompleteReason = incompleteReason
@@ -567,6 +568,9 @@ func (s *Service) finishCheckpointedReview(
 	} else if verificationIncomplete {
 		verificationStatus = "incomplete"
 		verificationMessage += fmt.Sprintf("；证据不足=%d", checkpoint.RejectedEvidence)
+		if reasonText := formatEvidenceRejections(checkpoint.RejectedReasons); reasonText != "" {
+			verificationMessage += "（" + reasonText + "）"
+		}
 		if checkpoint.LastVerificationError != "" {
 			verificationMessage += "；复核未完成=1；" + checkpoint.LastVerificationError
 		}

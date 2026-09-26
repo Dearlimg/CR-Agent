@@ -1,0 +1,73 @@
+{
+  "ts-57465": {
+    "1508184266": { "status": "fixed_in_snapshot", "note": "checker.ts:15486 已用 signature.resolvedReturnType.flags & TypeFlags.Boolean 替代 === 实例检查" },
+    "1523687507": { "status": "fixed_in_snapshot", "note": "checker.ts:15486 已加 getParameterCount(signature) > 0 守卫，rest 参数推断问题已修" },
+    "1507922928": { "status": "fixed_in_snapshot", "note": "checker.ts:37492 已用 unescapeLeadingUnderscores(param.name.escapedText)" },
+    "1508177902": { "status": "suggestion", "note": "设计建议部分被采纳（37498-37500 用 return 语句 flowNode 作 antecedent），单 return 排除逻辑仍在（37470-37474）；属设计权衡非缺陷" },
+    "1508186184": { "status": "fixed_in_snapshot", "note": "语义等价落实：diff 163-164 行 falseSubtype.flags & TypeFlags.Never ? trueType : undefined 即要求的取反条件" },
+    "1525225501": { "status": "fixed_in_snapshot", "note": "checker.ts:48584 已改为 nodeBuilder.typePredicateToTypePredicateNode，三处重复代码合并" }
+  },
+  "node-41749": {
+    "795067183": { "status": "suggestion", "note": "setupFetch 仍在主线程 bootstrap（pre_execution.js:38）；worker 支持属前瞻设计讨论，无法由 diff 判定为缺陷" },
+    "795146943": { "status": "valid", "note": "最终测试仍只调 server.close()（test-fetch.mjs:32），未处理 keep-alive 连接，测试进程退出前挂起数秒的问题在快照中仍成立" },
+    "795081434": { "status": "suggestion", "note": "最终文档 globals.md:342 仍要求 --experimental-fetch 标志；DX 偏好讨论未被采纳，非缺陷" }
+  },
+  "gin-2632": {
+    "694639407": { "status": "valid", "note": "最终 validateHeader 仍返回最左 IP（context.go，注释明说 return the first IP in the list），'Only trust RemoteAddr' 测试仍断言 20.20.20.20；评论主张的从右向左处理未被采纳，不可信代理可伪造 ClientIP 的争议语义在快照中仍成立" },
+    "694643333": { "status": "suggestion", "note": "信任模型设计问句；最终实现仍继承 RemoteIP 信任并取最左 IP，无具体可机判缺陷主张" }
+  },
+  "gin-2767": {
+    "659322066": { "status": "fixed_in_snapshot", "note": "短变量已改名 skippedPath/latestNode/matchNum（tree.go:408-414）" },
+    "664093314": { "status": "fixed_in_snapshot", "note": "tree.go:570 注释按建议改为 'level 2 router not found and latestNode.wildChild is true'（并修正 ture 拼写）" },
+    "663143713": { "status": "fixed_in_snapshot", "note": "tree_test.go:167-168 已添加 /something/:paramname/thirdthing 与 /something/secondthing/test 路由" }
+  },
+  "pandas-34473": {
+    "441965192": { "status": "fixed_in_snapshot", "note": "objToJSON.c:1632-1640 已改用 PyLong_AsLongLongAndOverflow + overflow 检查，全局错误状态依赖移除" },
+    "436401921": { "status": "fixed_in_snapshot", "note": "objToJSON.c:2141 已加 Py_DECREF(repr)" },
+    "437870883": { "status": "fixed_in_snapshot", "note": "objToJSON.c:2137-2138 先 PyObject_Malloc + memcpy，再于 2141 行 Py_DECREF(repr)" },
+    "436401611": { "status": "fixed_in_snapshot", "note": "objToJSON.c:2136 已用 PyUnicode_AsUTF8AndSize(repr, (Py_ssize_t *)_outLen)" },
+    "442585616": { "status": "fixed_in_snapshot", "note": "未新增 JT_BIGNUM 分支而改设计：bytes 走 GET_TC(tc)->cStr（2139 行），由 endTypeContext 通用 PyObject_Free 释放（与 PyObject_Malloc 配对），泄漏已消除" },
+    "442356287": { "status": "fixed_in_snapshot", "note": "objToJSON.c:1632 已去下划线：int overflow = 0" }
+  },
+  "tokio-4652": {
+    "867329811": { "status": "fixed_in_snapshot", "note": "tree_node.rs:178-181 wrong parent 时先 drop(locked_parent) 再调用，185 行 ptr_eq 匹配后才以 Some(locked_parent) 调用 func" },
+    "867331241": { "status": "fixed_in_snapshot", "note": "tree_node.rs:347 先 drop(locked_grandchild)，348 行才 notify_waiters" },
+    "867331984": { "status": "fixed_in_snapshot", "note": "tree_node.rs:306-308 已加 is_cancelled 早退 return" },
+    "867349454": { "status": "fixed_in_snapshot", "note": "tree_node.rs:321-324 已加 locked_child.is_cancelled 时 continue" },
+    "867332429": { "status": "fixed_in_snapshot", "note": "tree_node.rs:341-349 只收养有 children 的 grandchild，其余直接 cancel 并 notify" },
+    "870763595": { "status": "fixed_in_snapshot", "note": "tree_node.rs:1-9 已加模块级设计文档" }
+  },
+  "redis-9323": {
+    "684999246": { "status": "fixed_in_snapshot", "note": "startLoading 同时置 loading 与 async_loading（rdb.c:2499-2502），server.c:5437 以 loading && !async_loading 做例外——正是建议的模式" },
+    "685941509": { "status": "suggestion", "note": "机制层面被采纳（async_loading 并存 + 例外门控），但 6 场景读服务规则无法由 diff 逐项验证；属设计讨论非缺陷" },
+    "691928309": { "status": "fixed_in_snapshot", "note": "四点方案均落地：ReplBackup 标注 deprecated（module.c 758/770-775）、新增 ReplAsyncLoad 事件与子事件（761/792-793）、REDISMODULE_OPTIONS_HANDLE_REPL_ASYNC_LOAD（748 行）、模块未声明支持时回退非异步加载（489-500 行）" },
+    "685446527": { "status": "fixed_in_snapshot", "note": "函数更名为 swapMainDbWithTempDb 并加 3 行语义文档（db.c:1322-1325）" },
+    "725662202": { "status": "fixed_in_snapshot", "note": "释放 tempDb 前调用 slotToKeyDestroy(tempDb)（db.c:497-499）" },
+    "725663704": { "status": "fixed_in_snapshot", "note": "db.c:1327-1330 改为 aux 指针交换，memcpy 已移除" }
+  },
+  "tokio-6001": {
+    "1368527199": { "status": "fixed_in_snapshot", "note": "list.rs:116-119 先 lock_shard(&task) 再检查 closed，并留注释说明保证 shutdown 语义" },
+    "1332175404": { "status": "fixed_in_snapshot", "note": "grain 已从最终 diff 移除（0 次出现），改为 num_cores → gen_shared_list_size → shard_size（list.rs:78-82）" },
+    "1332181300": { "status": "suggestion", "note": "未新增具名构造器，仍为 pub(crate) new(num_cores)（78 行）；但 gen_shared_list_size 把魔法值收敛到一处，精神上部分采纳；属设计偏好" },
+    "1382579513": { "status": "fixed_in_snapshot", "note": "sharded_list.rs:30 已更名 get_shard_id" }
+  },
+  "redis-14017": {
+    "2106124779": { "status": "fixed_in_snapshot", "note": "config.c:3171 prefetch-batch-max-size 配置已加 HIDDEN_CONFIG 标志" },
+    "2106125576": { "status": "suggestion", "note": "getSlotFromCommand 仍只取首 key 的 slot（db.c:376-379），未缓存结果、未做 cross-slot 检查；性能改进建议未采纳" },
+    "2112771801": { "status": "suggestion", "note": "L1 cache 表述仍在最终新增行（memory_prefetch.c:562-582）未改写，文档准确性疑问仍成立" },
+    "2112804186": { "status": "fixed_in_snapshot", "note": "memory_prefetch.c:391-392 与建议代码一致：kvstoreGetDict(c->db->keys, c->slot > 0 ? c->slot : 0)，batch->slots 方案弃用" },
+    "2097420269": { "status": "suggestion", "note": "最终状态机无 EMBSTR 跳过分支（EMBSTR 不在最终新增行），PREFETCH_VALDATA 优化建议未采纳" }
+  },
+  "pandas-27237": {
+    "407346544": { "status": "fixed_in_snapshot", "note": "未按字面加类型检查；最终以位置排序实现（datetimelike.py:191-196 idx.argsort + self.take），key 映射后的任意 Index 均可正确排序，评论担忧在快照中不成立；系统若报'缺 DatetimeIndex 检查'应计误报" },
+    "372248894": { "status": "suggestion", "note": "设计一致性疑问（评论者自述不确定）；最终代码维持被讨论的行为（frame.py:5234 ensure_key_mapped(labels, key, levels=level)），非缺陷" },
+    "366145493": { "status": "suggestion", "note": "未创建 pandas._typing.SortByKey（最终 diff 无该类型），注解仍为内联 Optional[Callable]；建议未采纳" },
+    "407257378": { "status": "suggestion", "note": "最终仍在 nargsort 内做 key 映射（sorting.py:286-290），评论质疑的分层位置未变；设计讨论" },
+    "359884679": { "status": "fixed_in_snapshot", "note": "最终 ensure_key_mapped 以 isinstance(values, Index)（sorting.py:1008-1011）取代 ABC 系检查，RangeIndex 不再失败" }
+  },
+  "pandas-22862": {
+    "226629141": { "status": "valid", "note": "最终构造器 period.py:433 np.array(values, dtype='int64', copy=copy) 仍默认 copy=False；传入 int64 ndarray 时不拷贝、内部可被外部修改，评论指出的可变内部问题在快照中仍成立" },
+    "226800296": { "status": "fixed_in_snapshot", "note": "wrapper 对 Series/Index 操作数返回 NotImplemented（diff 297-299 行），并有对应测试 test_direct_arith_with_series_returns_not_implemented" },
+    "224703904": { "status": "suggestion", "note": "_simple_new 已简化为构造器别名（445-447 行），但 _from_sequence 仍自行提取 ordinals（453-471 行）而非调用 period_array；简化建议部分采纳，非缺陷" }
+  }
+}

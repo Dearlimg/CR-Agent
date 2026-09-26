@@ -1,0 +1,632 @@
+[
+  {
+    "id": 795062408,
+    "user": {
+      "login": "aduh95"
+    },
+    "body": "nit: ASCII order\r\n```suggestion\r\n  emitExperimentalWarning,\r\n  exposeInterface,\r\n```",
+    "path": "lib/internal/bootstrap/pre_execution.js",
+    "line": null,
+    "original_line": 19,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 7,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -14,6 +14,11 @@ const {\n   getEmbedderOptions,\n } = require('internal/options');\n const { reconnectZeroFillToggle } = require('internal/buffer');\n+const {\n+  defineOperation,\n+  exposeInterface,\n+  emitExperimentalWarning,",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795062408",
+    "created_at": "2022-01-29T14:54:47Z"
+  },
+  {
+    "id": 795067183,
+    "user": {
+      "login": "targos"
+    },
+    "body": "It seems that this is not the right place to run this code if I want `fetch` to also be installed in workers.\r\nNote that I cannot do it in `internal/bootstrap/browser.js` because it's not allowed to call `getOptionValue` from this file.",
+    "path": "lib/internal/bootstrap/pre_execution.js",
+    "line": 38,
+    "original_line": 38,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 16,
+    "original_position": 16,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -30,6 +35,7 @@ function prepareMainThreadExecution(expandArgv1 = false) {\n   setupPerfHooks();\n   setupInspectorHooks();\n   setupWarningHandler();\n+  setupFetch();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795067183",
+    "created_at": "2022-01-29T15:42:48Z"
+  },
+  {
+    "id": 795068913,
+    "user": {
+      "login": "VoltrexKeyva"
+    },
+    "body": "```suggestion\r\n.It Fl -experimental-fetch\r\n```",
+    "path": "doc/node.1",
+    "line": null,
+    "original_line": 142,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 4,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -139,6 +139,9 @@ Requires Node.js to be built with\n .It Fl -enable-source-maps\n Enable Source Map V3 support for stack traces.\n .\n+.It Fl -fetch",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795068913",
+    "created_at": "2022-01-29T16:00:13Z"
+  },
+  {
+    "id": 795071028,
+    "user": {
+      "login": "targos"
+    },
+    "body": "Is there another way to know whether node was run with a file entry point? `require.main` doesn't exist in ESM and this change doesn't work for all tests.",
+    "path": "test/common/index.js",
+    "line": 71,
+    "original_line": 71,
+    "side": "LEFT",
+    "subject_type": "line",
+    "position": 4,
+    "original_position": 4,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -68,12 +68,11 @@ if (process.argv.length === 2 \u0026\u0026\n     !process.env.NODE_SKIP_FLAG_CHECK \u0026\u0026\n     isMainThread \u0026\u0026\n     hasCrypto \u0026\u0026\n-    require.main \u0026\u0026",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795071028",
+    "created_at": "2022-01-29T16:23:06Z"
+  },
+  {
+    "id": 795081434,
+    "user": {
+      "login": "benjamingr"
+    },
+    "body": "Any reason this can't be experimental without requiring a CLI flag? Even a warning would probably be better DX?",
+    "path": "doc/api/globals.md",
+    "line": 342,
+    "original_line": 342,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 10,
+    "original_position": 10,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -333,6 +333,17 @@ A browser-compatible implementation of the `EventTarget` class. See\n \n This variable may appear to be global but is not. See [`exports`][].\n \n+## `fetch`\n+\n+\u003c!-- YAML\n+added: REPLACEME\n+--\u003e\n+\n+\u003e Stability: 1 - Experimental. Enable this API with the [`--experimental-fetch`][]",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795081434",
+    "created_at": "2022-01-29T18:26:47Z"
+  },
+  {
+    "id": 795081495,
+    "user": {
+      "login": "benjamingr"
+    },
+    "body": "Any chance these could link to the relevant spec/mdn pages? (If they already do - my bad)",
+    "path": "doc/api/globals.md",
+    "line": 371,
+    "original_line": 371,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 31,
+    "original_position": 31,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -348,6 +359,17 @@ within the browser `var something` will define a new global variable. In\n Node.js this is different. The top-level scope is not the global scope;\n `var something` inside a Node.js module will be local to that module.\n \n+## Class `Headers`\n+\n+\u003c!-- YAML\n+added: REPLACEME\n+--\u003e\n+\n+\u003e Stability: 1 - Experimental. Enable this API with the [`--experimental-fetch`][]\n+\u003e CLI flag.\n+\n+A browser-compatible implementation of {Headers}.",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795081495",
+    "created_at": "2022-01-29T18:27:15Z"
+  },
+  {
+    "id": 795081525,
+    "user": {
+      "login": "benjamingr"
+    },
+    "body": "(with an import rather than a global that is)",
+    "path": "doc/api/globals.md",
+    "line": 371,
+    "original_line": 371,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 31,
+    "original_position": 31,
+    "in_reply_to_id": 795081495,
+    "diff_hunk": "@@ -348,6 +359,17 @@ within the browser `var something` will define a new global variable. In\n Node.js this is different. The top-level scope is not the global scope;\n `var something` inside a Node.js module will be local to that module.\n \n+## Class `Headers`\n+\n+\u003c!-- YAML\n+added: REPLACEME\n+--\u003e\n+\n+\u003e Stability: 1 - Experimental. Enable this API with the [`--experimental-fetch`][]\n+\u003e CLI flag.\n+\n+A browser-compatible implementation of {Headers}.",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795081525",
+    "created_at": "2022-01-29T18:27:46Z"
+  },
+  {
+    "id": 795081551,
+    "user": {
+      "login": "devsnek"
+    },
+    "body": "they should, that's the changes to type-parser.mjs",
+    "path": "doc/api/globals.md",
+    "line": 371,
+    "original_line": 371,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 31,
+    "original_position": 31,
+    "in_reply_to_id": 795081495,
+    "diff_hunk": "@@ -348,6 +359,17 @@ within the browser `var something` will define a new global variable. In\n Node.js this is different. The top-level scope is not the global scope;\n `var something` inside a Node.js module will be local to that module.\n \n+## Class `Headers`\n+\n+\u003c!-- YAML\n+added: REPLACEME\n+--\u003e\n+\n+\u003e Stability: 1 - Experimental. Enable this API with the [`--experimental-fetch`][]\n+\u003e CLI flag.\n+\n+A browser-compatible implementation of {Headers}.",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795081551",
+    "created_at": "2022-01-29T18:28:13Z"
+  },
+  {
+    "id": 795081556,
+    "user": {
+      "login": "Mesteery"
+    },
+    "body": "I think type-parser.mjs (cf. diff) takes care of that.",
+    "path": "doc/api/globals.md",
+    "line": 371,
+    "original_line": 371,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 31,
+    "original_position": 31,
+    "in_reply_to_id": 795081495,
+    "diff_hunk": "@@ -348,6 +359,17 @@ within the browser `var something` will define a new global variable. In\n Node.js this is different. The top-level scope is not the global scope;\n `var something` inside a Node.js module will be local to that module.\n \n+## Class `Headers`\n+\n+\u003c!-- YAML\n+added: REPLACEME\n+--\u003e\n+\n+\u003e Stability: 1 - Experimental. Enable this API with the [`--experimental-fetch`][]\n+\u003e CLI flag.\n+\n+A browser-compatible implementation of {Headers}.",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795081556",
+    "created_at": "2022-01-29T18:28:19Z"
+  },
+  {
+    "id": 795081653,
+    "user": {
+      "login": "devsnek"
+    },
+    "body": "Given that the undici repo says this:\r\n\r\n\u003e This is experimental and is not yet fully compliant with the Fetch Standard. We plan to ship breaking changes to this feature until it is out of experimental.\r\n\r\nI think flagging is a good call. Experimental with just a warning seems better for pushing adoption in non-critical projects to iron out bugs, but this seems to be a bit earlier than that.",
+    "path": "doc/api/globals.md",
+    "line": 342,
+    "original_line": 342,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 10,
+    "original_position": 10,
+    "in_reply_to_id": 795081434,
+    "diff_hunk": "@@ -333,6 +333,17 @@ A browser-compatible implementation of the `EventTarget` class. See\n \n This variable may appear to be global but is not. See [`exports`][].\n \n+## `fetch`\n+\n+\u003c!-- YAML\n+added: REPLACEME\n+--\u003e\n+\n+\u003e Stability: 1 - Experimental. Enable this API with the [`--experimental-fetch`][]",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795081653",
+    "created_at": "2022-01-29T18:29:45Z"
+  },
+  {
+    "id": 795081711,
+    "user": {
+      "login": "aduh95"
+    },
+    "body": "Landing new globals would be a semver-major change, using an experimental flag allows us to have it landed in release lines quicker.",
+    "path": "doc/api/globals.md",
+    "line": 342,
+    "original_line": 342,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 10,
+    "original_position": 10,
+    "in_reply_to_id": 795081434,
+    "diff_hunk": "@@ -333,6 +333,17 @@ A browser-compatible implementation of the `EventTarget` class. See\n \n This variable may appear to be global but is not. See [`exports`][].\n \n+## `fetch`\n+\n+\u003c!-- YAML\n+added: REPLACEME\n+--\u003e\n+\n+\u003e Stability: 1 - Experimental. Enable this API with the [`--experimental-fetch`][]",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795081711",
+    "created_at": "2022-01-29T18:30:29Z"
+  },
+  {
+    "id": 795092584,
+    "user": {
+      "login": "micalevisk"
+    },
+    "body": "see https://github.com/tschaub/es-main",
+    "path": "test/common/index.js",
+    "line": 71,
+    "original_line": 71,
+    "side": "LEFT",
+    "subject_type": "line",
+    "position": 4,
+    "original_position": 4,
+    "in_reply_to_id": 795071028,
+    "diff_hunk": "@@ -68,12 +68,11 @@ if (process.argv.length === 2 \u0026\u0026\n     !process.env.NODE_SKIP_FLAG_CHECK \u0026\u0026\n     isMainThread \u0026\u0026\n     hasCrypto \u0026\u0026\n-    require.main \u0026\u0026",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795092584",
+    "created_at": "2022-01-29T20:56:35Z"
+  },
+  {
+    "id": 795146665,
+    "user": {
+      "login": "targos"
+    },
+    "body": "Thanks, but I don't think I can use this.\r\n`test/common/index.js` is not the entry point (and it's not ESM either). import chain is:\r\n\r\n- `node test/parallel/something.mjs` (ESM)\r\n- `import '../common/index.mjs'` (ESM)\r\n- `import './index.js'` (CJS)\r\n\r\nCan I find out from `common/index.js` that the entry point was a file (ESM or CJS, I don't need to know in this case)?\r\n\r\nExample of an entry point that is not a file:\r\n- `node -e \"require('./test/parallel/sometest.js')\"`",
+    "path": "test/common/index.js",
+    "line": 71,
+    "original_line": 71,
+    "side": "LEFT",
+    "subject_type": "line",
+    "position": 4,
+    "original_position": 4,
+    "in_reply_to_id": 795071028,
+    "diff_hunk": "@@ -68,12 +68,11 @@ if (process.argv.length === 2 \u0026\u0026\n     !process.env.NODE_SKIP_FLAG_CHECK \u0026\u0026\n     isMainThread \u0026\u0026\n     hasCrypto \u0026\u0026\n-    require.main \u0026\u0026",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795146665",
+    "created_at": "2022-01-30T08:31:49Z"
+  },
+  {
+    "id": 795146943,
+    "user": {
+      "login": "targos"
+    },
+    "body": "All these lines run very fast, but then on my computer the test hangs a few seconds before it exits. Could it have to do with keep-alive behavior? Can we override it?",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795146943",
+    "created_at": "2022-01-30T08:34:28Z"
+  },
+  {
+    "id": 795148042,
+    "user": {
+      "login": "benjamingr"
+    },
+    "body": "Try putting a breakpoint here and see if we enter the branch? https://github.com/nodejs/undici/blob/f4f1a862cc4e3c62f9025a9072b7b62b7dc6c471/lib/client.js#L839\r\n\r\nAlso - is it still connected on the server's side?",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795148042",
+    "created_at": "2022-01-30T08:45:29Z"
+  },
+  {
+    "id": 795151065,
+    "user": {
+      "login": "targos"
+    },
+    "body": "\u003e Also - is it still connected on the server's side?\r\n\r\nHow do I know?\r\n\r\nAnyway, shouldn't `server.close()` close the connections?",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795151065",
+    "created_at": "2022-01-30T09:13:35Z"
+  },
+  {
+    "id": 795151277,
+    "user": {
+      "login": "targos"
+    },
+    "body": "\u003e Anyway, shouldn't server.close() close the connections?\r\n\r\nhttps://nodejs.org/dist/latest-v17.x/docs/api/http.html#serverclosecallback\r\n\r\nApparently not.",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795151277",
+    "created_at": "2022-01-30T09:15:24Z"
+  },
+  {
+    "id": 795151917,
+    "user": {
+      "login": "targos"
+    },
+    "body": "\u003e Try putting a breakpoint here and see if we enter the branch?\r\n\r\nYes, we enter the branch. `client[kKeepAliveTimeoutValue]` becomes `4000`.",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795151917",
+    "created_at": "2022-01-30T09:20:39Z"
+  },
+  {
+    "id": 795154683,
+    "user": {
+      "login": "benjamingr"
+    },
+    "body": "Can confirm this reproduces in unidici/fetch with a simple tap test I wrote (this takes 4.4 seconds and removing the call reduces it to 400ms)\r\n\r\n```js\r\n\"use strict\";\r\n\r\nconst { test } = require(\"tap\");\r\n\r\nconst { fetch } = require(\"../..\");\r\nconst { createServer } = require('http')\r\n\r\ntest(\"validate fetch doesn't hang the process with keepalive\", (t) =\u003e {\r\n  t.plan(1)\r\n\r\n  const obj = { asd: true }\r\n  const server = createServer((req, res) =\u003e {\r\n    res.end(JSON.stringify(obj))\r\n  })\r\n  t.teardown(server.close.bind(server))\r\n\r\n  server.listen(0, async () =\u003e {\r\n    const body = await fetch(`http://localhost:${server.address().port}`)\r\n    t.strictSame(obj, await body.json())\r\n  })\r\n})\r\n```",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795154683",
+    "created_at": "2022-01-30T09:44:09Z"
+  },
+  {
+    "id": 795155381,
+    "user": {
+      "login": "benjamingr"
+    },
+    "body": "Looks like the issue is coming from llhttp - when `wasm_on_headers_complete` is called it passes should_keep_alive as true (well 1).\r\n\r\nLet me see if I can reproduce on raw llhttp",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795155381",
+    "created_at": "2022-01-30T09:49:44Z"
+  },
+  {
+    "id": 795155558,
+    "user": {
+      "login": "benjamingr"
+    },
+    "body": "Ok actually let me wait for either @ronag or @indutny to take a look https://github.com/nodejs/llhttp/issues/64 :)",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795155558",
+    "created_at": "2022-01-30T09:51:39Z"
+  },
+  {
+    "id": 795157066,
+    "user": {
+      "login": "targos"
+    },
+    "body": "- `undici.fetch` uses the global dispatcher: https://github.com/nodejs/undici/blob/19b5789e2097c44ad1f1279cb8672062abf21030/index.js#L101, which is just an `Agent` created with default options.\r\n- The default value for `keepAliveTimeout` is 4 seconds: https://github.com/nodejs/undici/blob/19b5789e2097c44ad1f1279cb8672062abf21030/docs/api/Client.md#new-clienturl-options\r\n\r\nI think this is expected behavior from `undici`'s perspective. The problem is that the `fetch` API doesn't let me change it. I just want to make this test exit as soon as it is finished (without having to use `process.exit(0)` at the end).",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795157066",
+    "created_at": "2022-01-30T10:03:31Z"
+  },
+  {
+    "id": 795157413,
+    "user": {
+      "login": "targos"
+    },
+    "body": "Workaround:\r\n\r\n```diff\r\ndiff --git a/test/parallel/test-fetch.mjs b/test/parallel/test-fetch.mjs\r\nindex 1aff7e1fdc..de8ef36951 100644\r\n--- a/test/parallel/test-fetch.mjs\r\n+++ b/test/parallel/test-fetch.mjs\r\n@@ -11,7 +11,10 @@ assert.strictEqual(typeof globalThis.Request, 'function');\r\n assert.strictEqual(typeof globalThis.Response, 'function');\r\n assert.strictEqual(typeof globalThis.Headers, 'function');\r\n \r\n-const server = http.createServer((req, res) =\u003e res.end('Hello world'));\r\n+const server = http.createServer((req, res) =\u003e {\r\n+  res.setHeader('Keep-Alive', 'timeout=0, max=0');\r\n+  res.end('Hello world');\r\n+});\r\n server.listen(0);\r\n await events.once(server, 'listening');\r\n const port = server.address().port;\r\n```\r\n\r\nIs this fine?",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795157413",
+    "created_at": "2022-01-30T10:07:06Z"
+  },
+  {
+    "id": 795159105,
+    "user": {
+      "login": "benjamingr"
+    },
+    "body": "I think users would might find the process 'hanging' for ±4 seconds equally confusing?\r\n\r\nIs there a way to eat the cake (use keepalive) and keep it too? (would `.unref`ing the socket when there are no active requests and `ref`ing it when there are work?)",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795159105",
+    "created_at": "2022-01-30T10:20:49Z"
+  },
+  {
+    "id": 795159704,
+    "user": {
+      "login": "targos"
+    },
+    "body": "I can't answer this.",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795159704",
+    "created_at": "2022-01-30T10:25:57Z"
+  },
+  {
+    "id": 795160669,
+    "user": {
+      "login": "benjamingr"
+    },
+    "body": "@ronag @Ethan-Arrowood PTAL :)",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795160669",
+    "created_at": "2022-01-30T10:33:32Z"
+  },
+  {
+    "id": 795160735,
+    "user": {
+      "login": "benjamingr"
+    },
+    "body": "(To be clear - I am totally fine with the workaround and IMO this can be handled after the PR lands)",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795160735",
+    "created_at": "2022-01-30T10:34:03Z"
+  },
+  {
+    "id": 795162722,
+    "user": {
+      "login": "targos"
+    },
+    "body": "Pushed the workaround.",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795162722",
+    "created_at": "2022-01-30T10:51:35Z"
+  },
+  {
+    "id": 795162774,
+    "user": {
+      "login": "targos"
+    },
+    "body": "I replaced `require.main` with `fs.existsSync(process.argv[1])`",
+    "path": "test/common/index.js",
+    "line": 71,
+    "original_line": 71,
+    "side": "LEFT",
+    "subject_type": "line",
+    "position": 4,
+    "original_position": 4,
+    "in_reply_to_id": 795071028,
+    "diff_hunk": "@@ -68,12 +68,11 @@ if (process.argv.length === 2 \u0026\u0026\n     !process.env.NODE_SKIP_FLAG_CHECK \u0026\u0026\n     isMainThread \u0026\u0026\n     hasCrypto \u0026\u0026\n-    require.main \u0026\u0026",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795162774",
+    "created_at": "2022-01-30T10:52:10Z"
+  },
+  {
+    "id": 795164874,
+    "user": {
+      "login": "ronag"
+    },
+    "body": "I thought we handled this already. We do unref both timers and sockets. Maybe we missed one somewhere.",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795164874",
+    "created_at": "2022-01-30T11:09:42Z"
+  },
+  {
+    "id": 795165355,
+    "user": {
+      "login": "ronag"
+    },
+    "body": "Targos would you mind making an issue on undici and mention your workaround and we will have a look at it.",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795165355",
+    "created_at": "2022-01-30T11:13:24Z"
+  },
+  {
+    "id": 795165782,
+    "user": {
+      "login": "targos"
+    },
+    "body": "I think the problem is because the server has an active ref on the socket, not the client.",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795165782",
+    "created_at": "2022-01-30T11:17:13Z"
+  },
+  {
+    "id": 795166024,
+    "user": {
+      "login": "targos"
+    },
+    "body": "Yeah, I confirmed that this (and removing the keep-alive header) also fixes the issue:\r\n\r\n```js\r\nserver.on('connection', (socket) =\u003e socket.unref());\r\n```",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795166024",
+    "created_at": "2022-01-30T11:19:10Z"
+  },
+  {
+    "id": 795166167,
+    "user": {
+      "login": "mcollina"
+    },
+    "body": "The problem for this is not in Undici. We handle it perfectly there.\r\n\r\nThe problem is Node.js core `http.Server` as the keepalive sockets are... kept alive, preventing Node.js from exiting. It is the same problem depicted at https://github.com/nodejs/node/issues/41578.\r\n\r\nA solution for this is to set up a different default agent for fetch() that reduces the keepAlive significantly (100ms?). We are not aiming for maximum performance here so it might just be enough to avoid most problems for now.",
+    "path": "test/parallel/test-fetch.mjs",
+    "line": null,
+    "original_line": 32,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 27,
+    "in_reply_to_id": 795146943,
+    "diff_hunk": "@@ -0,0 +1,27 @@\n+// Flags: --experimental-fetch --no-warnings\n+\n+import '../common/index.mjs';\n+\n+import assert from 'assert';\n+import events from 'events';\n+import http from 'http';\n+\n+assert.strictEqual(typeof globalThis.fetch, 'function');\n+assert.strictEqual(typeof globalThis.Request, 'function');\n+assert.strictEqual(typeof globalThis.Response, 'function');\n+assert.strictEqual(typeof globalThis.Headers, 'function');\n+\n+const server = http.createServer((req, res) =\u003e res.end('Hello world'));\n+server.listen(0);\n+await events.once(server, 'listening');\n+const port = server.address().port;\n+\n+const response = await fetch(`http://localhost:${port}`);\n+\n+assert(response instanceof Response);\n+assert.strictEqual(response.status, 200);\n+assert.strictEqual(response.statusText, 'OK');\n+const body = await response.text();\n+assert.strictEqual(body, 'Hello world');\n+\n+server.close();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795166167",
+    "created_at": "2022-01-30T11:20:25Z"
+  },
+  {
+    "id": 795618629,
+    "user": {
+      "login": "zcbenz"
+    },
+    "body": "I think it is fine leaving it here for now, we can surely move it to `browser.js` after the experimental flag is removed. Should we add a code comment to remind about this?",
+    "path": "lib/internal/bootstrap/pre_execution.js",
+    "line": 38,
+    "original_line": 38,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 16,
+    "original_position": 16,
+    "in_reply_to_id": 795067183,
+    "diff_hunk": "@@ -30,6 +35,7 @@ function prepareMainThreadExecution(expandArgv1 = false) {\n   setupPerfHooks();\n   setupInspectorHooks();\n   setupWarningHandler();\n+  setupFetch();",
+    "html_url": "https://github.com/nodejs/node/pull/41749#discussion_r795618629",
+    "created_at": "2022-01-31T12:23:16Z"
+  }
+]

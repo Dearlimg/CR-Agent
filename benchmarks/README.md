@@ -89,6 +89,33 @@ the live benchmark's resource guard.
 - No repeated runs, cross-language samples, latency target, or dollar-cost
   comparison yet.
 
+## Real-PR reference audit (version alignment)
+
+Human review comments target intermediate PR states, but the benchmark reviews
+the final merged diff. Every reference in `real_pr_v1.json` therefore carries a
+manual audit `status` (2026-09-26 audit: 3 valid, 13 suggestion,
+33 fixed_in_snapshot, 0 unverifiable):
+
+- `valid`: the flagged issue still exists in the snapshot; forms the core
+  recall denominator.
+- `fixed_in_snapshot`: the demanded change already appears in the snapshot.
+  These are paired negatives — the system must stay quiet, and a finding
+  re-flagging the fixed issue is a false positive.
+- `suggestion`: still-holding non-defect notes (style/refactor/docs/tests),
+  scored on a separate channel outside core recall.
+- `unverifiable`: not judgeable from the diff; excluded from all metrics.
+
+Each case also pins `diff_sha256` (snapshot edits invalidate the audit), and
+each reference records `original_commit_id`. The audit worksheet, decisions,
+and commit metadata live under `benchmarks/curation/audit/`. Workflow:
+
+```powershell
+go run ./benchmarks/curation/refaudit -mode cards   # rebuild evidence cards
+go run ./benchmarks/curation/refaudit -mode fetch   # refresh commit metadata
+go run ./benchmarks/curation/refaudit -mode apply   # apply audit/decisions.json
+go run ./cmd/benchmark --manifest benchmarks/real_pr_v1.json --validate-only
+```
+
 ## References
 
 - [SWR-Bench paper](https://arxiv.org/abs/2509.01494)

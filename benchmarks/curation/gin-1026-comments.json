@@ -1,0 +1,74 @@
+[
+  {
+    "id": 127946467,
+    "user": {
+      "login": "thinkerou"
+    },
+    "body": "missing space?",
+    "path": "json/json.go",
+    "line": null,
+    "original_line": 5,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 5,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -0,0 +1,17 @@\n+// Copyright 2017 Bo-Yi Wu.  All rights reserved.\n+// Use of this source code is governed by a MIT style\n+// license that can be found in the LICENSE file.\n+\n+//+build !jsoniter",
+    "html_url": "https://github.com/gin-gonic/gin/pull/1026#discussion_r127946467",
+    "created_at": "2017-07-18T11:16:54Z"
+  },
+  {
+    "id": 127946524,
+    "user": {
+      "login": "thinkerou"
+    },
+    "body": "missing space?",
+    "path": "json/jsoniter.go",
+    "line": null,
+    "original_line": 5,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 5,
+    "in_reply_to_id": null,
+    "diff_hunk": "@@ -0,0 +1,18 @@\n+// Copyright 2017 Bo-Yi Wu.  All rights reserved.\n+// Use of this source code is governed by a MIT style\n+// license that can be found in the LICENSE file.\n+\n+//+build jsoniter",
+    "html_url": "https://github.com/gin-gonic/gin/pull/1026#discussion_r127946524",
+    "created_at": "2017-07-18T11:17:13Z"
+  },
+  {
+    "id": 128001810,
+    "user": {
+      "login": "appleboy"
+    },
+    "body": "Done!",
+    "path": "json/json.go",
+    "line": null,
+    "original_line": 5,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 5,
+    "in_reply_to_id": 127946467,
+    "diff_hunk": "@@ -0,0 +1,17 @@\n+// Copyright 2017 Bo-Yi Wu.  All rights reserved.\n+// Use of this source code is governed by a MIT style\n+// license that can be found in the LICENSE file.\n+\n+//+build !jsoniter",
+    "html_url": "https://github.com/gin-gonic/gin/pull/1026#discussion_r128001810",
+    "created_at": "2017-07-18T15:01:14Z"
+  },
+  {
+    "id": 128001849,
+    "user": {
+      "login": "appleboy"
+    },
+    "body": "Done!",
+    "path": "json/jsoniter.go",
+    "line": null,
+    "original_line": 5,
+    "side": "RIGHT",
+    "subject_type": "line",
+    "position": 1,
+    "original_position": 5,
+    "in_reply_to_id": 127946524,
+    "diff_hunk": "@@ -0,0 +1,18 @@\n+// Copyright 2017 Bo-Yi Wu.  All rights reserved.\n+// Use of this source code is governed by a MIT style\n+// license that can be found in the LICENSE file.\n+\n+//+build jsoniter",
+    "html_url": "https://github.com/gin-gonic/gin/pull/1026#discussion_r128001849",
+    "created_at": "2017-07-18T15:01:22Z"
+  }
+]

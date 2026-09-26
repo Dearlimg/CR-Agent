@@ -1,0 +1,311 @@
+diff --git a/gin_integration_test.go b/gin_integration_test.go
+index 2eb2d52bf8..ed7196fd6e 100644
+--- a/gin_integration_test.go
++++ b/gin_integration_test.go
+@@ -22,7 +22,15 @@ import (
+ 	"github.com/stretchr/testify/assert"
+ )
+ 
+-func testRequest(t *testing.T, url string) {
++// params[0]=url example:http://127.0.0.1:8080/index (cannot be empty)
++// params[1]=response status (custom compare status) default:"200 OK"
++// params[2]=response body (custom compare content)  default:"it worked"
++func testRequest(t *testing.T, params ...string) {
++
++	if len(params) == 0 {
++		t.Fatal("url cannot be empty")
++	}
++
+ 	tr := &http.Transport{
+ 		TLSClientConfig: &tls.Config{
+ 			InsecureSkipVerify: true,
+@@ -30,14 +38,27 @@ func testRequest(t *testing.T, url string) {
+ 	}
+ 	client := &http.Client{Transport: tr}
+ 
+-	resp, err := client.Get(url)
++	resp, err := client.Get(params[0])
+ 	assert.NoError(t, err)
+ 	defer resp.Body.Close()
+ 
+ 	body, ioerr := ioutil.ReadAll(resp.Body)
+ 	assert.NoError(t, ioerr)
+-	assert.Equal(t, "it worked", string(body), "resp body should match")
+-	assert.Equal(t, "200 OK", resp.Status, "should get a 200")
++
++	var responseStatus = "200 OK"
++	if len(params) > 1 && params[1] != "" {
++		responseStatus = params[1]
++	}
++
++	var responseBody = "it worked"
++	if len(params) > 2 && params[2] != "" {
++		responseBody = params[2]
++	}
++
++	assert.Equal(t, responseStatus, resp.Status, "should get a "+responseStatus)
++	if responseStatus == "200 OK" {
++		assert.Equal(t, responseBody, string(body), "resp body should match")
++	}
+ }
+ 
+ func TestRunEmpty(t *testing.T) {
+@@ -373,3 +394,52 @@ func testGetRequestHandler(t *testing.T, h http.Handler, url string) {
+ 	assert.Equal(t, "it worked", w.Body.String(), "resp body should match")
+ 	assert.Equal(t, 200, w.Code, "should get a 200")
+ }
++
++func TestTreeRunDynamicRouting(t *testing.T) {
++	router := New()
++	router.GET("/aa/*xx", func(c *Context) { c.String(http.StatusOK, "/aa/*xx") })
++	router.GET("/ab/*xx", func(c *Context) { c.String(http.StatusOK, "/ab/*xx") })
++	router.GET("/", func(c *Context) { c.String(http.StatusOK, "home") })
++	router.GET("/:cc", func(c *Context) { c.String(http.StatusOK, "/:cc") })
++	router.GET("/:cc/cc", func(c *Context) { c.String(http.StatusOK, "/:cc/cc") })
++	router.GET("/:cc/:dd/ee", func(c *Context) { c.String(http.StatusOK, "/:cc/:dd/ee") })
++	router.GET("/:cc/:dd/:ee/ff", func(c *Context) { c.String(http.StatusOK, "/:cc/:dd/:ee/ff") })
++	router.GET("/:cc/:dd/:ee/:ff/gg", func(c *Context) { c.String(http.StatusOK, "/:cc/:dd/:ee/:ff/gg") })
++	router.GET("/:cc/:dd/:ee/:ff/:gg/hh", func(c *Context) { c.String(http.StatusOK, "/:cc/:dd/:ee/:ff/:gg/hh") })
++	router.GET("/get/test/abc/", func(c *Context) { c.String(http.StatusOK, "/get/test/abc/") })
++	router.GET("/get/:param/abc/", func(c *Context) { c.String(http.StatusOK, "/get/:param/abc/") })
++	router.GET("/something/:paramname/thirdthing", func(c *Context) { c.String(http.StatusOK, "/something/:paramname/thirdthing") })
++	router.GET("/something/secondthing/test", func(c *Context) { c.String(http.StatusOK, "/something/secondthing/test") })
++
++	ts := httptest.NewServer(router)
++	defer ts.Close()
++
++	testRequest(t, ts.URL+"/", "", "home")
++	testRequest(t, ts.URL+"/aa/aa", "", "/aa/*xx")
++	testRequest(t, ts.URL+"/ab/ab", "", "/ab/*xx")
++	testRequest(t, ts.URL+"/all", "", "/:cc")
++	testRequest(t, ts.URL+"/all/cc", "", "/:cc/cc")
++	testRequest(t, ts.URL+"/a/cc", "", "/:cc/cc")
++	testRequest(t, ts.URL+"/c/d/ee", "", "/:cc/:dd/ee")
++	testRequest(t, ts.URL+"/c/d/e/ff", "", "/:cc/:dd/:ee/ff")
++	testRequest(t, ts.URL+"/c/d/e/f/gg", "", "/:cc/:dd/:ee/:ff/gg")
++	testRequest(t, ts.URL+"/c/d/e/f/g/hh", "", "/:cc/:dd/:ee/:ff/:gg/hh")
++	testRequest(t, ts.URL+"/a", "", "/:cc")
++	testRequest(t, ts.URL+"/get/test/abc/", "", "/get/test/abc/")
++	testRequest(t, ts.URL+"/get/te/abc/", "", "/get/:param/abc/")
++	testRequest(t, ts.URL+"/get/xx/abc/", "", "/get/:param/abc/")
++	testRequest(t, ts.URL+"/get/tt/abc/", "", "/get/:param/abc/")
++	testRequest(t, ts.URL+"/get/a/abc/", "", "/get/:param/abc/")
++	testRequest(t, ts.URL+"/get/t/abc/", "", "/get/:param/abc/")
++	testRequest(t, ts.URL+"/get/aa/abc/", "", "/get/:param/abc/")
++	testRequest(t, ts.URL+"/get/abas/abc/", "", "/get/:param/abc/")
++	testRequest(t, ts.URL+"/something/secondthing/test", "", "/something/secondthing/test")
++	testRequest(t, ts.URL+"/something/abcdad/thirdthing", "", "/something/:paramname/thirdthing")
++	testRequest(t, ts.URL+"/something/se/thirdthing", "", "/something/:paramname/thirdthing")
++	testRequest(t, ts.URL+"/something/s/thirdthing", "", "/something/:paramname/thirdthing")
++	testRequest(t, ts.URL+"/something/secondthing/thirdthing", "", "/something/:paramname/thirdthing")
++	// 404 not found
++	testRequest(t, ts.URL+"/a/dd", "404 Not Found")
++	testRequest(t, ts.URL+"/addr/dd/aa", "404 Not Found")
++	testRequest(t, ts.URL+"/something/secondthing/121", "404 Not Found")
++}
+diff --git a/tree.go b/tree.go
+index 4b5656fb08..2e46b8e513 100644
+--- a/tree.go
++++ b/tree.go
+@@ -118,11 +118,6 @@ type node struct {
+ 	fullPath  string
+ }
+ 
+-type skip struct {
+-	path      string
+-	paramNode *node
+-}
+-
+ // Increments priority of the given child and reorders if necessary
+ func (n *node) incrementChildPrio(pos int) int {
+ 	cs := n.children
+@@ -405,7 +400,23 @@ type nodeValue struct {
+ // made if a handle exists with an extra (without the) trailing slash for the
+ // given path.
+ func (n *node) getValue(path string, params *Params, unescape bool) (value nodeValue) {
+-	var skipped *skip
++	// path: /abc/123/def
++	// level 1 router:abc
++	// level 2 router:123
++	// level 3 router:def
++	var (
++		skippedPath string
++		latestNode  = n // not found `level 2 router` use latestNode
++
++		// match '/' count
++		// matchNum < 1: `level 2 router` not found,the current node needs to be equal to latestNode
++		// matchNum >= 1: `level (2 or 3 or 4 or ...) router`: Normal handling
++		matchNum int // each match will accumulate
++	)
++	//if path == "/", no need to look for tree node
++	if len(path) == 1 {
++		matchNum = 1
++	}
+ 
+ walk: // Outer loop for walking the tree
+ 	for {
+@@ -418,32 +429,41 @@ walk: // Outer loop for walking the tree
+ 				idxc := path[0]
+ 				for i, c := range []byte(n.indices) {
+ 					if c == idxc {
+-						if strings.HasPrefix(n.children[len(n.children)-1].path, ":") {
+-							skipped = &skip{
+-								path: prefix + path,
+-								paramNode: &node{
+-									path:      n.path,
+-									wildChild: n.wildChild,
+-									nType:     n.nType,
+-									priority:  n.priority,
+-									children:  n.children,
+-									handlers:  n.handlers,
+-									fullPath:  n.fullPath,
+-								},
++						//  strings.HasPrefix(n.children[len(n.children)-1].path, ":") == n.wildChild
++						if n.wildChild {
++							skippedPath = prefix + path
++							latestNode = &node{
++								path:      n.path,
++								wildChild: n.wildChild,
++								nType:     n.nType,
++								priority:  n.priority,
++								children:  n.children,
++								handlers:  n.handlers,
++								fullPath:  n.fullPath,
+ 							}
+ 						}
+ 
+ 						n = n.children[i]
++
++						// match '/', If this condition is matched, the next route is found
++						if (len(n.fullPath) != 0 && n.wildChild) || path[len(path)-1] == '/' {
++							matchNum++
++						}
+ 						continue walk
+ 					}
+ 				}
+ 
++				// level 2 router not found,the current node needs to be equal to latestNode
++				if matchNum < 1 {
++					n = latestNode
++				}
++
+ 				// If there is no wildcard pattern, recommend a redirection
+ 				if !n.wildChild {
+ 					// Nothing found.
+ 					// We can recommend to redirect to the same URL without a
+ 					// trailing slash if a leaf exists for that path.
+-					value.tsr = (path == "/" && n.handlers != nil)
++					value.tsr = path == "/" && n.handlers != nil
+ 					return
+ 				}
+ 
+@@ -483,6 +503,18 @@ walk: // Outer loop for walking the tree
+ 						if len(n.children) > 0 {
+ 							path = path[end:]
+ 							n = n.children[0]
++							// next node,the latestNode needs to be equal to currentNode and handle next router
++							latestNode = n
++							// not found router in (level 1 router and handle next node),skippedPath cannot execute
++							// example:
++							// * /:cc/cc
++							// call /a/cc 	     expectations:match/200      Actual:match/200
++							// call /a/dd 	     expectations:unmatch/404    Actual: panic
++							// call /addr/dd/aa  expectations:unmatch/404    Actual: panic
++							// skippedPath: It can only be executed if the secondary route is not found
++							// matchNum: Go to the next level of routing tree node search,need add matchNum
++							skippedPath = ""
++							matchNum++
+ 							continue walk
+ 						}
+ 
+@@ -535,6 +567,10 @@ walk: // Outer loop for walking the tree
+ 		}
+ 
+ 		if path == prefix {
++			// level 2 router not found and latestNode.wildChild is true
++			if matchNum < 1 && latestNode.wildChild {
++				n = latestNode.children[len(latestNode.children)-1]
++			}
+ 			// We should have reached the node containing the handle.
+ 			// Check if this node has a handle registered.
+ 			if value.handlers = n.handlers; value.handlers != nil {
+@@ -564,18 +600,18 @@ walk: // Outer loop for walking the tree
+ 			return
+ 		}
+ 
+-		if path != "/" && skipped != nil && strings.HasSuffix(skipped.path, path) {
+-			path = skipped.path
+-			n = skipped.paramNode
+-			skipped = nil
++		// path != "/" && skippedPath != ""
++		if len(path) != 1 && len(skippedPath) > 0 && strings.HasSuffix(skippedPath, path) {
++			path = skippedPath
++			n = latestNode
++			skippedPath = ""
+ 			continue walk
+ 		}
+ 
+ 		// Nothing found. We can recommend to redirect to the same URL with an
+ 		// extra trailing slash if a leaf exists for that path
+-		value.tsr = (path == "/") ||
+-			(len(prefix) == len(path)+1 && prefix[len(path)] == '/' &&
+-				path == prefix[:len(prefix)-1] && n.handlers != nil)
++		value.tsr = path == "/" ||
++			(len(prefix) == len(path)+1 && n.handlers != nil)
+ 		return
+ 	}
+ }
+diff --git a/tree_test.go b/tree_test.go
+index 7459317fa3..91213eee06 100644
+--- a/tree_test.go
++++ b/tree_test.go
+@@ -154,6 +154,18 @@ func TestTreeWildcard(t *testing.T) {
+ 		"/info/:user/public",
+ 		"/info/:user/project/:project",
+ 		"/info/:user/project/golang",
++		"/aa/*xx",
++		"/ab/*xx",
++		"/:cc",
++		"/:cc/cc",
++		"/:cc/:dd/ee",
++		"/:cc/:dd/:ee/ff",
++		"/:cc/:dd/:ee/:ff/gg",
++		"/:cc/:dd/:ee/:ff/:gg/hh",
++		"/get/test/abc/",
++		"/get/:param/abc/",
++		"/something/:paramname/thirdthing",
++		"/something/secondthing/test",
+ 	}
+ 	for _, route := range routes {
+ 		tree.addRoute(route, fakeHandler(route))
+@@ -186,6 +198,30 @@ func TestTreeWildcard(t *testing.T) {
+ 		{"/info/gordon/public", false, "/info/:user/public", Params{Param{Key: "user", Value: "gordon"}}},
+ 		{"/info/gordon/project/go", false, "/info/:user/project/:project", Params{Param{Key: "user", Value: "gordon"}, Param{Key: "project", Value: "go"}}},
+ 		{"/info/gordon/project/golang", false, "/info/:user/project/golang", Params{Param{Key: "user", Value: "gordon"}}},
++		{"/aa/aa", false, "/aa/*xx", Params{Param{Key: "xx", Value: "/aa"}}},
++		{"/ab/ab", false, "/ab/*xx", Params{Param{Key: "xx", Value: "/ab"}}},
++		{"/a", false, "/:cc", Params{Param{Key: "cc", Value: "a"}}},
++		// * level 1 router match param will be Intercept first
++		// new PR handle (/all /all/cc /a/cc)
++		{"/all", false, "/:cc", Params{Param{Key: "cc", Value: "ll"}}},
++		{"/all/cc", false, "/:cc/cc", Params{Param{Key: "cc", Value: "ll"}}},
++		{"/a/cc", false, "/:cc/cc", Params{Param{Key: "cc", Value: ""}}},
++		{"/get/test/abc/", false, "/get/test/abc/", nil},
++		{"/get/te/abc/", false, "/get/:param/abc/", Params{Param{Key: "param", Value: "te"}}},
++		{"/get/xx/abc/", false, "/get/:param/abc/", Params{Param{Key: "param", Value: "xx"}}},
++		{"/get/tt/abc/", false, "/get/:param/abc/", Params{Param{Key: "param", Value: "tt"}}},
++		{"/get/a/abc/", false, "/get/:param/abc/", Params{Param{Key: "param", Value: "a"}}},
++		{"/get/t/abc/", false, "/get/:param/abc/", Params{Param{Key: "param", Value: "t"}}},
++		{"/get/aa/abc/", false, "/get/:param/abc/", Params{Param{Key: "param", Value: "aa"}}},
++		{"/get/abas/abc/", false, "/get/:param/abc/", Params{Param{Key: "param", Value: "abas"}}},
++		{"/something/secondthing/test", false, "/something/secondthing/test", nil},
++		{"/something/abcdad/thirdthing", false, "/something/:paramname/thirdthing", Params{Param{Key: "paramname", Value: "abcdad"}}},
++		{"/something/se/thirdthing", false, "/something/:paramname/thirdthing", Params{Param{Key: "paramname", Value: "se"}}},
++		{"/something/s/thirdthing", false, "/something/:paramname/thirdthing", Params{Param{Key: "paramname", Value: "s"}}},
++		{"/c/d/ee", false, "/:cc/:dd/ee", Params{Param{Key: "cc", Value: "c"}, Param{Key: "dd", Value: "d"}}},
++		{"/c/d/e/ff", false, "/:cc/:dd/:ee/ff", Params{Param{Key: "cc", Value: "c"}, Param{Key: "dd", Value: "d"}, Param{Key: "ee", Value: "e"}}},
++		{"/c/d/e/f/gg", false, "/:cc/:dd/:ee/:ff/gg", Params{Param{Key: "cc", Value: "c"}, Param{Key: "dd", Value: "d"}, Param{Key: "ee", Value: "e"}, Param{Key: "ff", Value: "f"}}},
++		{"/c/d/e/f/g/hh", false, "/:cc/:dd/:ee/:ff/:gg/hh", Params{Param{Key: "cc", Value: "c"}, Param{Key: "dd", Value: "d"}, Param{Key: "ee", Value: "e"}, Param{Key: "ff", Value: "f"}, Param{Key: "gg", Value: "g"}}},
+ 	})
+ 
+ 	checkPriorities(t, tree)

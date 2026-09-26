@@ -18,7 +18,7 @@ const (
 	reviewContextToolDefaultRadius  = 12
 	reviewContextToolMaxRadius      = 40
 	reviewContextToolMaxLine        = reviewSourceMaxFileBytes
-	reviewContextToolDescription    = "浏览本次 PR 固定 head 的目录、检索源码或读取行段；无 file 的搜索仅覆盖已读取文件，不是全仓库搜索。"
+	reviewContextToolDescription    = "浏览固定 head 源码：传 directory；或传 query（可配 file）；或同时传 file、start_line、end_line。单独 file 无效；无 file 的 query 仅搜索已读取文件。"
 	reviewContextToolName           = "get_review_context"
 	reviewContextToolSystemGuidance = "若候选依赖未展示的定义、调用方、类型、循环控制或 API 用法，先调用 get_review_context 查证，再给出 verdict。只使用工具返回的固定提交源码；拿不到上下文时仍应返回 inconclusive，不可猜测。"
 )
@@ -26,6 +26,11 @@ const (
 func reviewContextToolSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
+		"anyOf": []any{
+			map[string]any{"required": []string{"directory"}},
+			map[string]any{"required": []string{"query"}},
+			map[string]any{"required": []string{"file", "start_line", "end_line"}},
+		},
 		"properties": map[string]any{
 			"directory": map[string]any{
 				"type":        "string",
@@ -37,7 +42,7 @@ func reviewContextToolSchema() map[string]any {
 			},
 			"file": map[string]any{
 				"type":        "string",
-				"description": "首次读取时提供仓库相对路径，工具仅从该 PR 固定 head SHA 拉取此文件。",
+				"description": "仓库相对路径；必须同时提供 query，或同时提供 start_line 和 end_line。首次读取仍固定在 PR head SHA。",
 			},
 			"start_line": map[string]any{
 				"type":        "integer",

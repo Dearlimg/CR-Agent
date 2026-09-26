@@ -126,9 +126,19 @@ func runReviewSpecialist(ctx context.Context, request specialistRunRequest) Suba
 
 func reviewOnce(ctx context.Context, request specialistRunRequest, diff string) ([]ReviewFinding, error) {
 	envelope := BuildReviewPromptEnvelope(request.Agent.Focus, request.PromptContext, diff)
-	envelope.System += "\n输出 finding 前必须调用 parse_review_findings_json 工具校验拟输出 JSON；没有候选问题时传入 []。最终只输出工具校验后的 JSON 数组。"
 	prompt := envelope.System + "\n\n" + envelope.User
 	ctx = withPromptEnvelope(ctx, envelope)
+	initialSetup, _ := ctx.Value(harnessSetupKey{}).(func(*ReviewHarness))
+	if initialSetup != nil {
+		ctx = context.WithValue(ctx, harnessSetupKey{}, func(h *ReviewHarness) {
+			initialSetup(h)
+			reviewTools := NewToolRegistry()
+			if sourceTool, ok := h.tools.Get(reviewContextToolName); ok {
+				reviewTools.MustRegister(sourceTool)
+			}
+			h.tools = reviewTools
+		})
+	}
 	var findingsByTool []ReviewFinding
 	toolValidated := false
 	ctx = withModelJSONToolSetup(ctx, func(h *ReviewHarness) {
@@ -153,10 +163,10 @@ func reviewOnce(ctx context.Context, request specialistRunRequest, diff string) 
 
 	// A malformed report can contain a useful candidate. Repair its format once
 	// without resending the full diff or exposing review/action tools.
-	baseSetup, _ := ctx.Value(harnessSetupKey{}).(func(*ReviewHarness))
+	reviewSetup, _ := ctx.Value(harnessSetupKey{}).(func(*ReviewHarness))
 	repairCtx := context.WithValue(ctx, harnessSetupKey{}, func(h *ReviewHarness) {
-		if baseSetup != nil {
-			baseSetup(h)
+		if reviewSetup != nil {
+			reviewSetup(h)
 		}
 		h.tools = NewToolRegistry()
 		h.System = nil

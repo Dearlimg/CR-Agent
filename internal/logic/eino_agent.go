@@ -143,7 +143,7 @@ func modelRequestOptions(ctx context.Context, maxTokens int, useDeepSeekThinking
 	if useDeepSeekThinking && isReviewPrompt(ctx) {
 		options = append(options, openai.WithExtraFields(map[string]any{
 			"thinking":         map[string]string{"type": "enabled"},
-			"reasoning_effort": "high",
+			"reasoning_effort": "low",
 		}))
 	}
 	return options
@@ -410,7 +410,7 @@ func marshalModelRequestForTrace(request observedModelCall, allowedTokens int) s
 
 func reasoningEffort(enabled bool) string {
 	if enabled {
-		return "high"
+		return "low"
 	}
 	return ""
 }

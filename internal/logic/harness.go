@@ -239,6 +239,7 @@ func (h *ReviewHarness) RunEnvelope(ctx context.Context, prompt PromptEnvelope) 
 	}
 	toolRounds := 0
 	stalledRounds := 0
+	finalToolCorrections := 0
 	seenToolRequests := map[string]bool{}
 	for range limit {
 		if err := ctx.Err(); err != nil {
@@ -263,7 +264,9 @@ func (h *ReviewHarness) RunEnvelope(ctx context.Context, prompt PromptEnvelope) 
 		toolsExhausted := toolBudgetReached || stallBudgetReached
 		infos := []*schema.ToolInfo{}
 		var handlers map[string]ToolDefinition
-		if toolsExhausted {
+		if toolsExhausted && finalToolCorrections > 0 {
+			handlers = map[string]ToolDefinition{}
+		} else if toolsExhausted {
 			infos, handlers, err = h.modelJSONPool()
 		} else {
 			infos, handlers, err = h.pool()
@@ -279,7 +282,11 @@ func (h *ReviewHarness) RunEnvelope(ctx context.Context, prompt PromptEnvelope) 
 			system += "\n" + extra
 		}
 		if toolsExhausted {
-			system += "\n工具轮数已用完；不得调用上下文或行动工具。最终 JSON 输出仍可调用 JSON 校验工具，除此之外直接给出最终回答。"
+			if finalToolCorrections > 0 {
+				system += "\n工具轮数已用完；上轮调用了已禁用的工具。现在没有可用工具，仅依据已有证据直接输出最终 JSON。"
+			} else {
+				system += "\n工具轮数已用完；不得调用上下文或行动工具。最终 JSON 输出仍可调用 JSON 校验工具，除此之外直接给出最终回答。"
+			}
 		}
 		if h.System != nil {
 			if extra := h.System(); extra != "" {
@@ -344,25 +351,42 @@ func (h *ReviewHarness) RunEnvelope(ctx context.Context, prompt PromptEnvelope) 
 			}
 			return reply.Content, nil
 		}
-		if toolsExhausted {
-			for _, call := range reply.ToolCalls {
-				if !isModelJSONTool(call.Function.Name) {
-					return "", fmt.Errorf("工具轮数已用完，模型仍请求非 JSON 校验工具调用")
-				}
-			}
-		}
-		messages = append(messages, reply)
-		h.Goal.RecordProgress()
-		seen := map[string]bool{}
 		if len(reply.ToolCalls) > 32 {
 			return "", fmt.Errorf("单轮工具调用超过 32 次")
 		}
+		seen := map[string]bool{}
 		for _, call := range reply.ToolCalls {
 			if call.ID == "" || seen[call.ID] {
 				return "", fmt.Errorf("模型工具调用 ID 缺失或重复")
 			}
 			seen[call.ID] = true
 		}
+		if toolsExhausted {
+			unexpectedTool := false
+			for _, call := range reply.ToolCalls {
+				if !isModelJSONTool(call.Function.Name) {
+					unexpectedTool = true
+				}
+			}
+			if finalToolCorrections > 0 || unexpectedTool {
+				if finalToolCorrections > 0 {
+					return "", fmt.Errorf("工具轮数已用完，模型在纠正后仍请求工具调用")
+				}
+				messages = append(messages, reply)
+				for _, call := range reply.ToolCalls {
+					output := h.execute(ctx, call, map[string]ToolDefinition{})
+					messages = append(messages, &schema.Message{Role: schema.Tool, ToolCallID: call.ID, Content: output})
+				}
+				messages = append(messages, &schema.Message{
+					Role:    schema.User,
+					Content: "工具轮数已用完，上一轮工具调用均未执行。请仅依据已有证据直接输出最终 JSON；证据不足则输出 []。",
+				})
+				finalToolCorrections++
+				continue
+			}
+		}
+		messages = append(messages, reply)
+		h.Goal.RecordProgress()
 		productiveRound := false
 		for _, call := range reply.ToolCalls {
 			if call.ID == "" {

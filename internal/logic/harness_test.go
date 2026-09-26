@@ -368,6 +368,34 @@ func TestHarnessToolRoundCapOnlyWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestHarnessStopsAfterOneInvalidFinalToolCorrection(t *testing.T) {
+	h := newReviewHarness()
+	h.MaxToolRounds = 1
+	h.MaxRounds = 4
+	h.add("evidence", "read evidence", map[string]any{"type": "object"}, func(context.Context, map[string]any) (string, error) {
+		return "fact", nil
+	})
+	rounds := 0
+	h.Model = func(_ context.Context, _ []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
+		rounds++
+		if rounds == 1 {
+			return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{
+				testToolCall("first", "evidence", `{}`),
+			}}, nil
+		}
+		if len(tools) != 0 {
+			t.Fatalf("exhausted tools=%v", toolNames(tools))
+		}
+		return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{
+			testToolCall("stale", "evidence", `{}`),
+		}}, nil
+	}
+	answer, err := h.Run(context.Background(), "review")
+	if err == nil || !strings.Contains(err.Error(), "纠正后仍请求工具调用") || answer != "" || rounds != 3 {
+		t.Fatalf("answer=%q rounds=%d err=%v", answer, rounds, err)
+	}
+}
+
 func testToolCall(id, name, args string) schema.ToolCall {
 	return schema.ToolCall{ID: id, Type: "function", Function: schema.FunctionCall{Name: name, Arguments: args}}
 }

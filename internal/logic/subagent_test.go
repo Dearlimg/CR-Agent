@@ -124,6 +124,10 @@ func TestReviewAgentAcceptsValidRepairFromProviderWithoutToolCall(t *testing.T) 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		var request struct {
+			ReasoningEffort string `json:"reasoning_effort"`
+			Thinking        struct {
+				Type string `json:"type"`
+			} `json:"thinking"`
 			Tools []struct {
 				Function struct {
 					Name string `json:"name"`
@@ -134,6 +138,9 @@ func TestReviewAgentAcceptsValidRepairFromProviderWithoutToolCall(t *testing.T) 
 			t.Error(err)
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
+		}
+		if request.ReasoningEffort != "low" || request.Thinking.Type != "enabled" {
+			t.Errorf("thinking=%q effort=%q", request.Thinking.Type, request.ReasoningEffort)
 		}
 		if len(request.Tools) != 1 || request.Tools[0].Function.Name != parseReviewFindingsJSONTool {
 			t.Errorf("request %d JSON validation tools=%#v", calls, request.Tools)
@@ -159,6 +166,97 @@ func TestReviewAgentAcceptsValidRepairFromProviderWithoutToolCall(t *testing.T) 
 	findings, err := parseFindingsStrict(result.Summary)
 	if result.Error != nil || err != nil || len(findings) != 1 || calls != 2 {
 		t.Fatalf("result=%#v findings=%#v parseErr=%v calls=%d", result, findings, err, calls)
+	}
+}
+
+func TestReviewAgentRecoversFromStaleContextToolAfterRoundLimit(t *testing.T) {
+	valid := `[{"file":"a.go","line":7,"severity":"medium","confidence":"high",` +
+		`"body":"会返回错误","evidence":"return err","trigger":"调用失败",` +
+		`"impact":"请求失败","suggestion":"处理错误"}]`
+	rounds := 0
+	contextCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rounds++
+		var request struct {
+			Tools []struct {
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
+			Messages []struct {
+				Role       string `json:"role"`
+				Content    string `json:"content"`
+				ToolCallID string `json:"tool_call_id"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		names := []string{}
+		for _, tool := range request.Tools {
+			names = append(names, tool.Function.Name)
+		}
+		switch rounds {
+		case 1:
+			if len(names) != 2 || names[0] != reviewContextToolName || names[1] != parseReviewFindingsJSONTool {
+				t.Errorf("first round tools=%v", names)
+			}
+		case 2:
+			if len(names) != 1 || names[0] != parseReviewFindingsJSONTool {
+				t.Errorf("exhausted round tools=%v", names)
+			}
+		case 3:
+			if len(names) != 0 {
+				t.Errorf("correction round tools=%v", names)
+			}
+			foundError := false
+			for _, message := range request.Messages {
+				if message.Role == "tool" && message.ToolCallID == "stale" && strings.Contains(message.Content, "Tool error:") {
+					foundError = true
+				}
+			}
+			if !foundError {
+				t.Error("stale tool call was not paired with a failed tool result")
+			}
+		default:
+			t.Errorf("unexpected model round %d", rounds)
+		}
+		message := map[string]any{"role": "assistant", "content": valid}
+		finishReason := "stop"
+		if rounds < 3 {
+			callID := "first"
+			if rounds == 2 {
+				callID = "stale"
+			}
+			message["content"] = ""
+			message["tool_calls"] = []any{map[string]any{
+				"id": callID, "type": "function",
+				"function": map[string]any{"name": reviewContextToolName, "arguments": `{}`},
+			}}
+			finishReason = "tool_calls"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": message, "finish_reason": finishReason}},
+		})
+	}))
+	defer server.Close()
+	ctx := context.WithValue(context.Background(), harnessSetupKey{}, func(h *ReviewHarness) {
+		h.MaxToolRounds = 1
+		h.add(reviewContextToolName, "read source", map[string]any{"type": "object"},
+			func(context.Context, map[string]any) (string, error) {
+				contextCalls++
+				return "source", nil
+			})
+		h.add("unrelated", "not needed", map[string]any{"type": "object"},
+			func(context.Context, map[string]any) (string, error) { return "", nil })
+	})
+	result := RunReviewAgent(ctx, Config{DeepSeekAPIKey: "test-only", DeepSeekBaseURL: server.URL}, "diff", ReviewPromptContext{})
+	findings, err := parseFindingsStrict(result.Summary)
+	if result.Error != nil || err != nil || len(findings) != 1 || rounds != 3 || contextCalls != 1 {
+		t.Fatalf("result=%#v findings=%#v parseErr=%v rounds=%d contextCalls=%d", result, findings, err, rounds, contextCalls)
 	}
 }
 

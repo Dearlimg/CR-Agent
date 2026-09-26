@@ -130,3 +130,64 @@ func TestFindingVerifierRejectsOldBooleanVerdict(t *testing.T) {
 		t.Fatalf("old boolean verdict should be incomplete, got %v", err)
 	}
 }
+
+func TestFindingVerifierRepairsInvalidJSONThroughValidationTool(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var request struct {
+			Tools []struct {
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		message := map[string]any{"role": "assistant", "content": "invalid verdict"}
+		finishReason := "stop"
+		if calls == 2 {
+			if len(request.Tools) != 1 || request.Tools[0].Function.Name != parseFindingVerdictJSONTool {
+				t.Errorf("repair tools=%#v", request.Tools)
+			}
+			message["content"] = ""
+			message["tool_calls"] = []any{map[string]any{
+				"id": "validate-verdict", "type": "function",
+				"function": map[string]any{
+					"name":      parseFindingVerdictJSONTool,
+					"arguments": `{"json":"{\"verdict\":\"confirmed\",\"reason\":\"有明确触发路径\"}"}`,
+				},
+			}}
+			finishReason = "tool_calls"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": message, "finish_reason": finishReason}},
+		})
+	}))
+	defer server.Close()
+
+	diff := "diff --git a/a.go b/a.go\n+++ b/a.go\n@@ -0,0 +1 @@\n+bug()\n"
+	job := &model.ReviewJob{ID: "verdict-json-repair", Trace: []model.TraceEvent{}}
+	recorder := newTraceRecorder(job)
+	got, reason, _, err := verifyFindingIndependently(withTraceRecorder(context.Background(), recorder), findingVerificationRequest{
+		Config:   Config{DeepSeekBaseURL: server.URL, DeepSeekAPIKey: "test-only"},
+		Diff:     diff,
+		Finding:  ReviewFinding{File: "a.go", Line: 1, Evidence: "bug()"},
+		Recorder: recorder,
+	})
+	if err != nil || got != findingConfirmed || reason != "有明确触发路径" || calls != 3 {
+		t.Fatalf("verdict=%q reason=%q calls=%d err=%v", got, reason, calls, err)
+	}
+	recorder.Flush()
+	foundToolTrace := false
+	for _, trace := range job.Trace {
+		if trace.Tool == parseFindingVerdictJSONTool {
+			foundToolTrace = trace.Status == "succeeded" && strings.Contains(trace.Input, "有明确触发路径")
+		}
+	}
+	if !foundToolTrace {
+		t.Fatalf("JSON validation tool input/output not traced: %#v", job.Trace)
+	}
+}

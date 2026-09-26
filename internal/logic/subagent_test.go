@@ -135,12 +135,12 @@ func TestReviewAgentAcceptsValidRepairFromProviderWithoutToolCall(t *testing.T) 
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
+		if len(request.Tools) != 1 || request.Tools[0].Function.Name != parseReviewFindingsJSONTool {
+			t.Errorf("request %d JSON validation tools=%#v", calls, request.Tools)
+		}
 		content := strings.TrimSuffix(valid, "]")
 		if calls == 2 {
 			content = valid
-			if len(request.Tools) != 1 || request.Tools[0].Function.Name != "parse_review_findings_json" {
-				t.Errorf("repair tools=%#v", request.Tools)
-			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -13,6 +13,7 @@ type traceParentKey struct{}
 type TraceResult struct {
 	Status                    string
 	Output                    string
+	Prompt                    string
 	ModelReply                string
 	Err                       error
 	Round                     int
@@ -138,7 +139,7 @@ func (s *TraceSpan) endAt(ended time.Time, result TraceResult) int64 {
 				status = "failed"
 			}
 			if output == "" {
-				output = result.Err.Error()
+				output = redact(redactReviewInput(result.Err.Error()))
 			}
 		}
 		event := model.TraceEvent{
@@ -162,9 +163,10 @@ func (s *TraceSpan) endAt(ended time.Time, result TraceResult) int64 {
 			ToolVersion:               result.ToolVersion,
 			InputDigest:               result.InputDigest,
 			Tool:                      s.name,
-			Input:                     s.input,
-			Output:                    output,
-			ModelReply:                result.ModelReply,
+			Input:                     redactTraceText(s.input),
+			Output:                    redactTraceText(output),
+			Prompt:                    redactTraceText(result.Prompt),
+			ModelReply:                redactTraceText(result.ModelReply),
 			At:                        ended,
 			StartedAt:                 s.started,
 			EndedAt:                   &ended,

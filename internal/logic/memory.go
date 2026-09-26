@@ -1,7 +1,6 @@
 package logic
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -301,16 +300,47 @@ func shouldStoreMemory(candidate MemoryCandidate) bool {
 }
 
 func parseMemoryCandidates(raw string) []MemoryCandidate {
-	clean := strings.TrimSpace(strings.Trim(raw, "`"))
-	candidates := []MemoryCandidate{}
-	if json.Unmarshal([]byte(clean), &candidates) == nil {
-		return candidates
-	}
-	start, end := strings.Index(clean, "["), strings.LastIndex(clean, "]")
-	if start >= 0 && end > start {
-		_ = json.Unmarshal([]byte(clean[start:end+1]), &candidates)
+	_, candidates, err := normalizeMemoryCandidatesJSON(raw)
+	if err != nil {
+		return []MemoryCandidate{}
 	}
 	return candidates
+}
+
+func memoryCandidatesJSONToolSpec() modelJSONToolSpec {
+	return modelJSONToolSpec{
+		Name:        parseMemoryCandidatesJSONTool,
+		Description: "严格校验并规范化长期记忆候选 JSON 数组；只接受允许的类型、scope 和完整字段。",
+		Validate: func(raw string) (string, error) {
+			normalized, _, err := normalizeMemoryCandidatesJSON(raw)
+			return normalized, err
+		},
+	}
+}
+
+func normalizeMemoryCandidatesJSON(raw string) (string, []MemoryCandidate, error) {
+	if !strings.HasPrefix(strings.TrimSpace(stripModelJSONFence(raw)), "[") {
+		return "", nil, fmt.Errorf("记忆候选必须是 JSON 数组")
+	}
+	candidates := []MemoryCandidate{}
+	normalized, err := normalizeTypedModelJSON(raw, &candidates)
+	if err != nil {
+		return "", nil, err
+	}
+	for index, candidate := range candidates {
+		if !validMemoryType(candidate.Type) {
+			return "", nil, fmt.Errorf("数组项 %d 的 type 无效", index)
+		}
+		if candidate.Scope != "persistent" && candidate.Scope != "current_task" {
+			return "", nil, fmt.Errorf("数组项 %d 的 scope 无效", index)
+		}
+		if strings.TrimSpace(candidate.Name) == "" ||
+			strings.TrimSpace(candidate.Description) == "" ||
+			strings.TrimSpace(candidate.Body) == "" {
+			return "", nil, fmt.Errorf("数组项 %d 缺少 name、description 或 body", index)
+		}
+	}
+	return normalized, candidates, nil
 }
 
 func validMemoryType(memoryType MemoryType) bool {

@@ -324,18 +324,19 @@ func (s *Service) runCheckpointed(
 				name string,
 				callID string,
 				status string,
+				input string,
 				output string,
 				started time.Time,
 				ended time.Time,
 				duration int64,
 			) {
 				traceID, _ := recorder.RecordAt(
-					"tool", name, "verification", "复核 Agent 按需读取固定提交源码",
+					"tool", name, "verification", input,
 					traceParentFrom(toolCtx), started, ended,
 					TraceResult{Status: status, Output: output, Origin: "model", ToolCallID: callID},
 				)
 				_ = s.Store.RecordToolCall(
-					job.ID, traceID, name, status, "复核 Agent 按需读取固定提交源码", output, "", duration,
+					job.ID, traceID, name, status, input, output, "", duration,
 				)
 			},
 			Recorder: recorder,

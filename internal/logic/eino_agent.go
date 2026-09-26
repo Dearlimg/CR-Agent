@@ -40,24 +40,58 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		return round
 	}
 	if condition, ok := ctx.Value(goalConditionKey{}).(string); ok && strings.TrimSpace(condition) != "" {
+		goalTool := goalDecisionJSONToolSpec()
+		goalToolInfo, err := modelJSONToolInfo(goalTool)
+		if err != nil {
+			return "", err
+		}
 		controller, err := NewGoalController(condition, PromptGoalEvaluator{Generate: func(ctx context.Context, prompt string) (string, error) {
 			messages := []*schema.Message{{Role: schema.User, Content: prompt}}
-			modelRound := nextRound()
-			retryCount := 0
-			reply, err := generateWithinLengthBudget(messages, 1024, func(input []*schema.Message, budget int) (*schema.Message, error) {
-				return generateReviewModelRequest(ctx, cfg, router, reviewModelRequest{
-					retryCount:  &retryCount,
-					traceName:   "goal_evaluator",
-					round:       modelRound,
-					budget:      budget,
-					messages:    input,
-					inputTokens: estimateModelInputTokens(input, nil),
+			infer := func(input []*schema.Message) (*schema.Message, error) {
+				modelRound := nextRound()
+				retryCount := 0
+				return generateWithinLengthBudget(input, 1024, func(current []*schema.Message, budget int) (*schema.Message, error) {
+					return generateReviewModelRequest(ctx, cfg, router, reviewModelRequest{
+						retryCount:  &retryCount,
+						traceName:   "goal_evaluator",
+						round:       modelRound,
+						budget:      budget,
+						messages:    current,
+						tools:       []*schema.ToolInfo{goalToolInfo},
+						inputTokens: estimateModelInputTokens(current, []*schema.ToolInfo{goalToolInfo}),
+					})
 				})
-			})
+			}
+			resolve := func(reply *schema.Message) (string, error) {
+				if reply == nil {
+					return "", fmt.Errorf("goal evaluator 返回空响应")
+				}
+				if len(reply.ToolCalls) > 0 {
+					if len(reply.ToolCalls) != 1 {
+						return "", fmt.Errorf("goal evaluator 请求了多个 JSON 校验工具")
+					}
+					return executeModelJSONToolCall(ctx, reply.ToolCalls[0], goalTool)
+				}
+				var decision GoalDecision
+				if err := parseGoalDecision(reply.Content, &decision); err != nil {
+					return "", err
+				}
+				return normalizeTypedModelJSON(reply.Content, &decision)
+			}
+			reply, err := infer(messages)
 			if err != nil {
 				return "", err
 			}
-			return reply.Content, nil
+			normalized, resolveErr := resolve(reply)
+			if resolveErr == nil {
+				return normalized, nil
+			}
+			messages = append(append([]*schema.Message{}, messages...), modelJSONRepairMessage(reply, resolveErr, goalTool.Name))
+			reply, err = infer(messages)
+			if err != nil {
+				return "", err
+			}
+			return resolve(reply)
 		}}, cfg.GoalMaxBlocks)
 		if err != nil {
 			return "", err
@@ -70,8 +104,18 @@ func EinoReviewAgent(ctx context.Context, cfg Config, prompt string) (string, er
 		// Summaries and memory extraction do not need side-effecting tools.
 		harness.tools = NewToolRegistry()
 	}
-	if setup, ok := ctx.Value(reviewFindingJSONToolSetupKey{}).(func(*ReviewHarness)); ok {
+	if setup, ok := ctx.Value(modelJSONToolSetupKey{}).(func(*ReviewHarness)); ok {
 		setup(harness)
+	}
+	if harness.Record == nil {
+		if recorder := traceRecorderFrom(ctx); recorder != nil {
+			harness.Record = func(name, callID, status, input, output string, started, ended time.Time, _ int64) {
+				recorder.RecordAt(
+					"tool", name, "harness", input, traceParentFrom(ctx), started, ended,
+					TraceResult{Status: status, Output: output, Origin: "model", ToolCallID: callID},
+				)
+			}
+		}
 	}
 	harness.Model = func(ctx context.Context, messages []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
 		modelRound := nextRound()
@@ -203,8 +247,7 @@ func generateWithinLengthBudgetFallback(
 	return nil, fmt.Errorf("模型输出达到 token 上限，精简重答两轮仍被截断")
 }
 
-// A request span contains provider metadata only; prompts, replies and raw
-// provider errors must not become durable trace data.
+// Persist sanitized provider input and completion data for model-call diagnosis.
 func observedModelRequest(
 	ctx context.Context,
 	name string,
@@ -213,41 +256,61 @@ func observedModelRequest(
 	budget int,
 	generate func() (*schema.Message, error),
 ) (*schema.Message, error) {
-	return observedBudgetedModelRequest(ctx, name, round, retryCount, budget, inputFramingTokenReserve, reviewBudgetFrom(ctx).pricing(), func(int) (*schema.Message, error) {
+	return observedBudgetedModelRequest(ctx, observedModelCall{
+		name:                  name,
+		round:                 round,
+		retryCount:            retryCount,
+		requestedOutputTokens: budget,
+		estimatedInputTokens:  inputFramingTokenReserve,
+		pricing:               reviewBudgetFrom(ctx).pricing(),
+	}, func(int) (*schema.Message, error) {
 		return generate()
 	})
 }
 
+type observedModelCall struct {
+	name                  string
+	round                 int
+	retryCount            int
+	requestedOutputTokens int
+	estimatedInputTokens  int
+	pricing               reviewModelPricing
+	messages              []*schema.Message
+	tools                 []*schema.ToolInfo
+	thinkingEnabled       bool
+}
+
 func observedBudgetedModelRequest(
 	ctx context.Context,
-	name string,
-	round int,
-	retryCount int,
-	requestedOutputTokens int,
-	estimatedInputTokens int,
-	pricing reviewModelPricing,
+	request observedModelCall,
 	generate func(int) (*schema.Message, error),
 ) (*schema.Message, error) {
 	meter := reviewBudgetFrom(ctx)
-	reservation, reserveErr := meter.reserveForModel(estimatedInputTokens, requestedOutputTokens, pricing)
-	outputTokenLimit := requestedOutputTokens
+	reservation, reserveErr := meter.reserveForModel(request.estimatedInputTokens, request.requestedOutputTokens, request.pricing)
+	outputTokenLimit := request.requestedOutputTokens
 	if reserveErr == nil && meter != nil {
 		outputTokenLimit = reservation.outputTokens
 	}
+	tracePrompt := marshalModelRequestForTrace(request, outputTokenLimit)
 	var span *TraceSpan
 	if recorder := traceRecorderFrom(ctx); recorder != nil {
 		span = recorder.Start(
 			"model_request",
-			name,
+			request.name,
 			"inference",
-			fmt.Sprintf("requested_max_tokens=%d allowed_max_tokens=%d estimated_input_tokens=%d", requestedOutputTokens, outputTokenLimit, estimatedInputTokens),
+			fmt.Sprintf(
+				"requested_max_tokens=%d allowed_max_tokens=%d estimated_input_tokens=%d",
+				request.requestedOutputTokens,
+				outputTokenLimit,
+				request.estimatedInputTokens,
+			),
 			traceParentFrom(ctx),
 		)
 	}
 	if reserveErr != nil {
 		endModelRequestTrace(span, TraceResult{
-			Status: "budget_exhausted", Output: "审查预算不足，已阻止模型请求", Round: round,
-			RetryCount: retryCount, Origin: "model",
+			Status: "budget_exhausted", Output: "审查预算不足，已阻止模型请求", Prompt: tracePrompt, Round: request.round,
+			RetryCount: request.retryCount, Origin: "model",
 		})
 		_ = meter.persist()
 		return nil, reserveErr
@@ -256,13 +319,20 @@ func observedBudgetedModelRequest(
 	result := TraceResult{
 		Status:     "succeeded",
 		Output:     "模型请求完成",
+		Prompt:     tracePrompt,
+		ModelReply: marshalModelReplyForTrace(reply),
 		Origin:     "model",
-		Round:      round,
-		RetryCount: retryCount,
+		Round:      request.round,
+		RetryCount: request.retryCount,
 	}
 	if err != nil || reply == nil {
 		result.Status = "failed"
-		result.Output = "模型请求失败，按预留额度计入预算"
+		result.Output = "模型请求失败"
+		if err != nil {
+			result.Output += ": " + redact(redactReviewInput(err.Error()))
+		} else {
+			result.Output += ": 模型返回空响应"
+		}
 		if isProviderRejectedBeforeInference(err) {
 			result.Output = "服务商在模型生成前拒绝请求，未计模型费用"
 		}
@@ -302,6 +372,85 @@ func observedBudgetedModelRequest(
 		return nil, fmt.Errorf("审查预算已达到上限，已停止后续模型调用")
 	}
 	return reply, nil
+}
+
+func marshalModelRequestForTrace(request observedModelCall, allowedTokens int) string {
+	type requestTrace struct {
+		Model                string             `json:"model"`
+		RequestedMaxTokens   int                `json:"requested_max_tokens"`
+		AllowedMaxTokens     int                `json:"allowed_max_tokens"`
+		EstimatedInputTokens int                `json:"estimated_input_tokens"`
+		ThinkingEnabled      bool               `json:"thinking_enabled"`
+		ReasoningEffort      string             `json:"reasoning_effort,omitempty"`
+		Messages             []*schema.Message  `json:"messages"`
+		Tools                []*schema.ToolInfo `json:"tools,omitempty"`
+	}
+	messages := make([]*schema.Message, 0, len(request.messages))
+	for _, message := range request.messages {
+		if message == nil {
+			continue
+		}
+		messages = append(messages, modelMessageForTrace(message))
+	}
+	encoded, err := json.Marshal(requestTrace{
+		Model:                request.pricing.modelName,
+		RequestedMaxTokens:   request.requestedOutputTokens,
+		AllowedMaxTokens:     allowedTokens,
+		EstimatedInputTokens: request.estimatedInputTokens,
+		ThinkingEnabled:      request.thinkingEnabled,
+		ReasoningEffort:      reasoningEffort(request.thinkingEnabled),
+		Messages:             messages,
+		Tools:                request.tools,
+	})
+	if err != nil {
+		return "trace request serialization failed: " + redactReviewInput(err.Error())
+	}
+	return redactTraceText(string(encoded))
+}
+
+func reasoningEffort(enabled bool) string {
+	if enabled {
+		return "high"
+	}
+	return ""
+}
+
+func marshalModelReplyForTrace(reply *schema.Message) string {
+	if reply == nil {
+		return ""
+	}
+	type responseTrace struct {
+		Role         string             `json:"role"`
+		Content      string             `json:"content,omitempty"`
+		ToolCalls    []schema.ToolCall  `json:"tool_calls,omitempty"`
+		FinishReason string             `json:"finish_reason,omitempty"`
+		Usage        *schema.TokenUsage `json:"usage,omitempty"`
+	}
+	tracedReply := modelMessageForTrace(reply)
+	response := responseTrace{Role: string(tracedReply.Role), Content: tracedReply.Content, ToolCalls: tracedReply.ToolCalls}
+	if reply.ResponseMeta != nil {
+		response.FinishReason = reply.ResponseMeta.FinishReason
+		response.Usage = reply.ResponseMeta.Usage
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return "trace response serialization failed: " + redactReviewInput(err.Error())
+	}
+	return redactTraceText(string(encoded))
+}
+
+func modelMessageForTrace(message *schema.Message) *schema.Message {
+	if message == nil {
+		return nil
+	}
+	copy := *message
+	copy.Content = redactTraceText(message.Content)
+	copy.ReasoningContent = ""
+	copy.ToolCalls = append([]schema.ToolCall{}, message.ToolCalls...)
+	for index := range copy.ToolCalls {
+		copy.ToolCalls[index].Function.Arguments = redactTraceText(copy.ToolCalls[index].Function.Arguments)
+	}
+	return &copy
 }
 
 func endModelRequestTrace(span *TraceSpan, result TraceResult) {

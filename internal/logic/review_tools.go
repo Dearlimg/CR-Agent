@@ -14,11 +14,15 @@ import (
 var filePattern = regexp.MustCompile(`^diff --git a/(.+) b/(.+)$`)
 
 func normalizeReviewFindingsJSON(raw string) (string, []ReviewFinding, error) {
+	return normalizeReviewFindingsJSONWithEmpty(raw, false)
+}
+
+func normalizeReviewFindingsJSONWithEmpty(raw string, allowEmpty bool) (string, []ReviewFinding, error) {
 	findings, err := parseFindingsStrict(raw)
 	if err != nil {
 		return "", nil, fmt.Errorf("finding JSON 无效：%w", err)
 	}
-	if len(findings) == 0 {
+	if len(findings) == 0 && !allowEmpty {
 		return "", nil, fmt.Errorf("finding JSON 不能为空数组")
 	}
 

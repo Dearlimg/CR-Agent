@@ -54,19 +54,19 @@ func (s *Service) withReviewHarness(ctx context.Context, job *model.ReviewJob, d
 			}
 			return "当前会话计划:\n" + todos
 		}
-		h.Record = func(name, callID, status, output string, started, ended time.Time, duration int64) {
+		h.Record = func(name, callID, status, input, output string, started, ended time.Time, duration int64) {
 			parentID := traceParentFrom(ctx)
 			traceID, _ := recorder.RecordAt(
 				"tool",
 				name,
 				"harness",
-				"model tool call",
+				input,
 				parentID,
 				started,
 				ended,
 				TraceResult{Status: status, Output: output, Origin: "model", ToolCallID: callID},
 			)
-			_ = s.Store.RecordToolCall(job.ID, traceID, name, status, "model tool call", output, "", duration)
+			_ = s.Store.RecordToolCall(job.ID, traceID, name, status, input, output, "", duration)
 		}
 		h.add("load_skill", "按名称加载完整 Skill 指令", objectSchema("name"),
 			func(_ context.Context, args map[string]any) (string, error) {
@@ -382,26 +382,79 @@ func stringObject(names ...string) map[string]any {
 func (s *Service) workflowAgentRunner(h *ReviewHarness) WorkflowAgentRunner {
 	return func(ctx context.Context, prompt string, outputSchema map[string]any, label string) (WorkflowAgentResult, error) {
 		schemaJSON, _ := json.Marshal(outputSchema)
-		instruction := fmt.Sprintf("你是 workflow 子 Agent，标签 %s。只返回符合以下 JSON schema 的 JSON，不要 Markdown：%s\n\n%s", label, schemaJSON, prompt)
-		reply, err := h.Model(ctx, []*schema.Message{{Role: schema.User, Content: instruction}}, nil)
+		spec := workflowJSONToolSpec(outputSchema)
+		tool, err := modelJSONToolInfo(spec)
+		if err != nil {
+			return WorkflowAgentResult{}, fmt.Errorf("workflow agent %s JSON 校验工具初始化失败: %w", label, err)
+		}
+		instruction := fmt.Sprintf("你是 workflow 子 Agent，标签 %s。输出前必须调用 validate_workflow_json 工具校验输出。JSON schema：%s\n\n%s", label, schemaJSON, prompt)
+		messages := []*schema.Message{{Role: schema.User, Content: instruction}}
+		infer := func(input []*schema.Message) (*schema.Message, error) {
+			return h.Model(ctx, input, []*schema.ToolInfo{tool})
+		}
+		resolve := func(reply *schema.Message) (any, error) {
+			if reply == nil {
+				return nil, fmt.Errorf("workflow agent 返回空响应")
+			}
+			if len(reply.ToolCalls) > 0 {
+				if len(reply.ToolCalls) != 1 {
+					return nil, fmt.Errorf("workflow agent 请求了多个 JSON 校验工具")
+				}
+				normalized, err := executeModelJSONToolCall(ctx, reply.ToolCalls[0], spec)
+				if err != nil {
+					return nil, err
+				}
+				var value any
+				if err := json.Unmarshal([]byte(normalized), &value); err != nil {
+					return nil, fmt.Errorf("workflow JSON 工具返回无效结果: %w", err)
+				}
+				return value, nil
+			}
+			_, value, err := normalizeModelJSON(reply.Content, func(value any) error {
+				return validateWorkflowValue(value, outputSchema)
+			})
+			return value, err
+		}
+		totalTokens := 0
+		reply, err := infer(messages)
 		if err != nil {
 			return WorkflowAgentResult{}, err
 		}
-		if reply == nil || len(reply.ToolCalls) > 0 {
-			return WorkflowAgentResult{}, fmt.Errorf("workflow agent 返回了工具调用或空响应")
+		if reply == nil {
+			return WorkflowAgentResult{}, fmt.Errorf("workflow agent 返回空响应")
 		}
-		content := strings.TrimSpace(reply.Content)
-		content = strings.TrimPrefix(content, "```json")
-		content = strings.TrimPrefix(content, "```")
-		content = strings.TrimSuffix(strings.TrimSpace(content), "```")
-		var value any
-		if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &value); err != nil {
-			return WorkflowAgentResult{}, fmt.Errorf("workflow agent %s 输出不是 JSON: %w", label, err)
+		if reply != nil && reply.ResponseMeta != nil && reply.ResponseMeta.Usage != nil {
+			totalTokens += reply.ResponseMeta.Usage.TotalTokens
 		}
-		tokens := 0
-		if reply.ResponseMeta != nil && reply.ResponseMeta.Usage != nil {
-			tokens = reply.ResponseMeta.Usage.TotalTokens
+		value, validationErr := resolve(reply)
+		if validationErr == nil {
+			return WorkflowAgentResult{Value: value, Tokens: totalTokens}, nil
 		}
-		return WorkflowAgentResult{Value: value, Tokens: tokens}, nil
+		messages = append(append([]*schema.Message{}, messages...), modelJSONRepairMessage(reply, validationErr, spec.Name))
+		reply, err = infer(messages)
+		if err != nil {
+			return WorkflowAgentResult{}, err
+		}
+		if reply != nil && reply.ResponseMeta != nil && reply.ResponseMeta.Usage != nil {
+			totalTokens += reply.ResponseMeta.Usage.TotalTokens
+		}
+		value, validationErr = resolve(reply)
+		if validationErr != nil {
+			return WorkflowAgentResult{}, fmt.Errorf("workflow agent %s 输出未通过 JSON 校验: %w", label, validationErr)
+		}
+		return WorkflowAgentResult{Value: value, Tokens: totalTokens}, nil
+	}
+}
+
+func workflowJSONToolSpec(outputSchema map[string]any) modelJSONToolSpec {
+	return modelJSONToolSpec{
+		Name:        validateWorkflowJSONTool,
+		Description: "校验 workflow 子 Agent 的 JSON 输出并检查 workflow 声明的 JSON schema。",
+		Validate: func(raw string) (string, error) {
+			normalized, _, err := normalizeModelJSON(raw, func(value any) error {
+				return validateWorkflowValue(value, outputSchema)
+			})
+			return normalized, err
+		},
 	}
 }

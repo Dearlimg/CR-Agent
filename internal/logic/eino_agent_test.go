@@ -32,7 +32,7 @@ func TestIsRetryableModelError(t *testing.T) {
 	}
 }
 
-func TestObservedModelRequestRecordsAttemptMetadataWithoutPrompt(t *testing.T) {
+func TestObservedModelRequestRecordsAttemptMetadataAndRedactsProviderErrors(t *testing.T) {
 	job := &model.ReviewJob{ID: "model-request", Trace: []model.TraceEvent{}}
 	recorder := newTraceRecorder(job)
 	ctx := withTraceParent(withTraceRecorder(context.Background(), recorder), "parent-model")
@@ -79,6 +79,102 @@ func TestObservedModelRequestRecordsAttemptMetadataWithoutPrompt(t *testing.T) {
 		if strings.Contains(event.Input, "secret-token") || strings.Contains(event.Output, "secret-token") {
 			t.Fatalf("request trace leaked provider error: %#v", event)
 		}
+	}
+}
+
+func TestObservedModelRequestRecordsSanitizedInputAndRawReply(t *testing.T) {
+	job := &model.ReviewJob{ID: "model-request-input", Trace: []model.TraceEvent{}}
+	recorder := newTraceRecorder(job)
+	ctx := withTraceRecorder(context.Background(), recorder)
+	tool, err := modelJSONToolInfo(goalDecisionJSONToolSpec())
+	if err != nil {
+		t.Fatalf("create JSON tool info: %v", err)
+	}
+	request := observedModelCall{
+		name:                  "deepseek-v4-pro",
+		round:                 3,
+		retryCount:            1,
+		requestedOutputTokens: 8192,
+		estimatedInputTokens:  512,
+		pricing:               reviewModelPricing{modelName: "deepseek-v4-pro"},
+		messages: []*schema.Message{
+			{Role: schema.System, Content: "Return JSON. api_key=\"test-secret-value\""},
+			{Role: schema.User, Content: "MALFORMED_REPLY_MARKER: {missing quote"},
+		},
+		tools: []*schema.ToolInfo{tool},
+	}
+	reply := &schema.Message{
+		Role:    schema.Assistant,
+		Content: "MALFORMED_REPLY_MARKER: {missing quote",
+		ResponseMeta: &schema.ResponseMeta{
+			FinishReason: "stop",
+			Usage:        &schema.TokenUsage{PromptTokens: 123, CompletionTokens: 17},
+		},
+	}
+	got, err := observedBudgetedModelRequest(ctx, request, func(int) (*schema.Message, error) {
+		return reply, nil
+	})
+	if err != nil || got != reply {
+		t.Fatalf("reply=%#v err=%v", got, err)
+	}
+	recorder.Flush()
+	if len(job.Trace) != 1 {
+		t.Fatalf("trace length=%d, want 1", len(job.Trace))
+	}
+	trace := job.Trace[0]
+	if !strings.Contains(trace.Prompt, "MALFORMED_REPLY_MARKER") || !strings.Contains(trace.Prompt, parseGoalDecisionJSONTool) {
+		t.Fatalf("trace omitted request messages or tools: %s", trace.Prompt)
+	}
+	if strings.Contains(trace.Prompt, "test-secret-value") || !strings.Contains(trace.Prompt, "[REDACTED]") {
+		t.Fatalf("request trace did not redact credentials: %s", trace.Prompt)
+	}
+	if !strings.Contains(trace.ModelReply, "MALFORMED_REPLY_MARKER") || !strings.Contains(trace.ModelReply, "finish_reason") {
+		t.Fatalf("trace omitted raw model reply metadata: %s", trace.ModelReply)
+	}
+}
+
+func TestGoalEvaluatorRepairsInvalidJSONThroughToolFallback(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var request struct {
+			Tools []struct {
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		message := map[string]any{"role": "assistant", "content": "finished"}
+		finishReason := "stop"
+		if calls > 1 {
+			if len(request.Tools) != 1 || request.Tools[0].Function.Name != parseGoalDecisionJSONTool {
+				t.Errorf("goal evaluator tools=%#v", request.Tools)
+			}
+			message["content"] = ""
+			arguments := `{"json":"not JSON"}`
+			if calls == 3 {
+				arguments = `{"json":"{\"ok\":true,\"reason\":\"goal reached\",\"impossible\":false}"}`
+			}
+			message["tool_calls"] = []any{map[string]any{
+				"id": "goal-json", "type": "function",
+				"function": map[string]any{"name": parseGoalDecisionJSONTool, "arguments": arguments},
+			}}
+			finishReason = "tool_calls"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": message, "finish_reason": finishReason}},
+		})
+	}))
+	defer server.Close()
+
+	ctx := withGoalCondition(context.Background(), "the task is complete")
+	answer, err := EinoReviewAgent(ctx, Config{DeepSeekAPIKey: "test-only", DeepSeekBaseURL: server.URL}, "perform task")
+	if err != nil || answer != "finished" || calls != 3 {
+		t.Fatalf("answer=%q calls=%d err=%v", answer, calls, err)
 	}
 }
 

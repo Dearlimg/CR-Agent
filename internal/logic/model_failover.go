@@ -176,14 +176,17 @@ func generateReviewModelRequest(
 			attempt := *retryCount
 			*retryCount = attempt + 1
 			providerMessages := messagesForModelProvider(request.messages, provider)
-			return observedBudgetedModelRequest(
-				ctx,
-				request.traceName,
-				request.round,
-				attempt,
-				outputTokens,
-				request.inputTokens,
-				provider.pricing,
+			return observedBudgetedModelRequest(ctx, observedModelCall{
+				name:                  request.traceName,
+				round:                 request.round,
+				retryCount:            attempt,
+				requestedOutputTokens: outputTokens,
+				estimatedInputTokens:  request.inputTokens,
+				pricing:               provider.pricing,
+				messages:              providerMessages,
+				tools:                 request.tools,
+				thinkingEnabled:       provider.useDeepSeekThinking && isReviewPrompt(ctx),
+			},
 				func(allowedTokens int) (*schema.Message, error) {
 					return bound.Generate(ctx, providerMessages, modelRequestOptions(ctx, allowedTokens, provider.useDeepSeekThinking)...)
 				},

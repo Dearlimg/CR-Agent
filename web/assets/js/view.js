@@ -96,7 +96,7 @@ function renderTrace() {
     q = $("search").value.toLowerCase();
   let trace = visible
     .filter((e) =>
-      [e.tool, e.input, e.output, e.model_reply]
+      [e.tool, e.input, e.output, e.prompt, e.model_reply]
         .join(" ")
         .toLowerCase()
         .includes(q),
@@ -391,7 +391,12 @@ function render() {
                 ? '<p class="small muted">该模型调用没有文本回复。</p>'
                 : '<button type="button" data-trace-details="' +
                   esc(e.id) +
-                  '">按需加载模型回复</button>') +
+                  '">按需加载模型请求与回复</button>') +
+            (e.prompt
+              ? '<details class="trace-prompt"><summary>查看完整模型输入</summary><pre>' +
+                esc(e.prompt) +
+                "</pre></details>"
+              : "") +
             "</article>",
             )
             .join("")

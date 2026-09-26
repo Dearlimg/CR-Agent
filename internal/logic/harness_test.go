@@ -75,6 +75,117 @@ func TestEinoAdapterSendsDynamicMCPToolsOverHTTP(t *testing.T) {
 	}
 }
 
+func TestHarnessKeepsModelJSONToolAfterActionToolBudgetIsUsed(t *testing.T) {
+	harness := newReviewHarness()
+	harness.Policy = DefaultPermissionPolicy()
+	harness.MaxToolRounds = 1
+	harness.MaxRounds = 4
+	harness.add("action_probe", "test action", objectSchema("name"), func(_ context.Context, args map[string]any) (string, error) {
+		return args["name"].(string), nil
+	})
+	validated := ""
+	spec := modelJSONToolSpec{
+		Name:        parseGoalDecisionJSONTool,
+		Description: "validate test JSON",
+		Validate: func(raw string) (string, error) {
+			normalized, _, err := normalizeModelJSON(raw, nil)
+			return normalized, err
+		},
+	}
+	registerModelJSONTool(harness, spec, func(normalized string) { validated = normalized })
+	turn := 0
+	harness.Model = func(_ context.Context, _ []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
+		turn++
+		switch turn {
+		case 1:
+			if !hasToolInfo(tools, "action_probe") || !hasToolInfo(tools, spec.Name) {
+				t.Fatalf("first turn tools=%v", toolNames(tools))
+			}
+			return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{testToolCall("action", "action_probe", `{"name":"done"}`)}}, nil
+		case 2:
+			if len(tools) != 1 || !hasToolInfo(tools, spec.Name) {
+				t.Fatalf("tools after action budget exhausted=%v", toolNames(tools))
+			}
+			return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{
+				testToolCall("json", spec.Name, `{"json":"{\"ok\":true}"}`),
+			}}, nil
+		default:
+			return &schema.Message{Role: schema.Assistant, Content: "done"}, nil
+		}
+	}
+
+	answer, err := harness.Run(context.Background(), "start")
+	if err != nil || answer != "done" || turn != 3 || validated != `{"ok":true}` {
+		t.Fatalf("answer=%q turns=%d validated=%q err=%v", answer, turn, validated, err)
+	}
+}
+
+func TestWorkflowAgentRepairsOutputWithJSONValidationTool(t *testing.T) {
+	harness := newReviewHarness()
+	turn := 0
+	harness.Model = func(_ context.Context, messages []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
+		turn++
+		if len(tools) != 1 || tools[0].Name != validateWorkflowJSONTool {
+			t.Fatalf("workflow JSON tools=%v", toolNames(tools))
+		}
+		usage := &schema.ResponseMeta{Usage: &schema.TokenUsage{TotalTokens: 4}}
+		if turn == 1 {
+			return &schema.Message{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{
+					testToolCall("bad-workflow-json", validateWorkflowJSONTool, `{"json":"not JSON"}`),
+				},
+				ResponseMeta: usage,
+			}, nil
+		}
+		if len(messages) != 2 || messages[1].Role != schema.User {
+			t.Fatalf("repair history contains an unmatched tool call: %#v", messages)
+		}
+		return &schema.Message{
+			Role: schema.Assistant,
+			ToolCalls: []schema.ToolCall{
+				testToolCall("workflow-json", validateWorkflowJSONTool, `{"json":"{\"ok\":true}"}`),
+			},
+			ResponseMeta: usage,
+		}, nil
+	}
+	service := &Service{}
+	runner := service.workflowAgentRunner(harness)
+	result, err := runner(context.Background(), "return ok", map[string]any{
+		"type":     "object",
+		"required": []string{"ok"},
+		"properties": map[string]any{
+			"ok": map[string]any{"type": "boolean"},
+		},
+	}, "test")
+	if err != nil {
+		t.Fatalf("workflow result error: %v", err)
+	}
+	value, ok := result.Value.(map[string]any)
+	if !ok || value["ok"] != true || result.Tokens != 8 || turn != 2 {
+		t.Fatalf("result=%#v turns=%d", result, turn)
+	}
+}
+
+func hasToolInfo(tools []*schema.ToolInfo, name string) bool {
+	for _, tool := range tools {
+		if tool != nil && tool.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func toolNames(tools []*schema.ToolInfo) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if tool != nil {
+			names = append(names, tool.Name)
+		}
+	}
+	return names
+}
+
 func TestServiceHarnessBackgroundCompletionWakesModelAndRecordsTrace(t *testing.T) {
 	root := t.TempDir()
 	s := NewService(dao.NewJobStore(filepath.Join(root, "jobs")), Config{

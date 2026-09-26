@@ -64,7 +64,7 @@ func (metadata ToolMetadata) Validate() error {
 	switch metadata.Permission {
 	case PermissionReadDiff, PermissionNetworkFetch, PermissionStaticAnalysis, PermissionLLMInference,
 		PermissionRepositoryRead, PermissionRepositoryExec, PermissionSandboxExec, PermissionPublishReview,
-		PermissionManageSchedule:
+		PermissionManageSchedule, PermissionJSONValidation:
 	default:
 		return fmt.Errorf("工具 %q 的权限类型无效: %q", metadata.Name, metadata.Permission)
 	}

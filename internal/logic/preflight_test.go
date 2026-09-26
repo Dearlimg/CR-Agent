@@ -228,8 +228,11 @@ func TestSmallReviewUsesReviewAndVerificationTurnsAndSharedPreflight(t *testing.
 		}
 		w.Header().Set("Content-Type", "application/json")
 		reply := `[ {"file":"main.go","line":2,"severity":"medium","confidence":"low","body":"示例问题","evidence":"func f() {}","trigger":"调用该函数","impact":"产生示例影响","suggestion":"修复"} ]`
-		if call > 1 {
-			reply = `{"verdict":"confirmed","reason":"该候选符合测试场景"}`
+		if call == 2 {
+			reply = testFindingVerdictJSON(findingConfirmed, "该候选符合测试场景")
+		}
+		if call > 2 {
+			reply = "[]"
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id": "test", "object": "chat.completion",
@@ -264,8 +267,8 @@ func TestSmallReviewUsesReviewAndVerificationTurnsAndSharedPreflight(t *testing.
 	if job.Status != "completed" {
 		t.Fatalf("status=%q error=%q", job.Status, job.Error)
 	}
-	if calls.Load() != 2 {
-		t.Fatalf("model calls=%d, want 2", calls.Load())
+	if calls.Load() != 3 {
+		t.Fatalf("model calls=%d, want review, verification and memory extraction", calls.Load())
 	}
 	if len(job.Comments) != 1 || job.Comments[0].File != "main.go" || job.Comments[0].Line != 2 {
 		t.Fatalf("comments=%#v", job.Comments)

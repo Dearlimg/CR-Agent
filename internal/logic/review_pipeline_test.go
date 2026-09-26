@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func TestReviewPipelineReanchorsAndRecordsThreeWayVerdict(t *testing.T) {
+func TestReviewPipelineReanchorsAndRecordsFourWayVerdict(t *testing.T) {
 	for _, test := range []struct {
 		verdict    string
 		status     string
@@ -26,6 +26,7 @@ func TestReviewPipelineReanchorsAndRecordsThreeWayVerdict(t *testing.T) {
 		{verdict: findingConfirmed, status: "completed", outcome: "completed_with_findings", comments: 1},
 		{verdict: findingConfirmed, status: "completed", outcome: "completed_with_findings", comments: 1, secretScan: true},
 		{verdict: findingRejected, status: "completed", outcome: "completed_no_findings", comments: 0},
+		{verdict: findingPlausible, status: "completed_with_warnings", outcome: "incomplete", comments: 0},
 		{verdict: findingInconclusive, status: "completed_with_warnings", outcome: "incomplete", comments: 0},
 	} {
 		name := string(test.verdict)
@@ -34,6 +35,10 @@ func TestReviewPipelineReanchorsAndRecordsThreeWayVerdict(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			var calls atomic.Int32
+			wantCalls := int32(2)
+			if test.verdict == findingConfirmed {
+				wantCalls++ // High confidence confirmed findings also trigger memory extraction.
+			}
 			var verificationPrompt string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				call := calls.Add(1)
@@ -52,7 +57,10 @@ func TestReviewPipelineReanchorsAndRecordsThreeWayVerdict(t *testing.T) {
 				}
 				reply := `[{"file":"a.py","line":10,"severity":"medium","confidence":"medium","body":"bug","evidence":"bug()","trigger":"call","impact":"fails","suggestion":"fix"}]`
 				if call == 2 {
-					reply = `{"verdict":"` + test.verdict + `","reason":"检查源码后判断"}`
+					reply = testFindingVerdictJSON(test.verdict, "检查源码后判断")
+				}
+				if call > 2 {
+					reply = "[]"
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -86,12 +94,34 @@ func TestReviewPipelineReanchorsAndRecordsThreeWayVerdict(t *testing.T) {
 			if job.Status != test.status || job.ReviewOutcome != test.outcome || len(job.Comments) != test.comments {
 				t.Fatalf("status=%q outcome=%q comments=%d error=%q", job.Status, job.ReviewOutcome, len(job.Comments), job.Error)
 			}
-			if calls.Load() != 2 || !strings.Contains(verificationPrompt, `"line":11`) ||
+			if calls.Load() != wantCalls || !strings.Contains(verificationPrompt, `"line":11`) ||
 				!strings.Contains(verificationPrompt, "11 +bug()") {
 				t.Fatalf("verification did not use corrected line: calls=%d prompt=%q", calls.Load(), verificationPrompt)
 			}
 			if test.comments == 1 && job.Comments[0].Line != 11 {
 				t.Fatalf("published comment still uses hallucinated line: %#v", job.Comments[0])
+			}
+			checkpoint, err := loadReviewCheckpoint(job)
+			if err != nil || len(checkpoint.VerificationResults) != 1 {
+				t.Fatalf("verification checkpoint lost: checkpoint=%#v err=%v", checkpoint, err)
+			}
+			saved := checkpoint.VerificationResults[0]
+			if saved.Verdict != test.verdict || saved.Assessment == nil || saved.TraceID == "" {
+				t.Fatalf("structured verdict not persisted: %#v", saved)
+			}
+			if saved.Assessment.Reason != "检查源码后判断" || saved.Assessment.SupportingEvidence == "" {
+				t.Fatalf("assessment details lost: %#v", saved.Assessment)
+			}
+			if test.verdict == findingConfirmed && job.Comments[0].Confidence != saved.Assessment.Confidence {
+				t.Fatalf("verifier confidence not applied: %#v", job.Comments[0])
+			}
+			if test.verdict == findingPlausible {
+				if !strings.Contains(job.Error, "前提待核实") || len(saved.Assessment.Assumptions) == 0 {
+					t.Fatalf("conditional risk lost its pending premise: error=%q assessment=%#v", job.Error, saved.Assessment)
+				}
+				if !strings.Contains(reviewCheckMessage(job.ReviewScope, "finding_verification"), "有根据待核实=1") {
+					t.Fatalf("plausible verdict was collapsed into another category: %#v", job.ReviewScope)
+				}
 			}
 			if test.secretScan {
 				if job.Error != "" || reviewCheckStatus(job.ReviewScope, "secret_scan") != "found" ||
@@ -103,6 +133,17 @@ func TestReviewPipelineReanchorsAndRecordsThreeWayVerdict(t *testing.T) {
 				if !strings.Contains(job.Error, "缺少判定") ||
 					!strings.Contains(reviewCheckMessage(job.ReviewScope, "finding_verification"), "证据待定=1") {
 					t.Fatalf("inconclusive verdict was not surfaced: error=%q scope=%#v", job.Error, job.ReviewScope)
+				}
+			}
+			job.Comments = []model.ReviewComment{}
+			service.run(context.Background(), job, model.ReviewRequest{Diff: diff})
+			if calls.Load() != wantCalls || len(job.Comments) != test.comments {
+				t.Fatalf("resume reran verification or changed publication: calls=%d comments=%#v", calls.Load(), job.Comments)
+			}
+			if test.comments == 1 {
+				comment := job.Comments[0]
+				if comment.VerificationReason != saved.Assessment.Reason || comment.TraceID != saved.TraceID {
+					t.Fatalf("resume lost assessment metadata: %#v", comment)
 				}
 			}
 		})
@@ -145,7 +186,10 @@ func TestReviewPipelineUsesPinnedSourceForSemanticVerification(t *testing.T) {
 			for _, message := range request.Messages {
 				verificationPrompt += message.Content
 			}
-			reply = `{"verdict":"confirmed","reason":"源码定义可见"}`
+			reply = testFindingVerdictJSON(findingConfirmed, "源码定义可见")
+		}
+		if call > 2 {
+			reply = "[]"
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -175,7 +219,7 @@ func TestReviewPipelineUsesPinnedSourceForSemanticVerification(t *testing.T) {
 		"diff --git a/service.py b/service.py\n--- a/service.py\n+++ b/service.py\n" +
 		"@@ -0,0 +1,2 @@\n+def fetch():\n+    return 1\n"
 	service.run(context.Background(), job, model.ReviewRequest{Diff: diff})
-	if job.Status != "completed" || len(job.Comments) != 1 || calls.Load() != 2 {
+	if job.Status != "completed" || len(job.Comments) != 1 || calls.Load() != 3 {
 		t.Fatalf("status=%q comments=%d model calls=%d error=%q", job.Status, len(job.Comments), calls.Load(), job.Error)
 	}
 	if !strings.Contains(verificationPrompt, "related fetch at service.py:1") ||
@@ -187,11 +231,17 @@ func TestReviewPipelineUsesPinnedSourceForSemanticVerification(t *testing.T) {
 func TestReviewResumeContinuesAtUnfinishedFindingAndRestoresBudget(t *testing.T) {
 	var calls atomic.Int32
 	modelAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+		call := calls.Add(1)
+		reply := testFindingVerdictJSON(findingConfirmed, "复核确认")
+		if call > 1 {
+			reply = "[]"
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []any{map[string]any{
-				"message":       map[string]any{"role": "assistant", "content": `{"verdict":"confirmed","reason":"复核确认"}`},
+				"message": map[string]any{
+					"role": "assistant", "content": reply,
+				},
 				"finish_reason": "stop",
 			}},
 		})
@@ -250,8 +300,8 @@ func TestReviewResumeContinuesAtUnfinishedFindingAndRestoresBudget(t *testing.T)
 			if updated.Status != "completed" || len(updated.Comments) != 2 {
 				t.Fatalf("resume status=%q comments=%d error=%q", updated.Status, len(updated.Comments), updated.Error)
 			}
-			if calls.Load() != 1 {
-				t.Fatalf("model calls=%d, want only the unfinished finding to be rechecked", calls.Load())
+			if calls.Load() != 2 {
+				t.Fatalf("model calls=%d, want one unfinished finding and one memory extraction", calls.Load())
 			}
 			if updated.SpentMicros < 1700 || updated.ReservedMicros != 0 {
 				t.Fatalf("budget spent=%d reserved=%d; interrupted reservation was not restored", updated.SpentMicros, updated.ReservedMicros)

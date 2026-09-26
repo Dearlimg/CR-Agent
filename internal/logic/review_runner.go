@@ -315,7 +315,7 @@ func (s *Service) runCheckpointed(
 		if sourceExcerpt == "" && len(sourceFiles) > 0 {
 			findingContextError = "固定提交源码与审查 diff 行不一致，或对应文件未读取"
 		}
-		verdict, reason, verifyTraceID, verifyErr := verifyFindingIndependently(ctx, findingVerificationRequest{
+		verdict, verifyTraceID, verifyErr := verifyFindingIndependently(ctx, findingVerificationRequest{
 			Config: s.Config, Diff: artifacts.SanitizedDiff, Finding: finding,
 			SourceExcerpt: sourceExcerpt, SourceContextError: findingContextError,
 			SourceSnapshot: initialSourceSnapshot, Policy: s.Loop.Policy,
@@ -360,17 +360,21 @@ func (s *Service) runCheckpointed(
 			return
 		}
 		checkpoint.LastVerificationError = ""
-		switch verdict {
-		case findingRejected:
-			checkpoint.VerificationResults = append(checkpoint.VerificationResults, checkpointVerification{Finding: finding, Verdict: string(findingRejected)})
-		case findingInconclusive:
-			checkpoint.VerificationResults = append(checkpoint.VerificationResults, checkpointVerification{Finding: finding, Verdict: string(findingInconclusive)})
-		default:
+		finding.Confidence = verdict.Confidence
+		switch verdict.Verdict {
+		case findingConfirmed:
 			finding.VerificationStatus = "second_pass_review_passed"
-			finding.VerificationReason = reason
+			finding.VerificationReason = verdict.Reason
 			finding.VerificationTraceID = verifyTraceID
-			checkpoint.VerificationResults = append(checkpoint.VerificationResults, checkpointVerification{Finding: finding, Verdict: string(findingConfirmed)})
+		case findingPlausible, findingRejected, findingInconclusive:
+			// These verdicts stay distinct from confirmed comments in this review stage.
+		default:
+			setReviewFailure(job, errIncompleteReview, "第二轮复核返回未知结论")
+			return
 		}
+		checkpoint.VerificationResults = append(checkpoint.VerificationResults, checkpointVerification{
+			Finding: finding, Verdict: verdict.Verdict, Assessment: &verdict, TraceID: verifyTraceID,
+		})
 		checkpoint.VerificationCursor++
 		if err := saveCheckpoint(reviewStageVerification); err != nil {
 			setReviewFailure(job, err, "逐条复核结果持久化失败")
@@ -515,10 +519,20 @@ func (s *Service) finishCheckpointedReview(
 	confirmed := make([]ReviewFinding, 0, len(checkpoint.VerificationResults))
 	rejectedByVerifier := 0
 	inconclusive := 0
+	plausible := 0
 	for _, result := range checkpoint.VerificationResults {
 		switch result.Verdict {
 		case string(findingConfirmed):
-			confirmed = append(confirmed, result.Finding)
+			finding := result.Finding
+			if result.Assessment != nil {
+				finding.Confidence = result.Assessment.Confidence
+				finding.VerificationStatus = "second_pass_review_passed"
+				finding.VerificationReason = result.Assessment.Reason
+				finding.VerificationTraceID = result.TraceID
+			}
+			confirmed = append(confirmed, finding)
+		case findingPlausible:
+			plausible++
 		case string(findingRejected):
 			rejectedByVerifier++
 		case string(findingInconclusive):
@@ -528,15 +542,21 @@ func (s *Service) finishCheckpointedReview(
 	job.Comments = verifiedComments(confirmed, checkpoint.Artifacts, checkpoint.ModelTraceID)
 	verificationStatus := "passed"
 	verificationMessage := fmt.Sprintf(
-		"候选=%d；证据匹配=%d；第二轮复核确认=%d；第二轮复核排除=%d；证据待定=%d",
+		"候选=%d；证据匹配=%d；第二轮复核确认=%d；第二轮复核排除=%d；有根据待核实=%d；证据待定=%d",
 		len(checkpoint.Candidates)+checkpoint.RejectedEvidence,
-		len(checkpoint.Candidates), len(job.Comments), rejectedByVerifier, inconclusive,
+		len(checkpoint.Candidates),
+		len(job.Comments),
+		rejectedByVerifier,
+		plausible,
+		inconclusive,
 	)
+	hasUnresolvedFindings := checkpoint.RejectedEvidence > 0 || plausible > 0 || inconclusive > 0
+	verificationIncomplete := checkpoint.IncompleteReason != "" ||
+		checkpoint.LastVerificationError != "" || hasUnresolvedFindings
 	if len(checkpoint.Candidates)+checkpoint.RejectedEvidence == 0 && checkpoint.IncompleteReason == "" {
 		verificationStatus = "not_needed"
 		verificationMessage = "模型未报告候选问题，无需逐条复核"
-	} else if checkpoint.IncompleteReason != "" || checkpoint.LastVerificationError != "" ||
-		checkpoint.RejectedEvidence > 0 || inconclusive > 0 {
+	} else if verificationIncomplete {
 		verificationStatus = "incomplete"
 		verificationMessage += fmt.Sprintf("；证据不足=%d", checkpoint.RejectedEvidence)
 		if checkpoint.LastVerificationError != "" {
@@ -552,6 +572,9 @@ func (s *Service) finishCheckpointedReview(
 	}
 	if checkpoint.IncompleteReason == "" && inconclusive > 0 {
 		checkpoint.IncompleteReason = "部分候选问题缺少判定所需的代码上下文，审查未能完整核验。"
+	}
+	if checkpoint.IncompleteReason == "" && plausible > 0 {
+		checkpoint.IncompleteReason = "存在有代码依据的条件性风险，尚有明确前提待核实。"
 	}
 	if checkpoint.IncompleteReason != "" || checkpoint.LastVerificationError != "" {
 		checkpoint.FinalStatus = "completed_with_warnings"

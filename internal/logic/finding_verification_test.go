@@ -55,7 +55,7 @@ func TestFindingDiffExcerptIncludesNearbyImpact(t *testing.T) {
 }
 
 func TestFindingVerifierDistinguishesMissingContextFromRejection(t *testing.T) {
-	for _, verdict := range []string{findingConfirmed, findingRejected, findingInconclusive} {
+	for _, verdict := range []string{findingConfirmed, findingPlausible, findingRejected, findingInconclusive} {
 		t.Run(verdict, func(t *testing.T) {
 			var prompt string
 			var system, user string
@@ -81,7 +81,9 @@ func TestFindingVerifierDistinguishesMissingContextFromRejection(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"choices": []any{map[string]any{
-						"message":       map[string]any{"role": "assistant", "content": `{"verdict":"` + verdict + `","reason":"代码证据判定"}`},
+						"message": map[string]any{
+							"role": "assistant", "content": testFindingVerdictJSON(verdict, "代码证据判定"),
+						},
 						"finish_reason": "stop",
 					}},
 				})
@@ -89,14 +91,17 @@ func TestFindingVerifierDistinguishesMissingContextFromRejection(t *testing.T) {
 			defer server.Close()
 			diff := "diff --git a/a.py b/a.py\n+++ b/a.py\n@@ -0,0 +10 @@\n+return service.fetch()\n"
 			job := &model.ReviewJob{ID: "verify-test", Trace: []model.TraceEvent{}}
-			got, _, _, err := verifyFindingIndependently(context.Background(), findingVerificationRequest{
+			got, _, err := verifyFindingIndependently(context.Background(), findingVerificationRequest{
 				Config: Config{DeepSeekBaseURL: server.URL, DeepSeekAPIKey: "test-only"},
 				Diff:   diff, Finding: ReviewFinding{File: "a.py", Line: 10, Evidence: "return service.fetch()"},
 				SourceExcerpt: "file: service.py\n22 def fetch(): return None",
 				Recorder:      newTraceRecorder(job),
 			})
-			if err != nil || got != verdict {
-				t.Fatalf("verdict=%q err=%v, want %q", got, err, verdict)
+			if err != nil || got.Verdict != verdict {
+				t.Fatalf("verdict=%#v err=%v, want %q", got, err, verdict)
+			}
+			if got.SupportingEvidence == "" || got.Counterevidence == "" || got.Confidence == "" {
+				t.Fatalf("structured assessment lost: %#v", got)
 			}
 			if !strings.Contains(prompt, "service.py") || !strings.Contains(prompt, "10 +return service.fetch()") {
 				t.Fatalf("verification prompt lacks code context: %q", prompt)
@@ -120,7 +125,7 @@ func TestFindingVerifierRejectsOldBooleanVerdict(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	_, _, _, err := verifyFindingIndependently(context.Background(), findingVerificationRequest{
+	_, _, err := verifyFindingIndependently(context.Background(), findingVerificationRequest{
 		Config:   Config{DeepSeekBaseURL: server.URL, DeepSeekAPIKey: "test-only"},
 		Diff:     "diff --git a/a.go b/a.go\n+++ b/a.go\n@@ -0,0 +1 @@\n+bug()\n",
 		Finding:  ReviewFinding{File: "a.go", Line: 1, Evidence: "bug()"},
@@ -145,7 +150,9 @@ func TestFindingVerifierRepairsInvalidJSONThroughValidationTool(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		message := map[string]any{"role": "assistant", "content": "invalid verdict"}
+		message := map[string]any{
+			"role": "assistant", "content": testFindingVerdictJSON(findingConfirmed, "有明确触发路径") + "\n额外解释",
+		}
 		finishReason := "stop"
 		if calls == 2 {
 			if len(request.Tools) != 1 || request.Tools[0].Function.Name != parseFindingVerdictJSONTool {
@@ -155,8 +162,10 @@ func TestFindingVerifierRepairsInvalidJSONThroughValidationTool(t *testing.T) {
 			message["tool_calls"] = []any{map[string]any{
 				"id": "validate-verdict", "type": "function",
 				"function": map[string]any{
-					"name":      parseFindingVerdictJSONTool,
-					"arguments": `{"json":"{\"verdict\":\"confirmed\",\"reason\":\"有明确触发路径\"}"}`,
+					"name": parseFindingVerdictJSONTool,
+					"arguments": jsonString(map[string]string{
+						"json": testFindingVerdictJSON(findingConfirmed, "有明确触发路径"),
+					}),
 				},
 			}}
 			finishReason = "tool_calls"
@@ -171,14 +180,14 @@ func TestFindingVerifierRepairsInvalidJSONThroughValidationTool(t *testing.T) {
 	diff := "diff --git a/a.go b/a.go\n+++ b/a.go\n@@ -0,0 +1 @@\n+bug()\n"
 	job := &model.ReviewJob{ID: "verdict-json-repair", Trace: []model.TraceEvent{}}
 	recorder := newTraceRecorder(job)
-	got, reason, _, err := verifyFindingIndependently(withTraceRecorder(context.Background(), recorder), findingVerificationRequest{
+	got, _, err := verifyFindingIndependently(withTraceRecorder(context.Background(), recorder), findingVerificationRequest{
 		Config:   Config{DeepSeekBaseURL: server.URL, DeepSeekAPIKey: "test-only"},
 		Diff:     diff,
 		Finding:  ReviewFinding{File: "a.go", Line: 1, Evidence: "bug()"},
 		Recorder: recorder,
 	})
-	if err != nil || got != findingConfirmed || reason != "有明确触发路径" || calls != 3 {
-		t.Fatalf("verdict=%q reason=%q calls=%d err=%v", got, reason, calls, err)
+	if err != nil || got.Verdict != findingConfirmed || got.Reason != "有明确触发路径" || calls != 3 {
+		t.Fatalf("verdict=%#v calls=%d err=%v", got, calls, err)
 	}
 	recorder.Flush()
 	foundToolTrace := false
@@ -189,5 +198,96 @@ func TestFindingVerifierRepairsInvalidJSONThroughValidationTool(t *testing.T) {
 	}
 	if !foundToolTrace {
 		t.Fatalf("JSON validation tool input/output not traced: %#v", job.Trace)
+	}
+}
+
+func testFindingVerdictJSON(verdict, reason string) string {
+	assessment := findingVerdict{
+		Verdict: verdict, Reason: reason,
+		SupportingEvidence: "候选行的调用和返回值可见",
+		Counterevidence:    "已检查可见代码中的前置校验；不可见调用方尚未核实",
+		Assumptions:        []string{},
+		Confidence:         "medium",
+	}
+	switch verdict {
+	case findingConfirmed:
+		assessment.Confidence = "high"
+	case findingPlausible:
+		assessment.Assumptions = []string{"确认调用方是否允许该输入；读取调用方校验逻辑"}
+	case findingInconclusive:
+		assessment.Assumptions = []string{"缺少返回类型定义，读取定义后判断该操作是否可能失败"}
+		assessment.Confidence = "low"
+	case findingRejected:
+		assessment.Confidence = "low"
+	}
+	return jsonString(assessment)
+}
+
+func TestFindingVerdictRequiresStructuredAssessment(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "missing support", mutate: func(value map[string]any) { delete(value, "supporting_evidence") }},
+		{name: "missing counterevidence", mutate: func(value map[string]any) { delete(value, "counterevidence") }},
+		{name: "blank reason", mutate: func(value map[string]any) { value["reason"] = " " }},
+		{name: "missing confidence", mutate: func(value map[string]any) { delete(value, "confidence") }},
+		{name: "invalid confidence", mutate: func(value map[string]any) { value["confidence"] = "certain" }},
+		{name: "missing assumptions", mutate: func(value map[string]any) { delete(value, "assumptions") }},
+		{name: "null assumptions", mutate: func(value map[string]any) { value["assumptions"] = nil }},
+		{name: "blank premise", mutate: func(value map[string]any) { value["assumptions"] = []string{" "} }},
+		{name: "plausible without premise", mutate: func(value map[string]any) { value["assumptions"] = []string{} }},
+		{name: "plausible high confidence", mutate: func(value map[string]any) { value["confidence"] = "high" }},
+		{name: "confirmed with premise", mutate: func(value map[string]any) { value["verdict"] = findingConfirmed }},
+		{name: "unknown verdict", mutate: func(value map[string]any) { value["verdict"] = "maybe" }},
+		{name: "unknown field", mutate: func(value map[string]any) { value["is_real"] = true }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := map[string]any{}
+			if err := json.Unmarshal([]byte(testFindingVerdictJSON(findingPlausible, "条件性风险")), &value); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(value)
+			if _, err := findingVerdictJSONToolSpec().Validate(jsonString(value)); err == nil {
+				t.Fatalf("invalid structured verdict accepted: %#v", value)
+			}
+		})
+	}
+	for _, confidence := range []string{"medium", "low"} {
+		var verdict findingVerdict
+		if err := parseFindingVerdict(testFindingVerdictJSON(findingPlausible, "条件性风险"), &verdict); err != nil {
+			t.Fatal(err)
+		}
+		verdict.Confidence = confidence
+		normalized, err := findingVerdictJSONToolSpec().Validate(jsonString(verdict))
+		if err != nil || !strings.Contains(normalized, confidence) {
+			t.Fatalf("actionable %s-confidence risk rejected: %v", confidence, err)
+		}
+	}
+}
+
+func TestFindingVerdictDoesNotReusePreviousAssessment(t *testing.T) {
+	var verdict findingVerdict
+	if err := parseFindingVerdict(testFindingVerdictJSON(findingConfirmed, "已确认"), &verdict); err != nil {
+		t.Fatal(err)
+	}
+	if err := parseFindingVerdict(`{"verdict":"confirmed","reason":"缺少新协议字段"}`, &verdict); err == nil {
+		t.Fatal("incomplete response inherited fields from a previous assessment")
+	}
+}
+
+func TestFindingVerdictRedactsEveryAssessmentField(t *testing.T) {
+	text := "api_key=definitely-fake-value-123"
+	verdict := redactFindingVerdict(findingVerdict{
+		Verdict: findingPlausible, Reason: text, SupportingEvidence: text,
+		Counterevidence: text, Assumptions: []string{text}, Confidence: "low",
+	})
+	for _, value := range []string{
+		verdict.Reason, verdict.SupportingEvidence, verdict.Counterevidence, verdict.Assumptions[0],
+	} {
+		if strings.Contains(value, "definitely-fake-value-123") || !strings.Contains(value, "[REDACTED]") {
+			t.Fatalf("assessment field was not redacted: %q", value)
+		}
 	}
 }

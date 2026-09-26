@@ -20,6 +20,16 @@
 
 1. 在同文件的新增行中查找候选引用的完整连续代码块。原位置正确时保留；原位置错误且代码块唯一时修正 `line`；存在多个匹配或引用非新增行时仍拒绝。
 2. 第二轮 diff 片段扩大到前后 12 行。对于 GitHub PR，由宿主按 PR head SHA 读取最多 16 个变更文件，每文件最多 256 KiB、总计最多 1 MiB；请求不跟随重定向，源码在进入模型前脱敏，只发送有限的目标行与相关定义/引用片段。若固定提交源码与 diff 的引用行不一致，则不把该源码当作证据。
-3. 第二轮协议使用 `confirmed / rejected / inconclusive`。仅发布 `confirmed`；`inconclusive` 使审查保持 `completed_with_warnings / incomplete`，并单独计数；明确证伪或纯假设性主张计入 `rejected`。
+3. 第二轮协议使用 `confirmed / plausible / rejected / inconclusive`。`plausible` 表示代码支持具体致错机制、合理触发条件和影响，但仍有明确可核实前提；`inconclusive` 表示关键事实缺失，连触发是否可能都无法判断。明确证伪或没有具体代码依据的主张计入 `rejected`。
 
-当前 GitLab MR 和直接粘贴 diff 没有固定提交源码读取路径；这些审查仍可用 diff 复核，依赖仓库外上下文的候选会如实标记为待定。真实模型的结论仍需人工验证；本次验收使用确定性的样本比对、模拟模型/API 测试、`go test ./...` 与 `go vet ./...`。
+## 候选召回与结构化复核（2026-09-26）
+
+首轮提出所有能锚定新增行、有代码依据的致错机制、合理触发条件和具体影响的候选。查证与反证检查后仍有有限前提待确认时，保留条件性候选，在正文和触发条件中写明前提，在建议中写明核实方法。置信度按证据强度分为 high（关键事实已查证）、medium（机制明确、有限前提待确认）、low（具体风险线索和核实方法存在，但前提证据较弱）；它与影响严重度、发生频率分开，不能用 low 包装纯猜测。
+
+复核必填 `verdict`、`reason`、`supporting_evidence`、`counterevidence`、`assumptions`、`confidence`。`assumptions` 列出待核实前提和核实方式；confirmed 要求空数组，plausible/inconclusive 要求非空数组，plausible 只接受 medium/low。模型应独立评估置信度；格式修复只能保留原判断，不能补造证据。结构化校验可检查字段与状态约束，不能代替对证据真实性的语义判断。
+
+本次实现范围为候选生成与复核协议。完整复核对象和 trace ID 保存到检查点，恢复时沿用；新字段为可选附加字段，旧检查点仍可读取。最终评论入口继续只展示 confirmed，plausible 单独计为“有根据待核实”，并保持 `completed_with_warnings / incomplete`。待核实风险的评论展示策略属于后续改动，不能将新枚举默认映射为 confirmed。
+
+验证覆盖四种结论、结构化字段校验、脱敏、JSON 工具修复和检查点恢复。模拟测试证明协议与分流行为，不证明真实模型召回率提升；质量变化仍需同一批真实 PR 的重复评测。
+
+当前 GitLab MR 和直接粘贴 diff 没有固定提交源码读取路径；这些审查仍可用 diff 复核，依赖仓库外上下文的候选会如实标记为待定。真实模型的结论仍需人工验证。

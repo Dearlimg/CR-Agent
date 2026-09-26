@@ -20,7 +20,9 @@ const (
 	reviewContextToolMaxLine        = reviewSourceMaxFileBytes
 	reviewContextToolDescription    = "浏览固定 head 源码：传 directory；或传 query（可配 file）；或同时传 file、start_line、end_line。单独 file 无效；无 file 的 query 仅搜索已读取文件。"
 	reviewContextToolName           = "get_review_context"
-	reviewContextToolSystemGuidance = "若候选依赖未展示的定义、调用方、类型、循环控制或 API 用法，先调用 get_review_context 查证，再给出 verdict。只使用工具返回的固定提交源码；拿不到上下文时仍应返回 inconclusive，不可猜测。"
+	reviewContextToolSystemGuidance = "若候选依赖未展示的定义、调用方、类型、循环控制或 API 用法，先调用 get_review_context 查证，再给出 verdict。" +
+		"只使用工具返回的固定提交源码；拿不到上下文时写明缺口，有代码依据的条件性风险可为 plausible，" +
+		"连触发是否可能都无法判断时为 inconclusive，不可把未知前提当成事实。"
 )
 
 func reviewContextToolSchema() map[string]any {

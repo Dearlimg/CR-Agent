@@ -53,8 +53,10 @@ type checkpointSource struct {
 }
 
 type checkpointVerification struct {
-	Finding ReviewFinding `json:"finding"`
-	Verdict string        `json:"verdict"`
+	Finding    ReviewFinding   `json:"finding"`
+	Verdict    string          `json:"verdict"`
+	Assessment *findingVerdict `json:"assessment,omitempty"`
+	TraceID    string          `json:"trace_id,omitempty"`
 }
 
 func newReviewCheckpoint(request model.ReviewRequest) reviewCheckpoint {

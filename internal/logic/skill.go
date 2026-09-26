@@ -170,13 +170,23 @@ type ReviewPromptContext struct {
 
 const reviewOutputContract = `只输出 JSON 数组，无发现输出 []。每项字段：file、line、severity(high|medium|low)、confidence(high|medium|low)、body、evidence、trigger、impact、suggestion。evidence 逐字引用连续新增行；line 是其首行的新文件行号。body、trigger、impact、suggestion 用简体中文，各不超过 300 字；不要 Markdown。`
 
+const reviewConfidenceGuidance = `confidence 表示缺陷主张的证据强度，与 severity 的影响大小及触发频率分开：
+high：关键事实和触发路径已查证，能直接推导影响。
+medium：代码支持具体致错机制，触发合理，但仍有明确、有限的前提待确认。
+low：存在与变更直接相关的具体风险线索，能指出触发条件、可能影响和核实方法，但关键前提证据较弱；纯猜测不属于 low。`
+
 func BuildReviewSubagentPrompt(focus string, promptContext ReviewPromptContext, diff string) string {
 	prompt := BuildReviewPromptEnvelope(focus, promptContext, diff)
 	return prompt.System + "\n\n" + prompt.User
 }
 
 func BuildReviewPromptEnvelope(focus string, promptContext ReviewPromptContext, diff string) PromptEnvelope {
-	system := "审查代码变更；只报告有具体触发条件和影响、能锚定新增行的缺陷。证据不足先查证，仍不足则不报告；按根因去重。"
+	system := "审查代码变更，提出所有值得核实或修复的候选：能锚定新增行、有代码支持的致错机制、" +
+		"合理触发条件和具体影响。先查上下文和反证；尚有有限前提待确认时保留条件性候选并降低置信度。" +
+		"排除已被反证、没有具体代码依据或无法说明触发与影响的主张；按根因去重，不设评论数量目标。"
+	system += "\n\n" + reviewConfidenceGuidance
+	system += "\n中低置信度候选在 body、trigger 中明确条件和待核实前提，" +
+		"在 suggestion 中给出核实或修复方法；不得把前提写成事实。"
 	if focus = strings.TrimSpace(focus); focus != "" {
 		system += "\n审查重点：" + focus
 	}

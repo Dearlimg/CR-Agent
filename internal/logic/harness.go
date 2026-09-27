@@ -264,7 +264,7 @@ func (h *ReviewHarness) RunEnvelope(ctx context.Context, prompt PromptEnvelope) 
 		toolsExhausted := toolBudgetReached || stallBudgetReached
 		infos := []*schema.ToolInfo{}
 		var handlers map[string]ToolDefinition
-		if toolsExhausted && finalToolCorrections > 0 {
+		if stallBudgetReached || toolsExhausted && finalToolCorrections > 0 {
 			handlers = map[string]ToolDefinition{}
 		} else if toolsExhausted {
 			infos, handlers, err = h.modelJSONPool()
@@ -282,7 +282,9 @@ func (h *ReviewHarness) RunEnvelope(ctx context.Context, prompt PromptEnvelope) 
 			system += "\n" + extra
 		}
 		if toolsExhausted {
-			if finalToolCorrections > 0 {
+			if stallBudgetReached {
+				system += "\n连续工具调用未取得有效结果，工具已禁用。请直接输出最终 JSON。"
+			} else if finalToolCorrections > 0 {
 				system += "\n工具轮数已用完；上轮调用了已禁用的工具。现在没有可用工具，仅依据已有证据直接输出最终 JSON。"
 			} else {
 				system += "\n工具轮数已用完；不得调用上下文或行动工具。最终 JSON 输出仍可调用 JSON 校验工具，除此之外直接给出最终回答。"
@@ -368,7 +370,7 @@ func (h *ReviewHarness) RunEnvelope(ctx context.Context, prompt PromptEnvelope) 
 					unexpectedTool = true
 				}
 			}
-			if finalToolCorrections > 0 || unexpectedTool {
+			if stallBudgetReached || finalToolCorrections > 0 || unexpectedTool {
 				if finalToolCorrections > 0 {
 					return "", fmt.Errorf("工具轮数已用完，模型在纠正后仍请求工具调用")
 				}

@@ -309,8 +309,11 @@ func parseMemoryCandidates(raw string) []MemoryCandidate {
 
 func memoryCandidatesJSONToolSpec() modelJSONToolSpec {
 	return modelJSONToolSpec{
-		Name:        parseMemoryCandidatesJSONTool,
-		Description: "严格校验并规范化长期记忆候选 JSON 数组；只接受允许的类型、scope 和完整字段。",
+		Name: parseMemoryCandidatesJSONTool,
+		Description: fmt.Sprintf(
+			"严格校验记忆候选 JSON 数组；type 只能是 %s；scope 只能是 persistent、current_task；字段必须完整。",
+			memoryCandidateTypeValues(),
+		),
 		Validate: func(raw string) (string, error) {
 			normalized, _, err := normalizeMemoryCandidatesJSON(raw)
 			return normalized, err
@@ -329,7 +332,10 @@ func normalizeMemoryCandidatesJSON(raw string) (string, []MemoryCandidate, error
 	}
 	for index, candidate := range candidates {
 		if !validMemoryType(candidate.Type) {
-			return "", nil, fmt.Errorf("数组项 %d 的 type 无效", index)
+			return "", nil, fmt.Errorf(
+				"数组项 %d 的 type %q 无效；只允许 %s",
+				index, candidate.Type, memoryCandidateTypeValues(),
+			)
 		}
 		if candidate.Scope != "persistent" && candidate.Scope != "current_task" {
 			return "", nil, fmt.Errorf("数组项 %d 的 scope 无效", index)
@@ -350,6 +356,15 @@ func validMemoryType(memoryType MemoryType) bool {
 	default:
 		return false
 	}
+}
+
+func memoryCandidateTypeValues() string {
+	return strings.Join([]string{
+		string(MemoryTypeUser),
+		string(MemoryTypeFeedback),
+		string(MemoryTypeProject),
+		string(MemoryTypeReference),
+	}, "、")
 }
 
 func parseMemoryDocument(content string) (MemoryRecord, bool) {

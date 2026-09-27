@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -331,6 +332,41 @@ func TestHarnessStopsRepeatedFailedToolRoundsWithFinalAnswer(t *testing.T) {
 	answer, err := h.Run(context.Background(), "review")
 	if err != nil || answer != "[]" || rounds != 3 {
 		t.Fatalf("answer=%q rounds=%d err=%v", answer, rounds, err)
+	}
+}
+
+func TestHarnessStopsRepeatedFailedJSONValidation(t *testing.T) {
+	h := newReviewHarness()
+	h.tools = NewToolRegistry()
+	h.MaxStalledRounds = 2
+	registerModelJSONTool(h, memoryCandidatesJSONToolSpec(), nil)
+	rounds := 0
+	h.Model = func(_ context.Context, messages []*schema.Message, tools []*schema.ToolInfo) (*schema.Message, error) {
+		rounds++
+		if rounds <= 2 {
+			if len(tools) != 1 || tools[0].Name != parseMemoryCandidatesJSONTool {
+				t.Fatalf("round %d tools=%v", rounds, toolNames(tools))
+			}
+			return &schema.Message{Role: schema.Assistant, ToolCalls: []schema.ToolCall{
+				testToolCall(fmt.Sprintf("invalid-%d", rounds), parseMemoryCandidatesJSONTool,
+					`{"json":"[{\"name\":\"rule\",\"description\":\"rule\",\"type\":\"project_constraint\",\"body\":\"rule\",\"scope\":\"persistent\"}]"}`),
+			}}, nil
+		}
+		if len(tools) != 0 {
+			t.Fatalf("failed JSON tool remains available: %v", toolNames(tools))
+		}
+		if !strings.Contains(messages[len(messages)-1].Content, "只允许 user、feedback、project、reference") {
+			t.Fatalf("tool validation error lacks allowed values: %q", messages[len(messages)-1].Content)
+		}
+		return &schema.Message{Role: schema.Assistant, Content: `[{"name":"rule","description":"rule","type":"project","body":"rule","scope":"persistent"}]`}, nil
+	}
+	answer, err := h.Run(context.Background(), "extract memory")
+	if err != nil || rounds != 3 {
+		t.Fatalf("answer=%q rounds=%d err=%v", answer, rounds, err)
+	}
+	_, candidates, err := normalizeMemoryCandidatesJSON(answer)
+	if err != nil || len(candidates) != 1 || candidates[0].Type != MemoryTypeProject {
+		t.Fatalf("candidates=%#v err=%v", candidates, err)
 	}
 }
 

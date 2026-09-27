@@ -379,11 +379,13 @@ func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJo
 	}
 	comments := redact(jsonString(confirmed))
 	prompt := fmt.Sprintf(`你是 Code Review 记忆提取器。只从已确认的审查结论中提取未来审查仍会复用的信息。
-输出 JSON 数组；字段为 name,description,type,body,scope。scope 仅可为 persistent 或 current_task。输出前必须调用 parse_memory_candidates_json 工具校验数组；没有可保存内容时传入 []。
+输出 JSON 数组；字段为 name,description,type,body,scope。
+type 仅可为 %s（依次表示用户偏好、长期反馈、项目约束、外部参考）；scope 仅可为 persistent 或 current_task。
+输出前必须调用 parse_memory_candidates_json 工具校验数组；没有可保存内容时传入 []。
 仅输出稳定的用户偏好、长期反馈、项目约束或外部参考。不要保存临时任务、具体 diff、敏感数据、凭据或不确定推测。没有可保存内容时输出 []。
 
 审查来源：%s
-审查结论：%s`, req.Source, comments)
+审查结论：%s`, memoryCandidateTypeValues(), req.Source, comments)
 	recorder := traceRecorderFrom(ctx)
 	var span *TraceSpan
 	if recorder != nil {
@@ -397,6 +399,8 @@ func (s *Service) extractReviewMemories(ctx context.Context, job *model.ReviewJo
 	toolValidated := false
 	modelCtx = context.WithValue(modelCtx, harnessSetupKey{}, func(h *ReviewHarness) {
 		h.tools = NewToolRegistry()
+		h.MaxRounds = 5
+		h.MaxStalledRounds = 2
 		if recorder != nil {
 			h.Record = func(name, callID, status, input, output string, started, ended time.Time, duration int64) {
 				parentID := traceParentFrom(modelCtx)

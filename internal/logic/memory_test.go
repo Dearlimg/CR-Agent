@@ -84,6 +84,18 @@ func TestParseMemoryCandidatesIgnoresJSONFence(t *testing.T) {
 	}
 }
 
+func TestMemoryCandidatesJSONToolExplainsAllowedTypes(t *testing.T) {
+	spec := memoryCandidatesJSONToolSpec()
+	if !strings.Contains(spec.Description, "user、feedback、project、reference") {
+		t.Fatalf("tool description lacks allowed types: %q", spec.Description)
+	}
+	_, err := spec.Validate(`[{"name":"rule","description":"rule","type":"project_constraint","body":"rule","scope":"persistent"}]`)
+	if err == nil || !strings.Contains(err.Error(), `"project_constraint"`) ||
+		!strings.Contains(err.Error(), "user、feedback、project、reference") {
+		t.Fatalf("validation error=%v", err)
+	}
+}
+
 func TestMemoryStoreConsolidatesDuplicateRecords(t *testing.T) {
 	store := NewMemoryStore(Config{MemoryDir: t.TempDir(), MemoryMaxRecall: 5, MemoryMaxChars: 1000, MemoryConsolidateAt: 10})
 	if err := store.Ensure(); err != nil {

@@ -1,0 +1,83 @@
+﻿{
+    "id":  "ad6af409f7e44c62",
+    "task_id":  "task_c5a70d71",
+    "background_task_id":  "bg_dc41819f",
+    "status":  "queued",
+    "review_scope":  {
+                         "files_reviewed":  0,
+                         "added_lines":  0,
+                         "tests_ran":  false,
+                         "checks":  [
+
+                                    ]
+                     },
+    "source":  "https://github.com/redis/redis/pull/9323",
+    "comments":  [
+
+                 ],
+    "todos":  [
+                  {
+                      "content":  "扫描并解析代码变更",
+                      "status":  "pending",
+                      "order":  0
+                  },
+                  {
+                      "content":  "执行单 Agent 代码审查",
+                      "status":  "pending",
+                      "order":  1
+                  },
+                  {
+                      "content":  "核对代码证据、第二轮复核并去重审查发现",
+                      "status":  "pending",
+                      "order":  2
+                  }
+              ],
+    "trace":  [
+                  {
+                      "id":  "ccda331e1f34e860",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_create",
+                      "input":  "代码审查: https://github.com/redis/redis/pull/9323",
+                      "output":  "task_c5a70d71",
+                      "at":  "2026-09-26T15:10:39.802143603Z",
+                      "started_at":  "2026-09-26T15:10:39.794271558Z",
+                      "ended_at":  "2026-09-26T15:10:39.802143603Z",
+                      "duration_ms":  7,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "966c0541b5396079",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_claim",
+                      "input":  "task_c5a70d71",
+                      "output":  "owner=review-agent",
+                      "at":  "2026-09-26T15:10:39.815645901Z",
+                      "started_at":  "2026-09-26T15:10:39.802298681Z",
+                      "ended_at":  "2026-09-26T15:10:39.815645901Z",
+                      "duration_ms":  13,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "4abc1f473cd67b71",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "background_create",
+                      "input":  "代码审查",
+                      "output":  "bg_dc41819f",
+                      "at":  "2026-09-26T15:10:39.824520758Z",
+                      "started_at":  "2026-09-26T15:10:39.815715794Z",
+                      "ended_at":  "2026-09-26T15:10:39.824520758Z",
+                      "duration_ms":  8,
+                      "phase":  "background"
+                  }
+              ],
+    "team_events":  [
+
+                    ],
+    "budget_yuan":  10,
+    "spent_yuan":  0,
+    "started_at":  "2026-09-26T15:10:39.794149135Z",
+    "updated_at":  "2026-09-26T15:10:39.794149135Z"
+}

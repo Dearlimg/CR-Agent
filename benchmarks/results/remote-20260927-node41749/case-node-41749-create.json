@@ -1,0 +1,83 @@
+{
+    "id":  "46cedc58a0cdd0cb",
+    "task_id":  "task_79596ad5",
+    "background_task_id":  "bg_0f8732f6",
+    "status":  "queued",
+    "review_scope":  {
+                         "files_reviewed":  0,
+                         "added_lines":  0,
+                         "tests_ran":  false,
+                         "checks":  [
+
+                                    ]
+                     },
+    "source":  "https://github.com/nodejs/node/pull/41749",
+    "comments":  [
+
+                 ],
+    "todos":  [
+                  {
+                      "content":  "扫描并解析代码变更",
+                      "status":  "pending",
+                      "order":  0
+                  },
+                  {
+                      "content":  "执行单 Agent 代码审查",
+                      "status":  "pending",
+                      "order":  1
+                  },
+                  {
+                      "content":  "核对代码证据、第二轮复核并去重审查发现",
+                      "status":  "pending",
+                      "order":  2
+                  }
+              ],
+    "trace":  [
+                  {
+                      "id":  "8fb89423f23dc601",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_create",
+                      "input":  "代码审查: https://github.com/nodejs/node/pull/41749",
+                      "output":  "task_79596ad5",
+                      "at":  "2026-09-27T08:27:57.021192645Z",
+                      "started_at":  "2026-09-27T08:27:57.010872652Z",
+                      "ended_at":  "2026-09-27T08:27:57.021192645Z",
+                      "duration_ms":  10,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "200bbcc342be46ad",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_claim",
+                      "input":  "task_79596ad5",
+                      "output":  "owner=review-agent",
+                      "at":  "2026-09-27T08:27:57.033598659Z",
+                      "started_at":  "2026-09-27T08:27:57.021350922Z",
+                      "ended_at":  "2026-09-27T08:27:57.033598659Z",
+                      "duration_ms":  12,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "0ae0073bafbfb76a",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "background_create",
+                      "input":  "代码审查",
+                      "output":  "bg_0f8732f6",
+                      "at":  "2026-09-27T08:27:57.041808851Z",
+                      "started_at":  "2026-09-27T08:27:57.03367518Z",
+                      "ended_at":  "2026-09-27T08:27:57.041808851Z",
+                      "duration_ms":  8,
+                      "phase":  "background"
+                  }
+              ],
+    "team_events":  [
+
+                    ],
+    "budget_yuan":  10,
+    "spent_yuan":  0,
+    "started_at":  "2026-09-27T08:27:57.010751028Z",
+    "updated_at":  "2026-09-27T08:27:57.010751028Z"
+}

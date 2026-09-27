@@ -1,0 +1,83 @@
+﻿{
+    "id":  "bee3e0d1a5d5f97b",
+    "task_id":  "task_1c372967",
+    "background_task_id":  "bg_a30c51a7",
+    "status":  "queued",
+    "review_scope":  {
+                         "files_reviewed":  0,
+                         "added_lines":  0,
+                         "tests_ran":  false,
+                         "checks":  [
+
+                                    ]
+                     },
+    "source":  "https://github.com/tokio-rs/tokio/pull/6001",
+    "comments":  [
+
+                 ],
+    "todos":  [
+                  {
+                      "content":  "扫描并解析代码变更",
+                      "status":  "pending",
+                      "order":  0
+                  },
+                  {
+                      "content":  "执行单 Agent 代码审查",
+                      "status":  "pending",
+                      "order":  1
+                  },
+                  {
+                      "content":  "核对代码证据、第二轮复核并去重审查发现",
+                      "status":  "pending",
+                      "order":  2
+                  }
+              ],
+    "trace":  [
+                  {
+                      "id":  "cbfd093a32ceeb37",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_create",
+                      "input":  "代码审查: https://github.com/tokio-rs/tokio/pull/6001",
+                      "output":  "task_1c372967",
+                      "at":  "2026-09-26T15:10:40.062615693Z",
+                      "started_at":  "2026-09-26T15:10:40.005793447Z",
+                      "ended_at":  "2026-09-26T15:10:40.062615693Z",
+                      "duration_ms":  56,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "b5e65847a8a0b781",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_claim",
+                      "input":  "task_1c372967",
+                      "output":  "owner=review-agent",
+                      "at":  "2026-09-26T15:10:40.109691949Z",
+                      "started_at":  "2026-09-26T15:10:40.062751135Z",
+                      "ended_at":  "2026-09-26T15:10:40.109691949Z",
+                      "duration_ms":  46,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "111e1bf6ed2b7b1d",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "background_create",
+                      "input":  "代码审查",
+                      "output":  "bg_a30c51a7",
+                      "at":  "2026-09-26T15:10:40.131736554Z",
+                      "started_at":  "2026-09-26T15:10:40.109786266Z",
+                      "ended_at":  "2026-09-26T15:10:40.131736554Z",
+                      "duration_ms":  21,
+                      "phase":  "background"
+                  }
+              ],
+    "team_events":  [
+
+                    ],
+    "budget_yuan":  10,
+    "spent_yuan":  0,
+    "started_at":  "2026-09-26T15:10:40.005452061Z",
+    "updated_at":  "2026-09-26T15:10:40.005452061Z"
+}

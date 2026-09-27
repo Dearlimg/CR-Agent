@@ -1,0 +1,83 @@
+﻿{
+    "id":  "113466b9ded5fbc9",
+    "task_id":  "task_5e371b4b",
+    "background_task_id":  "bg_00025515",
+    "status":  "queued",
+    "review_scope":  {
+                         "files_reviewed":  0,
+                         "added_lines":  0,
+                         "tests_ran":  false,
+                         "checks":  [
+
+                                    ]
+                     },
+    "source":  "https://github.com/etcd-io/etcd/pull/2009",
+    "comments":  [
+
+                 ],
+    "todos":  [
+                  {
+                      "content":  "扫描并解析代码变更",
+                      "status":  "pending",
+                      "order":  0
+                  },
+                  {
+                      "content":  "执行单 Agent 代码审查",
+                      "status":  "pending",
+                      "order":  1
+                  },
+                  {
+                      "content":  "核对代码证据、第二轮复核并去重审查发现",
+                      "status":  "pending",
+                      "order":  2
+                  }
+              ],
+    "trace":  [
+                  {
+                      "id":  "dcede5b3db69e106",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_create",
+                      "input":  "代码审查: https://github.com/etcd-io/etcd/pull/2009",
+                      "output":  "task_5e371b4b",
+                      "at":  "2026-09-26T15:10:42.491090187Z",
+                      "started_at":  "2026-09-26T15:10:42.462654009Z",
+                      "ended_at":  "2026-09-26T15:10:42.491090187Z",
+                      "duration_ms":  28,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "f86db7092111263e",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_claim",
+                      "input":  "task_5e371b4b",
+                      "output":  "owner=review-agent",
+                      "at":  "2026-09-26T15:10:42.604539455Z",
+                      "started_at":  "2026-09-26T15:10:42.491275426Z",
+                      "ended_at":  "2026-09-26T15:10:42.604539455Z",
+                      "duration_ms":  113,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "cacb541a49e61bab",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "background_create",
+                      "input":  "代码审查",
+                      "output":  "bg_00025515",
+                      "at":  "2026-09-26T15:10:42.655050951Z",
+                      "started_at":  "2026-09-26T15:10:42.604623913Z",
+                      "ended_at":  "2026-09-26T15:10:42.655050951Z",
+                      "duration_ms":  50,
+                      "phase":  "background"
+                  }
+              ],
+    "team_events":  [
+
+                    ],
+    "budget_yuan":  10,
+    "spent_yuan":  0,
+    "started_at":  "2026-09-26T15:10:42.462424789Z",
+    "updated_at":  "2026-09-26T15:10:42.462424789Z"
+}

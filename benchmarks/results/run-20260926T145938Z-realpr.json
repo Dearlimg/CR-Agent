@@ -1,0 +1,1728 @@
+{
+  "version": "real-pr-v1",
+  "manifest": "benchmarks/real_pr_v1.json",
+  "route": "real-pr-remote",
+  "started_at": "2026-09-26T14:59:38.0744004Z",
+  "finished_at": "2026-09-26T15:00:33.0464974Z",
+  "model": "deepseek-flash (deployed service)",
+  "judge_model": "deepseek-flash",
+  "cases_requested": 13,
+  "cases_completed": 13,
+  "max_forwarded_calls": 0,
+  "max_output_tokens_per_call": 0,
+  "results": [
+    {
+      "id": "ts-57465",
+      "scenario": "feature",
+      "language": "TypeScript",
+      "pr_url": "https://github.com/microsoft/TypeScript/pull/57465",
+      "title": "Infer type predicates from function bodies using control flow analysis",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "src/compiler/checker.ts",
+          "line": 15486,
+          "body": "Change `===` check to `signature.resolvedReturnType.flags \u0026 TypeFlags.Boolean`. We generally want to avoid checking for specific _instances_ of types and instead check for specific _kinds_ of types.",
+          "cid": 1508184266,
+          "author": "ahejlsberg",
+          "dimension": "correctness",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "checker.ts:15486 已用 signature.resolvedReturnType.flags \u0026 TypeFlags.Boolean 替代 === 实例检查",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "9a8c0a11817d0a506656c0b99e99ff80807046f9"
+        },
+        {
+          "file": "src/compiler/checker.ts",
+          "line": 15486,
+          "body": "We should check the signature's `getParameterCount` instead of the raw declaration here, if possible - as is, this PR infers a predicate `f is never` for `const a = (...f: []) =\u003e typeof f === \"undefined\";` which, while true, is kinda funky and not useful. More tests with rest args are probably pertinent, too.",
+          "cid": 1523687507,
+          "author": "weswigham",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "checker.ts:15486 已加 getParameterCount(signature) \u003e 0 守卫，rest 参数推断问题已修",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "76a5abdbdc2f4fd723229a14e9860acb59b19ab5"
+        },
+        {
+          "file": "src/compiler/checker.ts",
+          "line": 37492,
+          "body": "Use `unescapeLeadingUnderscores(param.name)`.",
+          "cid": 1507922928,
+          "author": "ahejlsberg",
+          "dimension": "correctness",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "checker.ts:37492 已用 unescapeLeadingUnderscores(param.name.escapedText)",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "e2684f128975dac725f4af4f9e6f03d4e765cfbe"
+        },
+        {
+          "file": "src/compiler/checker.ts",
+          "line": 37458,
+          "body": "This isn't quite right. It really isn't meaningful to perform control flow analysis on an expression that wasn't assigned a flow node in the binder because without it you have no antecedent chain. The one notable exception may be the expression of an arrow function where you know there's no preceding code. I think the best approach here is to have the binder always initialize the `flowNode` property of `return` statements and then use that as the antecedent when analyzing expressions of (single) return statements. That would allow you to get rid of the single return statement exclusion logic you have below.",
+          "cid": 1508177902,
+          "author": "ahejlsberg",
+          "dimension": "design",
+          "kind": "design",
+          "status": "suggestion",
+          "audit_note": "设计建议部分被采纳（37498-37500 用 return 语句 flowNode 作 antecedent），单 return 排除逻辑仍在（37470-37474）；属设计权衡非缺陷",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "9a8c0a11817d0a506656c0b99e99ff80807046f9"
+        },
+        {
+          "file": "src/compiler/checker.ts",
+          "line": 37475,
+          "body": "Just change to `!(falseSubtype.flags \u0026 TypeFlags.Never)`.",
+          "cid": 1508186184,
+          "author": "ahejlsberg",
+          "dimension": "maintainability",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "语义等价落实：diff 163-164 行 falseSubtype.flags \u0026 TypeFlags.Never ? trueType : undefined 即要求的取反条件",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "9a8c0a11817d0a506656c0b99e99ff80807046f9"
+        },
+        {
+          "file": "src/compiler/checker.ts",
+          "line": 48584,
+          "body": "I've just realized this is basically identical to code both in `typePredicateToString` and `signatureToSignatureDeclarationHelper` - rather than adding a 3rd instance, can we expose a `typePredicateToTypePredicateNode` on the `NodeBuilder` and use it in all 3?",
+          "cid": 1525225501,
+          "author": "weswigham",
+          "dimension": "maintainability",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "checker.ts:48584 已改为 nodeBuilder.typePredicateToTypePredicateNode，三处重复代码合并",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "f002b288964d63655ce75d05c8de852dffa87cba"
+        }
+      ],
+      "findings": [],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "quiet",
+          "reason": "Reference is marked fixed_in_snapshot (the `===` check was already replaced with `flags \u0026 TypeFlags.Boolean`), and no system finding asserts this issue, so it is not re-flagged."
+        },
+        {
+          "index": 1,
+          "verdict": "quiet",
+          "reason": "Reference is marked fixed_in_snapshot (the code now uses getParameterCount(signature) \u003e 0), and no system finding asserts this issue, so it is not re-flagged."
+        },
+        {
+          "index": 2,
+          "verdict": "quiet",
+          "reason": "Reference is marked fixed_in_snapshot (unescapeLeadingUnderscores is already applied), and no system finding asserts this issue, so it is not re-flagged."
+        },
+        {
+          "index": 3,
+          "verdict": "missed",
+          "reason": "Reference is a design suggestion (use binder-initialized flowNode on return statements to drop single-return exclusion logic) that still remains relevant, but the system produced no findings at all to address it."
+        },
+        {
+          "index": 4,
+          "verdict": "quiet",
+          "reason": "Reference is marked fixed_in_snapshot (the check was already changed to `!(falseSubtype.flags \u0026 TypeFlags.Never)`), and no system finding asserts this issue, so it is not re-flagged."
+        },
+        {
+          "index": 5,
+          "verdict": "quiet",
+          "reason": "Reference is marked fixed_in_snapshot (typePredicateToTypePredicateNode was exposed on NodeBuilder), and no system finding asserts this issue, so it is not re-flagged."
+        }
+      ],
+      "finding_verdicts": [],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 0,
+      "coverage_score": 0,
+      "core_refs": 0,
+      "fixed_refs": 5,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 1,
+      "suggestion_covered": 0,
+      "suggestion_missed": 1,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 0,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 0,
+      "invalid_lines": 0,
+      "trace_events": 79,
+      "complete_trace_events": 79,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "node-41749",
+      "scenario": "feature",
+      "language": "JavaScript",
+      "pr_url": "https://github.com/nodejs/node/pull/41749",
+      "title": "lib: add fetch",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "lib/internal/bootstrap/pre_execution.js",
+          "line": 38,
+          "body": "It seems that this is not the right place to run this code if I want `fetch` to also be installed in workers. Note that I cannot do it in `internal/bootstrap/browser.js` because it's not allowed to call `getOptionValue` from this file.",
+          "cid": 795067183,
+          "author": "targos",
+          "dimension": "design",
+          "kind": "design",
+          "status": "suggestion",
+          "audit_note": "setupFetch 仍在主线程 bootstrap（pre_execution.js:38）；worker 支持属前瞻设计讨论，无法由 diff 判定为缺陷",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "67fe19cda342f1a0f8177f5adef60568380e5a56"
+        },
+        {
+          "file": "test/parallel/test-fetch.mjs",
+          "line": 32,
+          "body": "All these lines run very fast, but then on my computer the test hangs a few seconds before it exits. Could it have to do with keep-alive behavior? Can we override it?",
+          "cid": 795146943,
+          "author": "targos",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "valid",
+          "audit_note": "最终测试仍只调 server.close()（test-fetch.mjs:32），未处理 keep-alive 连接，测试进程退出前挂起数秒的问题在快照中仍成立",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "810b5b432e33a1ae9a64ad2c3bd1b6d28d7e948a"
+        },
+        {
+          "file": "doc/api/globals.md",
+          "line": 342,
+          "body": "Any reason this can't be experimental without requiring a CLI flag? Even a warning would probably be better DX?",
+          "cid": 795081434,
+          "author": "benjamingr",
+          "dimension": "design",
+          "kind": "design",
+          "status": "suggestion",
+          "audit_note": "最终文档 globals.md:342 仍要求 --experimental-fetch 标志；DX 偏好讨论未被采纳，非缺陷",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "810b5b432e33a1ae9a64ad2c3bd1b6d28d7e948a"
+        }
+      ],
+      "findings": [],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "missed",
+          "reason": "The system produced no findings at all, so this design suggestion about setupFetch() not installing fetch in workers was not addressed."
+        },
+        {
+          "index": 1,
+          "verdict": "missed",
+          "reason": "No finding was produced; the reported keep-alive/test-hang issue in test-fetch.mjs is unaddressed."
+        },
+        {
+          "index": 2,
+          "verdict": "missed",
+          "reason": "No finding was produced; the suggestion about making fetch experimental without requiring a CLI flag was not raised."
+        }
+      ],
+      "finding_verdicts": [],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 1,
+      "coverage_score": 0,
+      "core_refs": 1,
+      "fixed_refs": 0,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 2,
+      "suggestion_covered": 0,
+      "suggestion_missed": 2,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 0,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 0,
+      "invalid_lines": 0,
+      "trace_events": 42,
+      "complete_trace_events": 42,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "gin-2632",
+      "scenario": "feature",
+      "language": "Go",
+      "pr_url": "https://github.com/gin-gonic/gin/pull/2632",
+      "title": "feat(engine): add trustedproxies and remoteIP",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "context_test.go",
+          "line": 1433,
+          "body": "If we trust proxy `40.40.40.40`, but not trust `30.30.30.30` (proxy it is or not), then ClientIP should be `30.30.30.30` as `20.20.20.20` was set by somebody untrusted. Please do not forget that `X-Forwarded-For` is appended, so it should be processed right-to-left: right-most IP address is the IP address of the most recent proxy and the left-most IP address is the IP address of the originating client.",
+          "cid": 694639407,
+          "author": "agmt",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "valid",
+          "audit_note": "最终 validateHeader 仍返回最左 IP（context.go，注释明说 return the first IP in the list），'Only trust RemoteAddr' 测试仍断言 20.20.20.20；评论主张的从右向左处理未被采纳，不可信代理可伪造 ClientIP 的争议语义在快照中仍成立",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "9018d58385ec536c1829ada6b0b031a89d78befe"
+        },
+        {
+          "file": "context.go",
+          "line": 756,
+          "body": "Do you expect that HTTP proxy running on `c.RemoteIP()` resets `X-Forwarded-For`? Because if it appends, then we can't inherit trustiness of `c.RemoteIP()` to all other proxies.",
+          "cid": 694643333,
+          "author": "agmt",
+          "dimension": "design",
+          "kind": "design",
+          "status": "suggestion",
+          "audit_note": "信任模型设计问句；最终实现仍继承 RemoteIP 信任并取最左 IP，无具体可机判缺陷主张",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "e14a43cc4c168d62f9b8be6139a2664e70098197"
+        }
+      ],
+      "findings": [
+        {
+          "file": "context.go",
+          "line": 770,
+          "severity": "high",
+          "confidence": "high",
+          "body": "RemoteIP 在请求处理路径中把 prepareTrustedCIDRs() 的结果写回共享的 Engine 字段 c.engine.trustedCIDRs。Engine 被所有并发请求 goroutine 共享，写入的 slice header 指针/长度可能撕裂，并由其他 goroutine 同时读取（第 772-773 行）。这是典型的数据竞争，go test -race 并发调用 ClientIP 会报 DATA RACE。",
+          "evidence": "trustedCIDRs, _ := c.engine.prepareTrustedCIDRs()\n\tc.engine.trustedCIDRs = trustedCIDRs",
+          "trigger": "两个及以上并发请求同时进入 ClientIP/RemoteIP（任何多并发 HTTP 服务都会触发）；或一次请求写、另一次请求在 772-773 行读该字段。",
+          "impact": "数据竞争；理论上可读到指针与长度不匹配的 slice header，导致遍历 trustCIDRs 时越界 panic 或读到错误信任列表，使 ClientIP 判定异常。",
+          "suggestion": "不要在请求路径写 Engine 字段：trustedCIDRs 应在启动阶段（Run/New 或 sync.Once）一次性计算并缓存，RemoteIP 只读；若必须按需计算，改为调用局部变量或加 sync.Once/atomic。用 go test -race 并发调用 ClientIP 验证。",
+          "verification_status": "second_pass_review_passed",
+          "verification_reason": "RemoteIP() 在请求处理路径（每个 HTTP 请求 goroutine）中无条件执行 c.engine.trustedCIDRs = trustedCIDRs，写入共享 Engine 的字段，随后又在同一函数第 772-773 行从该字段读取。Engine 由 http.Server 在多个 goroutine 中并发处理请求，因此存在对同一内存位置的无同步并发写-写及读-写访问，按 Go 内存模型构成数据竞争，go test -race 并发调用 ClientIP/RemoteIP 会报告 DATA RACE。字段为 slice header（指针+长度+容量），并发写读可能读到撕裂值，导致遍历时越界 panic 或读到不一致的信任列表。启动路径 Run() 虽也在 gin.go:333 写入该字段，但无法消除请求路径每次写入所造成的竞争。",
+          "trace_id": "0ce59f6d062ffcbc"
+        },
+        {
+          "file": "gin.go",
+          "line": 162,
+          "severity": "medium",
+          "confidence": "high",
+          "body": "新增默认值 TrustedProxies: []string{\"0.0.0.0/0\"} 只覆盖 IPv4 全网段。经 net.ParseCIDR 得到 4 字节掩码网络，RemoteIP 中用 net.IPNet.Contains 判断 IPv6 远端地址时因长度(16)与网段长度(4)不符返回 false，trusted=false，ClientIP 会直接返回远端 IPv6 地址并完全跳过 X-Forwarded-For/X-Real-IP。",
+          "evidence": "TrustedProxies:         []string{\"0.0.0.0/0\"},",
+          "trigger": "使用默认配置，服务位于 IPv6 监听/代理之后，Request.RemoteAddr 为真实 IPv6 地址时调用 ClientIP()。",
+          "impact": "ClientIP 退化为代理的 IPv6 地址，基于 ClientIP 的限流、审计日志、ACL 会失效或误判。",
+          "suggestion": "默认值补充 IPv6 网段（如 ::/0），或明确文档要求 IPv6 场景显式配置；补充 RemoteAddr 为 IPv6 且断言采用转发头的测试用例。",
+          "verification_status": "second_pass_review_passed",
+          "verification_reason": "默认配置 TrustedProxies=[\"0.0.0.0/0\"] 经 prepareTrustedCIDRs→net.ParseCIDR 得到 IPv4 4 字节掩码网络；Context.RemoteIP 用 cidr.Contains(remoteIP) 判断，Go 的 IPNet.Contains 对 16 字节纯 IPv6 地址因长度与 4 字节网段不符返回 false，从而 trusted=false；ClientIP 中 `if trusted \u0026\u0026 ...` 短路，直接返回 remoteIP.String()，完全跳过 RemoteIPHeaders（X-Forwarded-For/X-Real-IP）。机制与触发路径在固定提交源码中全部可见且可推导，无待核实前提。",
+          "trace_id": "324b336fe0e5b748"
+        }
+      ],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "missed",
+          "reason": "The reference flags the ClientIP X-Forwarded-For algorithm/test at context_test.go:1433: XFF must be scanned right-to-left and the result should be the first untrusted hop (30.30.30.30), not 20.20.20.20. No system finding touches the right-to-left parsing logic or the test expectation; finding 0 is about a data race and finding 1 is about IPv6 CIDR matching, so the core issue is unaddressed."
+        },
+        {
+          "index": 1,
+          "verdict": "missed",
+          "reason": "The reference is a design question about whether a trusted RemoteIP's trust can be inherited by all XFF entries (proxies may append rather than reset XFF). Neither finding discusses the trust-inheritance semantics of RemoteIP; finding 0 merely notes a concurrency problem in the same function, which is a different root cause."
+        }
+      ],
+      "finding_verdicts": [
+        {
+          "index": 0,
+          "verdict": "valid_new_issue",
+          "reason": "RemoteIP/ClientIP writes prepareTrustedCIDRs() back into the shared Engine field c.engine.trustedCIDRs on the request path while other goroutines read it at lines 772-773. Since Engine is shared across all requests, this is a genuine data race that -race would flag; a real, actionable concurrency defect the human reviewers did not mention."
+        },
+        {
+          "index": 1,
+          "verdict": "valid_new_issue",
+          "reason": "net.ParseCIDR(\"0.0.0.0/0\") yields a 4-byte network, and IPNet.Contains returns false for a 16-byte IPv6 address, so the default TrustedProxies never trusts IPv6 remotes and XFF headers are silently ignored for them. This is a correct, non-obvious functional gap in the new default configuration and worth raising."
+        }
+      ],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 1,
+      "coverage_score": 0,
+      "core_refs": 1,
+      "fixed_refs": 0,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 1,
+      "suggestion_covered": 0,
+      "suggestion_missed": 1,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 2,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 2,
+      "invalid_lines": 0,
+      "trace_events": 46,
+      "complete_trace_events": 46,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "gin-2767",
+      "scenario": "bugfix",
+      "language": "Go",
+      "pr_url": "https://github.com/gin-gonic/gin/pull/2767",
+      "title": "fix #2762",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "tree.go",
+          "line": 413,
+          "body": "these names are a little too short and cryptic for my taste. mind making them longer? (i.e. `recordIndex`)",
+          "cid": 659322066,
+          "author": "rw-access",
+          "dimension": "readability",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "短变量已改名 skippedPath/latestNode/matchNum（tree.go:408-414）",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "4ebd8f56b6189eabfe698e22c63941e2d78b4045"
+        },
+        {
+          "file": "tree.go",
+          "line": 570,
+          "body": "// level 2 router not found and latestNode.wildChild is true",
+          "cid": 664093314,
+          "author": "rw-access",
+          "dimension": "maintainability",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "tree.go:570 注释按建议改为 'level 2 router not found and latestNode.wildChild is true'（并修正 ture 拼写）",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "ec091bf4d88a9e88aa1aaeedb6756dfa80009d11"
+        },
+        {
+          "file": "tree_test.go",
+          "line": 162,
+          "body": "can you add more routes with multiple params? I also want to confirm something like this: `/something/:paramname/thirdthing` and `/something/secondthing/test`. If someone does `GET /something/secondthing/thirdthing` that should have a 404, because `GET /something/secondthing` is explicitly created, it gets its own tree and won't ever fall back to `/something/:paramname`.",
+          "cid": 663143713,
+          "author": "rw-access",
+          "dimension": "testing",
+          "kind": "test",
+          "status": "fixed_in_snapshot",
+          "audit_note": "tree_test.go:167-168 已添加 /something/:paramname/thirdthing 与 /something/secondthing/test 路由",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "211a63445181f085e95200f28bae8476211ade26"
+        }
+      ],
+      "findings": [
+        {
+          "file": "tree.go",
+          "line": 456,
+          "severity": "high",
+          "confidence": "high",
+          "body": "静态子节点匹配到一半失败时，这里只把 n 回退到 latestNode，没有把已推进的 path 回退到第 434 行保存的 skippedPath，随后按被截断的剩余 path 提取通配符参数，参数丢失了已匹配的前缀。新增测试把这一错误结果写成了期望：{\"/all\",false,\"/:cc\",cc=ll}、{\"/a/cc\",false,\"/:cc/cc\",cc=空串}，即 /all 得到 ll、/a/cc 得到空串，而非 all、a。",
+          "evidence": "// level 2 router not found,the current node needs to be equal to latestNode\n\t\t\t\tif matchNum \u003c 1 {\n\t\t\t\t\tn = latestNode\n\t\t\t\t}",
+          "trigger": "路由中同时存在共享首字符的静态路由与参数路由时（如 tree_test.go 新增的 /aa/*xx、/ab/*xx 与 /:cc），请求 /all 或 /a/cc：实际路由到 /:cc、/:cc/cc，但参数为 ll、空串。",
+          "impact": "handler 拿到的路径参数被截断或为空，基于参数的鉴权、限流、审计和业务分支会取到错误值，可能误判甚至越权。",
+          "suggestion": "回退时应同时恢复被消费的 path 与已写入的参数长度（可参考后续 upstream 的 skippedNodes 栈加 paramsCount 方案），保证参数是完整片段；并把 tree_test.go 期望改为 cc=all、cc=a 后运行 go test 验证。",
+          "verification_status": "second_pass_review_passed",
+          "verification_reason": "固定提交源码 tree.go:402-616 的 getValue 中，静态子节点匹配失败时（行 456-459）仅执行 `n = latestNode`，而 `path` 在第 426 行 `path = path[len(prefix):]` 已被消费、在第 504 行还会被再次裁剪，且第 434 行保存的 `skippedPath` 只保存了完整剩余路径字符串，没有保存/恢复路径索引，也没有像 upstream 那样用 paramsCount 回滚已写入的参数。因此回退到 latestNode 后，行 471 取通配子节点、行 474-499 用被截断的 `path` 提取参数，得到的是后缀片段而非完整片段。源码中行 604-608 虽有 `path = skippedPath` 的恢复逻辑，但该分支只在未找到 handler 且 `strings.HasSuffix(skippedPath, path)` 成立时才执行；在 `/all`、`/a/cc` 这类命中参数节点的场景中，行 526-528 已在参数写入后直接 `return`（或行 504-518 深入下一层），根本走不到 604，故该恢复无法纠正参数。",
+          "trace_id": "3a3397032cc44ff5"
+        }
+      ],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "quiet",
+          "reason": "Suggestion about cryptic variable names (matchNum/skippedPath) is already addressed in the snapshot; no system finding re-asserts a naming defect."
+        },
+        {
+          "index": 1,
+          "verdict": "quiet",
+          "reason": "The explanatory comment at line 570 is present in the snapshot as requested; no finding re-flags it."
+        },
+        {
+          "index": 2,
+          "verdict": "quiet",
+          "reason": "The requested multi-param test routes (/something/:paramname/thirdthing, /something/secondthing/test, /:cc/... chains) are already added in tree_test.go; the sole finding concerns path rollback, not missing test coverage."
+        }
+      ],
+      "finding_verdicts": [
+        {
+          "index": 0,
+          "verdict": "valid_new_issue",
+          "reason": "The finding targets the newly added rollback code (lines 456-459), where only n is restored to latestNode while the advanced path is not reverted to the saved skippedPath, plausibly causing wildcard params to capture truncated path segments. This is a concrete, code-anchored technical concern on added lines that the human reviewers did not raise."
+        }
+      ],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 0,
+      "coverage_score": 0,
+      "core_refs": 0,
+      "fixed_refs": 3,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 0,
+      "suggestion_covered": 0,
+      "suggestion_missed": 0,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 1,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 1,
+      "invalid_lines": 0,
+      "trace_events": 62,
+      "complete_trace_events": 62,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "pandas-34473",
+      "scenario": "bugfix",
+      "language": "C/Python",
+      "pr_url": "https://github.com/pandas-dev/pandas/pull/34473",
+      "title": "fix to_json for numbers larger than sys.maxsize",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "pandas/_libs/src/ujson/lib/ultrajsonenc.c",
+          "line": 1119,
+          "body": "This goes back to L1636. CPython manages a global error and we never explicitly clear it on that line. You could call `PyErr_Clear()` but it actually would be better if you used `PyLong_AsLongLongAndOverflow` and checked for a non-zero overflow.",
+          "cid": 441965192,
+          "author": "WillAyd",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "objToJSON.c:1632-1640 已改用 PyLong_AsLongLongAndOverflow + overflow 检查，全局错误状态依赖移除",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "c9574b8cab8a18f28e2c8c530319db57810720c3"
+        },
+        {
+          "file": "pandas/_libs/src/ujson/python/objToJSON.c",
+          "line": 2136,
+          "body": "Make sure you Py_DECREF these objects when they are no longer needed or else this will leak memory.",
+          "cid": 436401921,
+          "author": "WillAyd",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "objToJSON.c:2141 已加 Py_DECREF(repr)",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "29439955c6cb3995bd9348401e7449844b99d364"
+        },
+        {
+          "file": "pandas/_libs/src/ujson/python/objToJSON.c",
+          "line": 2135,
+          "body": "If this object gets released would also free bytes, so need to memcpy first. Also just use Py_DECREF for these as simple enough to see lifecycle.",
+          "cid": 437870883,
+          "author": "WillAyd",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "objToJSON.c:2137-2138 先 PyObject_Malloc + memcpy，再于 2141 行 Py_DECREF(repr)",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "92bc6ef8aa383087cb039e097b669e5a9611a61b"
+        },
+        {
+          "file": "pandas/_libs/src/ujson/python/objToJSON.c",
+          "line": 2133,
+          "body": "You will want PyUnicode_AsUTF8AndSize here. You can pass outLen as the second argument.",
+          "cid": 436401611,
+          "author": "WillAyd",
+          "dimension": "correctness",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "objToJSON.c:2136 已用 PyUnicode_AsUTF8AndSize(repr, (Py_ssize_t *)_outLen)",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "29439955c6cb3995bd9348401e7449844b99d364"
+        },
+        {
+          "file": "pandas/_libs/src/ujson/python/objToJSON.c",
+          "line": 1639,
+          "body": "Bytes is assigned to cStr but you won't free it in this branch. We need an extra branch that checks for the JT_BIGNUM type and frees cStr in that case.",
+          "cid": 442585616,
+          "author": "WillAyd",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "未新增 JT_BIGNUM 分支而改设计：bytes 走 GET_TC(tc)-\u003ecStr（2139 行），由 endTypeContext 通用 PyObject_Free 释放（与 PyObject_Malloc 配对），泄漏已消除",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "259018d6b1bb033236258246ad18cf9fad7aa7df"
+        },
+        {
+          "file": "pandas/_libs/src/ujson/python/objToJSON.c",
+          "line": 1632,
+          "body": "No need to prepend an underscore here; may be confusing to authors who expect that to mean something. (`int overflow = 0;`)",
+          "cid": 442356287,
+          "author": "WillAyd",
+          "dimension": "readability",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "objToJSON.c:1632 已去下划线：int overflow = 0",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "56d5bacf59d4006870813f0bedc22b81b2459004"
+        }
+      ],
+      "findings": [
+        {
+          "file": "pandas/_libs/src/ujson/python/objToJSON.c",
+          "line": 2135,
+          "severity": "high",
+          "confidence": "high",
+          "body": "新增的 Object_getBigNumStringValue 未检查 PyObject_Str 与 PyUnicode_AsUTF8AndSize 的返回值。若 repr 为 NULL（对象字符串化失败，例如 MemoryError，或 CPython 3.11+ int_max_str_digits 限制触发的 ValueError），PyUnicode_AsUTF8AndSize 会以 NULL 参数被调用，随后 memcpy(bytes, str, ...) 直接解引用空指针，导致解释器崩溃而非抛出可捕获异常；同时 PyObject_Malloc 返回值也未校验，且 *_outLen 可能未被写入。",
+          "evidence": "PyObject* repr = PyObject_Str(obj);\n    const char *str = PyUnicode_AsUTF8AndSize(repr, (Py_ssize_t *) _outLen);\n    char* bytes = PyObject_Malloc(*_outLen + 1);\n    memcpy(bytes, str, *_outLen + 1);",
+          "trigger": "对超过 sys.maxsize 的 Python 整数编码（走 JT_BIGNUM 路径）时，PyObject_Str 或 PyUnicode_AsUTF8AndSize 失败返回 NULL。待核实前提：该环境下整数的 str 转换确实可能失败（如极大位数受 int_max_str_digits 限制或内存不足）。",
+          "impact": "C 层空指针解引用造成进程崩溃（段错误），无法通过 Python 层异常捕获，属于进程级 DoS 风险。",
+          "suggestion": "在取出 repr 后先判断 repr == NULL，失败则直接返回 NULL 交由上层报错；再判断 str == NULL，失败时 Py_DECREF(repr) 后返回 NULL；同时对 PyObject_Malloc 返回 NULL 做处理。可写一个把 str 转换强制失败的用例（或构造超长整数）验证不再崩溃。",
+          "verification_status": "second_pass_review_passed",
+          "verification_reason": "新增函数 Object_getBigNumStringValue（objToJSON.c:2133-2144）对 PyObject_Str(obj) 与 PyUnicode_AsUTF8AndSize 的返回值均未做 NULL 检查，随后直接用 memcpy 解引用。触发路径可查证：Object_beginTypeContext 在 PyLong_Check 且 PyLong_AsLongLongAndOverflow 溢出时设置 tc-\u003etype = JT_BIGNUM（objToJSON.c:1637-1639），而 ultrajsonenc.c:1111-1112 的 JT_BIGNUM 分支调用 enc-\u003egetBigNumStringValue(obj,\u0026tc,\u0026szlen)，即该函数。按 CPython API 契约，PyObject_Str 在转换失败时返回 NULL 并置异常；对超过 sys.set_int_max_str_digits（3.11+ 默认 4300 位）限制的整数做 int→str 转换会抛 ValueError，故对一个溢出 long long 且位数超限的大整数（如 10**5000）编码 JSON 时 repr==NULL。此时 PyUnicode_AsUTF8AndSize(NULL, ...) 内部先执行 PyUnicode_Check(NULL)→Py_TYPE(NULL)，解引用空指针直接崩溃；即使不崩，memcpy(bytes, NULL, ...) 也会解引用空指针。崩溃发生在函数返回前，ultrajsonenc.c:1115 的 enc-\u003eerrorMsg 检查无法到达，异常也无法被 Python 层捕获，构成进程级崩溃。PyObject_Malloc 返回值同样未校验，属同一缺陷的次要分支。",
+          "trace_id": "c3d69b1adbdba4c6"
+        },
+        {
+          "file": "pandas/tests/io/json/test_ujson.py",
+          "line": 566,
+          "severity": "low",
+          "confidence": "high",
+          "body": "参数化提供了 sys.maxsize + 1 与 -(sys.maxsize + 2) 两个大整数，但函数体第一行 bigNum = sys.maxsize + 1 覆盖了入参，负值用例永远不会执行，参数化只是重复跑同一正值用例。",
+          "evidence": "bigNum = sys.maxsize + 1",
+          "trigger": "运行 test_dumps_ints_larger_than_maxsize 时固定使用正值，负值参数被丢弃。",
+          "impact": "负的大整数编码路径（PyLong_AsLongLongAndOverflow 返回负溢出值、输出含负号）无测试覆盖，后续回归可能漏检。",
+          "suggestion": "删除该赋值行，直接使用参数 bigNum；并确认两种参数下 ujson.encode(bigNum) 的输出与 str(bigNum) 一致。",
+          "verification_status": "second_pass_review_passed",
+          "verification_reason": "新增的参数化用例在函数体第一行以 `bigNum = sys.maxsize + 1` 无条件覆盖入参，导致双向参数化（正、负）中的负值 `-(sys.maxsize + 2)` 分支永远不会被使用，两次执行等价于同一正值用例。该覆盖在 diff 新增行中直接可见，无需外部定义即可推导，属实。",
+          "trace_id": "d2e16be0a8390788"
+        },
+        {
+          "file": "doc/source/whatsnew/v1.1.0.rst",
+          "line": 1023,
+          "severity": "low",
+          "confidence": "high",
+          "body": "新增条目中 :issue: 与反引号之间存在多余空格，Sphinx 不会把它解析为 issue 引用角色，会按普通文本渲染而丢失链接；同时这里写的 34395 与测试注释中的 GH34473/GH34395 不一致，issue 编号存在笔误可能。",
+          "evidence": "- Bug in :meth:`ujson.encode` was raising an `OverflowError` with numbers larger than sys.maxsize (:issue: `34395`)",
+          "trigger": "构建文档渲染 whatsnew 页面时。待核实前提：该 issue 编号应为与测试一致的编号。",
+          "impact": "发布说明中的 issue 链接失效或指向错误 issue，影响用户溯源。",
+          "suggestion": "去掉 :issue: 后的空格写成 (:issue:`NNNNN`)，并核对与测试中引用的 GH 编号一致。",
+          "verification_status": "second_pass_review_passed",
+          "verification_reason": "新增的 whatsnew 条目写成 (:issue: `34395`)，内联角色标记 :issue: 与反引号之间存在空格。reStructuredText/docutils 的内联角色语法要求 :role:`text` 中角色名后紧跟反引号，不允许空白；因此该模式不会被识别为 :issue: 角色，而会被渲染为字面文本 :issue: 加一个默认角色文本，pandas 通过 extlinks 定义的 GitHub issue 链接不会生成，链接丢失。同一行前面的 :meth:`ujson.encode` 写法正确、无空格，说明这里确实是格式错误而非 diff 呈现造成。触发路径明确（Sphinx 构建该 whatsnew 页面），影响限定为发布说明中的链接失效，属文档缺陷。候选附带提出的 issue 编号笔误（34395 与测试注释 GH34473/GH34395 不一致）在本轮证据中无法核实，但不影响“链接丢失”这一核心结论。",
+          "trace_id": "b255c51406aed938"
+        }
+      ],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "quiet",
+          "reason": "The snapshot already uses PyLong_AsLongLongAndOverflow with an overflow flag (line 1633), i.e. the requested change is present. No system finding claims this issue still applies."
+        },
+        {
+          "index": 1,
+          "verdict": "quiet",
+          "reason": "The snapshot already contains Py_DECREF(repr) in Object_getBigNumStringValue. No system finding asserts a missing DECREF / memory leak there."
+        },
+        {
+          "index": 2,
+          "verdict": "quiet",
+          "reason": "The snapshot already does memcpy before any release and uses Py_DECREF, so the flagged leak-of-bytes issue is fixed. Finding 0 talks about the unrelated NULL-pointer hazard, not about freeing a released object, so it does not re-assert this issue."
+        },
+        {
+          "index": 3,
+          "verdict": "quiet",
+          "reason": "PyUnicode_AsUTF8AndSize is already used with _outLen as second argument, i.e. the suggestion is applied. No finding re-raises it as pending."
+        },
+        {
+          "index": 4,
+          "verdict": "quiet",
+          "reason": "The requested JT_BIGNUM cleanup branch is already handled in the snapshot per the audit, and no system finding claims cStr is unfreed for JT_BIGNUM."
+        },
+        {
+          "index": 5,
+          "verdict": "quiet",
+          "reason": "The snapshot already declares `int overflow = 0;` without an underscore prefix, so the stylistic suggestion is applied and no finding re-raises it."
+        }
+      ],
+      "finding_verdicts": [
+        {
+          "index": 0,
+          "verdict": "valid_new_issue",
+          "reason": "Object_getBigNumStringValue indeed ignores the return values of PyObject_Str, PyUnicode_AsUTF8AndSize and PyObject_Malloc and passes possibly-NULL pointers to memcpy; no human comment covered this error-handling gap, and it is a genuine (if rare) robustness defect worth flagging."
+        },
+        {
+          "index": 1,
+          "verdict": "valid_new_issue",
+          "reason": "The diff shows `@pytest.mark.parametrize(\"bigNum\", ...)` immediately followed by `bigNum = sys.maxsize + 1` inside the test body, which shadows the parameter and makes the negative case dead; a real, actionable test bug not raised by the human reviewers."
+        },
+        {
+          "index": 2,
+          "verdict": "valid_new_issue",
+          "reason": "The whatsnew line really reads ':issue: `34395`' with a stray space, which prevents Sphinx from rendering the issue role as a link; the extra-space claim is verifiable from the diff (the additional remark about a GH34473 mismatch is not supported by the shown excerpt but does not invalidate the core point)."
+        }
+      ],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 0,
+      "coverage_score": 0,
+      "core_refs": 0,
+      "fixed_refs": 6,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 0,
+      "suggestion_covered": 0,
+      "suggestion_missed": 0,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 3,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 3,
+      "invalid_lines": 0,
+      "trace_events": 107,
+      "complete_trace_events": 107,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "tokio-4652",
+      "scenario": "refactor",
+      "language": "Rust",
+      "pr_url": "https://github.com/tokio-rs/tokio/pull/4652",
+      "title": "Rewrite tokio-util::sync::CancellationToken",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "tokio-util/src/sync/cancellation_token/tree_node.rs",
+          "line": 185,
+          "body": "The potential parent might not match and be `Some` here. We shouldn't keep the previous parent locked in that case.",
+          "cid": 867329811,
+          "author": "Darksonn",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "tree_node.rs:178-181 wrong parent 时先 drop(locked_parent) 再调用，185 行 ptr_eq 匹配后才以 Some(locked_parent) 调用 func",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "24abfc9806d24d671b5b913066aa423200ca5f0e"
+        },
+        {
+          "file": "tokio-util/src/sync/cancellation_token/tree_node.rs",
+          "line": 348,
+          "body": "You should wake the wakers after releasing the lock. Otherwise the future might try to lock the mutex while we're still holding it, which is a waste of resources.",
+          "cid": 867331241,
+          "author": "Darksonn",
+          "dimension": "performance",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "tree_node.rs:347 先 drop(locked_grandchild)，348 行才 notify_waiters",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "24abfc9806d24d671b5b913066aa423200ca5f0e"
+        },
+        {
+          "file": "tokio-util/src/sync/cancellation_token/tree_node.rs",
+          "line": 306,
+          "body": "If the node is already cancelled, you can just return immediately.",
+          "cid": 867331984,
+          "author": "Darksonn",
+          "dimension": "performance",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "tree_node.rs:306-308 已加 is_cancelled 早退 return",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "24abfc9806d24d671b5b913066aa423200ca5f0e"
+        },
+        {
+          "file": "tokio-util/src/sync/cancellation_token/tree_node.rs",
+          "line": 322,
+          "body": "Here you can call `continue` if `locked_child.is_cancelled`. Its children are already cancelled in that case.",
+          "cid": 867349454,
+          "author": "Darksonn",
+          "dimension": "performance",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "tree_node.rs:321-324 已加 locked_child.is_cancelled 时 continue",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "e5cee358d1df546d8e06b9b353e6c732bee43f92"
+        },
+        {
+          "file": "tokio-util/src/sync/cancellation_token/tree_node.rs",
+          "line": 343,
+          "body": "Here, we _could_ avoid adopting the grandchildren that have no children. It would be more efficient.",
+          "cid": 867332429,
+          "author": "Darksonn",
+          "dimension": "performance",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "tree_node.rs:341-349 只收养有 children 的 grandchild，其余直接 cancel 并 notify",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "24abfc9806d24d671b5b913066aa423200ca5f0e"
+        },
+        {
+          "file": "tokio-util/src/sync/cancellation_token/tree_node.rs",
+          "line": 1,
+          "body": "it would be nice if there was some top-level documentation explaining how this structure *works*, as well as the invariants that it upholds. the implementation has a bunch of inline comments, but there isn't a summary of the general design anywhere that i can find...",
+          "cid": 870763595,
+          "author": "hawkw",
+          "dimension": "maintainability",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "tree_node.rs:1-9 已加模块级设计文档",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "a2dc37f4daf352da1341e7a6b80f1007d50b13c3"
+        }
+      ],
+      "findings": [],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "quiet",
+          "reason": "The snapshot already drops the potentially-stale parent lock (drop(locked_parent) before looping/reassigning), so the flagged issue is fixed and no system finding re-asserts it (system_findings is empty)."
+        },
+        {
+          "index": 1,
+          "verdict": "quiet",
+          "reason": "The snapshot already drops the grandchild lock before calling waker.notify_waiters(), so the issue is fixed; no finding re-flags it."
+        },
+        {
+          "index": 2,
+          "verdict": "quiet",
+          "reason": "The snapshot already returns early when locked_node.is_cancelled; the suggestion is implemented and no finding re-flags it."
+        },
+        {
+          "index": 3,
+          "verdict": "quiet",
+          "reason": "The snapshot already does `continue` when locked_child.is_cancelled; the suggestion is implemented and no finding re-flags it."
+        },
+        {
+          "index": 4,
+          "verdict": "quiet",
+          "reason": "The snapshot already cancels grandchild nodes immediately when they have no children; the suggestion is implemented and no finding re-flags it."
+        },
+        {
+          "index": 5,
+          "verdict": "quiet",
+          "reason": "Top-level module documentation describing the design and invariants is present in the snapshot; no finding re-flags it."
+        }
+      ],
+      "finding_verdicts": [],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 0,
+      "coverage_score": 0,
+      "core_refs": 0,
+      "fixed_refs": 6,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 0,
+      "suggestion_covered": 0,
+      "suggestion_missed": 0,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 0,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 0,
+      "invalid_lines": 0,
+      "trace_events": 37,
+      "complete_trace_events": 37,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "redis-9323",
+      "scenario": "bugfix",
+      "language": "C",
+      "pr_url": "https://github.com/redis/redis/pull/9323",
+      "title": "Replica keep serving data during repl-diskless-load=swapdb for better availability",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "src/server.c",
+          "line": 5437,
+          "body": "i think it may be a cleaner approach to turn on both `server.loading` and `server.async_loading` in our scenario. this way, all the existing code that checks the `loading` flag will not need a change, and we'll only need to add a few exceptions like `server.loading \u0026\u0026 !server.async_loading`.",
+          "cid": 684999246,
+          "author": "oranagra",
+          "dimension": "design",
+          "kind": "design",
+          "status": "fixed_in_snapshot",
+          "audit_note": "startLoading 同时置 loading 与 async_loading（rdb.c:2499-2502），server.c:5437 以 loading \u0026\u0026 !async_loading 做例外——正是建议的模式",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "57192eb8cf56934a487c16f43fe39785d648c5ef"
+        },
+        {
+          "file": "src/rdb.c",
+          "line": 2502,
+          "body": "Here's a list of scenarios: 1. a replica gets disconnected and gets a full-sync when it reconnects. 2. a replica was connected to one master and got redirected to a new master (of the same replication chain) and got a full sync for some reason. 3. redis was restarted from rdb file (after a graceful shutdown), and has replicaof config, attempted a partial sync with the replid it got from the rdb file, but gets a full sync. 4. the replica was a master till now and got some data from that era, then gets a REPLICAOF command and does a full-sync. 5. the replica started empty and is attempting its first sync ever. 6. the replica was replicating from a certain master, and is now full-syncing from another master that's completely unrelated to the previous one. i think the first 3 scenarios want to allow clients to read the data, but on the last 3 we don't! i think the rule here is that if the current dataset in the db represents a valid point in time of the master we're full-syncing from, then we wanna allow reads, but if it doesn't represent a certain point in time of that master, then we don't want to serve reads.",
+          "cid": 685941509,
+          "author": "oranagra",
+          "dimension": "design",
+          "kind": "design",
+          "status": "suggestion",
+          "audit_note": "机制层面被采纳（async_loading 并存 + 例外门控），但 6 场景读服务规则无法由 diff 逐项验证；属设计讨论非缺陷",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "57192eb8cf56934a487c16f43fe39785d648c5ef"
+        },
+        {
+          "file": "src/db.c",
+          "line": 497,
+          "body": "This change is gonna break modules that use the `RedisModuleEvent_ReplBackup` mechanism anyway, so i suggest the following: 1. We deprecate `RedisModuleEvent_ReplBackup` (starting redis 7.0 we never fire that event). 2. We create a new API named `RedisModuleEvent_ReplAsync`, holding 3 sub-events; STARTED, COMPLETED, ABORTED. 3. We add another module flag for `RedisModule_SetModuleOptions` (REDISMODULE_OPTIONS_HANDLE_REPL_ASYNC). 4. in replication.c, if there are modules loaded which registered a data type and didn't declare they're supporting this, we fall back to the alternative replication method.",
+          "cid": 691928309,
+          "author": "oranagra",
+          "dimension": "compatibility",
+          "kind": "design",
+          "status": "fixed_in_snapshot",
+          "audit_note": "四点方案均落地：ReplBackup 标注 deprecated（module.c 758/770-775）、新增 ReplAsyncLoad 事件与子事件（761/792-793）、REDISMODULE_OPTIONS_HANDLE_REPL_ASYNC_LOAD（748 行）、模块未声明支持时回退非异步加载（489-500 行）",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "57192eb8cf56934a487c16f43fe39785d648c5ef"
+        },
+        {
+          "file": "src/db.c",
+          "line": 1328,
+          "body": "this function is not as generic as it seems (by its name), the implementation and behavior are quite specific for placing the newly loaded temp db at the main active one, and the old active one in the temp. so i think we need a better name for it, and we certainly need a beefier doc comment.",
+          "cid": 685446527,
+          "author": "oranagra",
+          "dimension": "maintainability",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "函数更名为 swapMainDbWithTempDb 并加 3 行语义文档（db.c:1322-1325）",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "57192eb8cf56934a487c16f43fe39785d648c5ef"
+        },
+        {
+          "file": "src/db.c",
+          "line": 499,
+          "body": "The slot-to-key array needs to be free'd somewhere before the tempDb is free'd. Flush just memsets it to zero. Maybe we can replace slotToKeyFlush with two functions: slotToKeyInit (allocates it) and slotToKeyDestroy (frees it)?",
+          "cid": 725662202,
+          "author": "zuiderkwast",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "释放 tempDb 前调用 slotToKeyDestroy(tempDb)（db.c:497-499）",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "9ad7383f38cfeaeffb098090e310f32c2f9d4e7e"
+        },
+        {
+          "file": "src/db.c",
+          "line": 1322,
+          "body": "This code doesn't swap them. It just copies one to the other. Don't we want to swap them like we do for dict, expires, avg_ttl and expires_cursor below? Also, we don't need memcpy here. We can just swap the pointers.",
+          "cid": 725663704,
+          "author": "zuiderkwast",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "db.c:1327-1330 改为 aux 指针交换，memcpy 已移除",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "9ad7383f38cfeaeffb098090e310f32c2f9d4e7e"
+        }
+      ],
+      "findings": [
+        {
+          "file": "src/rdb.c",
+          "line": 52,
+          "severity": "low",
+          "confidence": "high",
+          "body": "isRestoreContext() 宏体没有外层括号，调用处 `isRestoreContext()? LL_VERBOSE: LL_WARNING` 会被解析为 `cond ? 0 : (1 ? LL_VERBOSE : LL_WARNING)`（三目运算符右结合），因此结果只可能是 0 或 LL_VERBOSE，LL_WARNING 分支永远不会命中：cond 为真（即真正在装载 RDB/AOF 时，server.current_client 为 NULL 或 CLIENT_ID_AOF）返回 0，也就是 LL_DEBUG，而不是 LL_WARNING。",
+          "evidence": "#define isRestoreContext() \\\n    (server.current_client == NULL || server.current_client-\u003eid == CLIENT_ID_AOF) ? 0 : 1",
+          "trigger": "在 RDB/AOF（含 AOF 的 RDB preamble、以及 swapdb 异步全量同步）装载期间，rdbLoadLzfStringObject / rdbGenericLoadStringObject 中 ztrymalloc/sdstrynewlen 分配失败，执行 serverLog(isRestoreContext()? LL_VERBOSE: LL_WARNING, ...)。此时 current_client 为 NULL 或 AOF 客户端，cond 为真，返回 0。",
+          "impact": "装载期的 “failed allocating ...” 消息被以 LL_DEBUG(0) 级别记录，而 Redis 默认 loglevel 为 notice，该消息不会输出，导致装载过程中的分配失败/OOM 告警被静默丢弃（改动前这里是 server.loading ? LL_WARNING : LL_VERBOSE，装载时会以 WARNING 输出），排障信息丢失。",
+          "suggestion": "给宏体加上外层括号：`#define isRestoreContext() ((server.current_client == NULL || server.current_client-\u003eid == CLIENT_ID_AOF) ? 0 : 1)`，或在调用处不依赖宏返回 0/1 而直接内联条件判断；修复后可验证装载期分配失败时确实以 LL_WARNING 输出。",
+          "verification_status": "second_pass_review_passed",
+          "verification_reason": "宏 isRestoreContext() 的定义体为 `(cond) ? 0 : 1`，没有把整个三目表达式用外层括号包住（src/rdb.c:52-53）。因此调用处 `isRestoreContext()? LL_VERBOSE: LL_WARNING` 文本展开为 `(cond) ? 0 : 1 ? LL_VERBOSE : LL_WARNING`，按 C 三目运算符右结合规则解析为 `(cond) ? 0 : (1 ? LL_VERBOSE : LL_WARNING)`；而 `1 ? LL_VERBOSE : LL_WARNING` 恒为 LL_VERBOSE，所以整体表达式恒等于 `(cond) ? 0 : LL_VERBOSE`，LL_WARNING 分支为死代码。可见调用点（rdb.c:388、399、532、548）都使用了该宏的三目写法，且在 RDB/AOF 装载期 cond 为真（current_client 为 NULL 或 id==CLIENT_ID_AOF），于是 serverLog 的级别取值为 0（LL_DEBUG），而非预期的 LL_WARNING。这是缺陷主张的核心机制，由可见源码与 C 标准运算符优先级/结合性直接推导，触发路径明确。",
+          "trace_id": "b71524af7387abec"
+        }
+      ],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "quiet",
+          "reason": "Reference is marked fixed_in_snapshot; the snapshot already contains the `server.loading \u0026\u0026 !server.async_loading` exception approach, and no system finding re-asserts this fixed issue (the only finding concerns the unrelated rdb.c macro)."
+        },
+        {
+          "index": 1,
+          "verdict": "missed",
+          "reason": "The reference asks for a design rule deciding when replicas may serve reads during full sync; the system finding only addresses a macro-parenthesization bug and does not touch this scenario behavior."
+        },
+        {
+          "index": 2,
+          "verdict": "quiet",
+          "reason": "Reference is marked fixed_in_snapshot; no finding re-flags the module-event/deprecation issue."
+        },
+        {
+          "index": 3,
+          "verdict": "quiet",
+          "reason": "Reference is marked fixed_in_snapshot; no finding re-flags the function naming/documentation issue."
+        },
+        {
+          "index": 4,
+          "verdict": "quiet",
+          "reason": "Reference is marked fixed_in_snapshot; no finding re-flags the slot-to-key free/build issue."
+        },
+        {
+          "index": 5,
+          "verdict": "quiet",
+          "reason": "Reference is marked fixed_in_snapshot; no finding re-flags the pointer-swap-vs-copy issue."
+        }
+      ],
+      "finding_verdicts": [
+        {
+          "index": 0,
+          "verdict": "valid_new_issue",
+          "reason": "The macro `isRestoreContext()` lacks enclosing parentheses, so when used in a ternary expression it expands as `(cond) ? 0 : 1 ? LL_VERBOSE : LL_WARNING`, which due to right-associativity always selects LL_VERBOSE and never LL_WARNING. This is a genuine, actionable macro-hygiene bug not raised by the reference comments."
+        }
+      ],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 0,
+      "coverage_score": 0,
+      "core_refs": 0,
+      "fixed_refs": 5,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 1,
+      "suggestion_covered": 0,
+      "suggestion_missed": 1,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 1,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 1,
+      "invalid_lines": 0,
+      "trace_events": 61,
+      "complete_trace_events": 61,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "tokio-6001",
+      "scenario": "performance",
+      "language": "Rust",
+      "pr_url": "https://github.com/tokio-rs/tokio/pull/6001",
+      "title": "reduce the lock contention in task spawn.",
+      "status": "completed_with_warnings",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "tokio/src/runtime/task/list.rs",
+          "line": 119,
+          "body": "Having correctness rely on such things makes it very easy to introduce bugs when changing things. (The check for `closed` must happen while the shard mutex is locked; otherwise a task spawned during shutdown can be pushed to `OwnedTasks` but not removed by `close_and_shutdown_all`.)",
+          "cid": 1368527199,
+          "author": "Darksonn",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "list.rs:116-119 先 lock_shard(\u0026task) 再检查 closed，并留注释说明保证 shutdown 语义",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "608d2c66a2385ccb3da13d48adb8cbc7fa76a603"
+        },
+        {
+          "file": "tokio/src/runtime/task/list.rs",
+          "line": 44,
+          "body": "I don't really understand what the word \"grain\" means in this context. Can we add a doc comment explaining this, rename the field to something that better describes what it is, or both?",
+          "cid": 1332175404,
+          "author": "hawkw",
+          "dimension": "readability",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "grain 已从最终 diff 移除（0 次出现），改为 num_cores → gen_shared_list_size → shard_size（list.rs:78-82）",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "a11f80c44cfcc72f922cf2c567c771a3ab316444"
+        },
+        {
+          "file": "tokio/src/runtime/task/list.rs",
+          "line": 78,
+          "body": "it looks like `OwnedTasks::new` is only ever called with the values 1 and 16. What do you think about making this constructor private, and having the `pub(crate)` constructors be `new_current_thread` and `new_multi_thread` or something? that way, the value (which feels like an internal implementation detail) isn't leaked to the places where the `OwnedTasks` is constructed, and we can change the value in one place, rather than having to update _every_ call to `OwnedTasks::new`?",
+          "cid": 1332181300,
+          "author": "hawkw",
+          "dimension": "design",
+          "kind": "design",
+          "status": "suggestion",
+          "audit_note": "未新增具名构造器，仍为 pub(crate) new(num_cores)（78 行）；但 gen_shared_list_size 把魔法值收敛到一处，精神上部分采纳；属设计偏好",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "a11f80c44cfcc72f922cf2c567c771a3ab316444"
+        },
+        {
+          "file": "tokio/src/util/sharded_list.rs",
+          "line": 32,
+          "body": "```suggestion\n    unsafe fn get_shard_id(target: NonNull\u003cSelf::Target\u003e) -\u003e usize;\n```",
+          "cid": 1382579513,
+          "author": "Darksonn",
+          "dimension": "maintainability",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "sharded_list.rs:30 已更名 get_shard_id",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "7968b51da57d7559076b23468aa607637ee1fe19"
+        }
+      ],
+      "findings": [],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "quiet",
+          "reason": "The reference is marked fixed_in_snapshot, and no system finding asserts the already-fixed closed-flag/shutdown race as a defect, so nothing re-flags it."
+        },
+        {
+          "index": 1,
+          "verdict": "quiet",
+          "reason": "The reference is marked fixed_in_snapshot (doc comment/rename addressed), and no system finding re-raises the 'grain' naming/documentation concern."
+        },
+        {
+          "index": 2,
+          "verdict": "missed",
+          "reason": "This design suggestion to hide the OwnedTasks::new size value behind new_current_thread/new_multi_thread constructors is not addressed by any system finding (there are none)."
+        },
+        {
+          "index": 3,
+          "verdict": "quiet",
+          "reason": "The reference is marked fixed_in_snapshot (the suggested signature change to get_shard_id is already applied), and no finding re-flags it."
+        }
+      ],
+      "finding_verdicts": [],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 0,
+      "coverage_score": 0,
+      "core_refs": 0,
+      "fixed_refs": 3,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 1,
+      "suggestion_covered": 0,
+      "suggestion_missed": 1,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 0,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 0,
+      "invalid_lines": 0,
+      "trace_events": 24,
+      "complete_trace_events": 24,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "redis-14017",
+      "scenario": "performance",
+      "language": "C",
+      "pr_url": "https://github.com/redis/redis/pull/14017",
+      "title": "Improve multithreaded performance with memory prefetching",
+      "status": "completed_with_warnings",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "src/config.c",
+          "line": 3171,
+          "body": "i personally think this is far too low level to be made a user config (and p.s. i don't see it in redis.conf). maybe we can completely drop it, and if not, let's make it a HIDDEN one.",
+          "cid": 2106124779,
+          "author": "oranagra",
+          "dimension": "design",
+          "kind": "design",
+          "status": "fixed_in_snapshot",
+          "audit_note": "config.c:3171 prefetch-batch-max-size 配置已加 HIDDEN_CONFIG 标志",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "cee1af23686993b66c00ba23b5c1352ce84b1962"
+        },
+        {
+          "file": "src/db.c",
+          "line": 374,
+          "body": "if we do that, maybe we can cache the result so it can serve others usages (ACL, Cluster, ROF). besides, maybe instead of just computing the slot of the first key, it can already check for cross slot, and then the main thread won't have to. we did that in lookahead.",
+          "cid": 2106125576,
+          "author": "oranagra",
+          "dimension": "design",
+          "kind": "design",
+          "status": "suggestion",
+          "audit_note": "getSlotFromCommand 仍只取首 key 的 slot（db.c:376-379），未缓存结果、未做 cross-slot 检查；性能改进建议未采纳",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "cee1af23686993b66c00ba23b5c1352ce84b1962"
+        },
+        {
+          "file": "src/memory_prefetch.c",
+          "line": 338,
+          "body": "Function comment mentions that goal is to bring data to L1. Then, here it says I/O thread already did the look up but on a multi core machine (most machines nowadays), iothread and main thread will be on different cores and not sharing L1. I wonder if this comment is accurate or am I missing something. Maybe this was done for a very specific CPU.",
+          "cid": 2112771801,
+          "author": "tezc",
+          "dimension": "correctness",
+          "kind": "suggestion",
+          "status": "suggestion",
+          "audit_note": "L1 cache 表述仍在最终新增行（memory_prefetch.c:562-582）未改写，文档准确性疑问仍成立",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "1fe343cc48931bf2e09d685be550b94412cde91e"
+        },
+        {
+          "file": "src/memory_prefetch.c",
+          "line": 394,
+          "body": "If I'm not mistaken, we can do `batch-\u003ekeys_dicts[batch-\u003ekey_count] = kvstoreGetDict(c-\u003edb-\u003ekeys, (c-\u003eslot \u003e 0 ? c-\u003eslot : 0));` and delete `batch-\u003eslots`.",
+          "cid": 2112804186,
+          "author": "tezc",
+          "dimension": "performance",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "memory_prefetch.c:391-392 与建议代码一致：kvstoreGetDict(c-\u003edb-\u003ekeys, c-\u003eslot \u003e 0 ? c-\u003eslot : 0)，batch-\u003eslots 方案弃用",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "1fe343cc48931bf2e09d685be550b94412cde91e"
+        },
+        {
+          "file": "src/memory_prefetch.c",
+          "line": 231,
+          "body": "Small kv objects of type string their values is embedded in the kv (i.e. `OBJ_ENCODING_EMBSTR`). In that case, maybe we can optimize and skip the step of `PREFETCH_VALDATA`.",
+          "cid": 2097420269,
+          "author": "moticless",
+          "dimension": "performance",
+          "kind": "suggestion",
+          "status": "suggestion",
+          "audit_note": "最终状态机无 EMBSTR 跳过分支（EMBSTR 不在最终新增行），PREFETCH_VALDATA 优化建议未采纳",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "0540a08e2ec0e28cd736ba74780ee740e0a42e97"
+        }
+      ],
+      "findings": [],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "quiet",
+          "reason": "The config now carries HIDDEN_CONFIG and is no longer exposed in redis.conf, i.e. the requested change is already present in the snapshot. No system finding re-asserts this issue, so the verdict is quiet."
+        },
+        {
+          "index": 1,
+          "verdict": "missed",
+          "reason": "Suggestion to cache the computed slot / check cross-slot in getSlotFromCommand is not addressed by any finding; the system produced no findings at all."
+        },
+        {
+          "index": 2,
+          "verdict": "missed",
+          "reason": "Concern about the accuracy of the L1-cache comment given that I/O thread and main thread run on different cores is not raised by any finding."
+        },
+        {
+          "index": 3,
+          "verdict": "quiet",
+          "reason": "The suggested inline kvstoreGetDict(c-\u003edb-\u003ekeys, c-\u003eslot \u003e 0 ? c-\u003eslot : 0) and removal of batch-\u003eslots is already implemented in the snapshot (line 391-392), so the issue does not exist here. No finding re-flags it."
+        },
+        {
+          "index": 4,
+          "verdict": "missed",
+          "reason": "Suggestion to skip PREFETCH_VALDATA for embstr string values is not addressed by any finding."
+        }
+      ],
+      "finding_verdicts": [],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 0,
+      "coverage_score": 0,
+      "core_refs": 0,
+      "fixed_refs": 2,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 3,
+      "suggestion_covered": 0,
+      "suggestion_missed": 3,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 0,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 0,
+      "invalid_lines": 0,
+      "trace_events": 59,
+      "complete_trace_events": 59,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "pandas-27237",
+      "scenario": "feature",
+      "language": "Python",
+      "pr_url": "https://github.com/pandas-dev/pandas/pull/27237",
+      "title": "ENH: Added key option to df/series.sort_values(key=...) and df/series.sort_index(key=...) sorting",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "pandas/core/indexes/datetimelike.py",
+          "line": 191,
+          "body": "We will actually need to check here if `idx` is still a DatetimeIndex? Because otherwise, I assume the below code won't work. For example, when doing `dtidx.sort_values(key=lambda x: x.month)`",
+          "cid": 407346544,
+          "author": "jorisvandenbossche",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "未按字面加类型检查；最终以位置排序实现（datetimelike.py:191-196 idx.argsort + self.take），key 映射后的任意 Index 均可正确排序，评论担忧在快照中不成立；系统若报'缺 DatetimeIndex 检查'应计误报",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "7c6c2f095f4f08e9af59267623c164f91313f00a"
+        },
+        {
+          "file": "pandas/core/frame.py",
+          "line": 5234,
+          "body": "Are we OK with this? (I am not really sure myself) It seems a bit inconsistent with DataFrame which gets done column by column. But of course it's also not a fully valid comparison.",
+          "cid": 372248894,
+          "author": "jorisvandenbossche",
+          "dimension": "design",
+          "kind": "design",
+          "status": "suggestion",
+          "audit_note": "设计一致性疑问（评论者自述不确定）；最终代码维持被讨论的行为（frame.py:5234 ensure_key_mapped(labels, key, levels=level)），非缺陷",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "ecb6910ab6efdcb12f5e003c34a467a8447fa826"
+        },
+        {
+          "file": "pandas/core/frame.py",
+          "line": 5172,
+          "body": "should create something in pandas._typing for this, maybe SortByKey",
+          "cid": 366145493,
+          "author": "jreback",
+          "dimension": "maintainability",
+          "kind": "suggestion",
+          "status": "suggestion",
+          "audit_note": "未创建 pandas._typing.SortByKey（最终 diff 无该类型），注解仍为内联 Optional[Callable]；建议未采纳",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "48f8110de0f48c2870bfe45389e09f5e7d1f59d3"
+        },
+        {
+          "file": "pandas/core/sorting.py",
+          "line": 287,
+          "body": "is this not wrapped at a higher level? if not, why not?",
+          "cid": 407257378,
+          "author": "jreback",
+          "dimension": "design",
+          "kind": "design",
+          "status": "suggestion",
+          "audit_note": "最终仍在 nargsort 内做 key 映射（sorting.py:286-290），评论质疑的分层位置未变；设计讨论",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "364cc5e6c44addf6b76bd74e48e55976807aa4f5"
+        },
+        {
+          "file": "pandas/core/sorting.py",
+          "line": 329,
+          "body": "`ABCIndexClass` works, but not `ABCIndex`. That fails on `RangeIndex`. Is that OK?",
+          "cid": 359884679,
+          "author": "TomAugspurger",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "fixed_in_snapshot",
+          "audit_note": "最终 ensure_key_mapped 以 isinstance(values, Index)（sorting.py:1008-1011）取代 ABC 系检查，RangeIndex 不再失败",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "ae5e037c327e1a55670f1634e92964bce96d33af"
+        }
+      ],
+      "findings": [],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "quiet",
+          "reason": "The flagged issue (whether idx remains a DatetimeIndex after key mapping) is already addressed in the snapshot, and no system finding re-asserts it as a defect. System findings list is empty."
+        },
+        {
+          "index": 1,
+          "verdict": "missed",
+          "reason": "Design/consistency note about applying key per level for MultiIndex in sort_index; no system finding addresses this, since no findings were produced."
+        },
+        {
+          "index": 2,
+          "verdict": "missed",
+          "reason": "Suggestion to add a SortByKey type to pandas._typing for the key argument; no system finding covers this."
+        },
+        {
+          "index": 3,
+          "verdict": "missed",
+          "reason": "Design question about whether the key handling in nargsort is wrapped at a higher level; no system finding addresses it."
+        },
+        {
+          "index": 4,
+          "verdict": "quiet",
+          "reason": "The ABCIndex vs ABCIndexClass / RangeIndex concern is already fixed in the snapshot, and no system finding re-flags it; findings list is empty."
+        }
+      ],
+      "finding_verdicts": [],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 0,
+      "coverage_score": 0,
+      "core_refs": 0,
+      "fixed_refs": 2,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 3,
+      "suggestion_covered": 0,
+      "suggestion_missed": 3,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 0,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 0,
+      "invalid_lines": 0,
+      "trace_events": 61,
+      "complete_trace_events": 61,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "pandas-22862",
+      "scenario": "refactor",
+      "language": "Python",
+      "pr_url": "https://github.com/pandas-dev/pandas/pull/22862",
+      "title": "REF: Make PeriodArray an ExtensionArray",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [
+        {
+          "file": "pandas/core/arrays/period.py",
+          "line": 166,
+          "body": "I think we *always* need to copy here, e.g. if you pass in an ndarray with copy=False this makes the internals mutable which is not great.",
+          "cid": 226629141,
+          "author": "jreback",
+          "dimension": "correctness",
+          "kind": "defect",
+          "status": "valid",
+          "audit_note": "最终构造器 period.py:433 np.array(values, dtype='int64', copy=copy) 仍默认 copy=False；传入 int64 ndarray 时不拷贝、内部可被外部修改，评论指出的可变内部问题在快照中仍成立",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "236b49c4b289aa9cb4567ef9fafc8d4ba847b3d3"
+        },
+        {
+          "file": "pandas/core/arrays/period.py",
+          "line": 75,
+          "body": "Yes, return NotImplemented. Also presumably ABCDataFrame. (Comparison operators should return NotImplemented instead of raising for unsupported operands.)",
+          "cid": 226800296,
+          "author": "jbrockmendel",
+          "dimension": "correctness",
+          "kind": "suggestion",
+          "status": "fixed_in_snapshot",
+          "audit_note": "wrapper 对 Series/Index 操作数返回 NotImplemented（diff 297-299 行），并有对应测试 test_direct_arith_with_series_returns_not_implemented",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "af2d1de513f4d78878f17b2622d9183a53ad692a"
+        },
+        {
+          "file": "pandas/core/arrays/period.py",
+          "line": 147,
+          "body": "shouldn't this be simpler and instead just call ``period_array``?",
+          "cid": 224703904,
+          "author": "jorisvandenbossche",
+          "dimension": "maintainability",
+          "kind": "suggestion",
+          "status": "suggestion",
+          "audit_note": "_simple_new 已简化为构造器别名（445-447 行），但 _from_sequence 仍自行提取 ordinals（453-471 行）而非调用 period_array；简化建议部分采纳，非缺陷",
+          "audited_at": "2026-09-26",
+          "original_commit_id": "f422cf0551ca8f6d4421f3aff7a51cfe489bfc56"
+        }
+      ],
+      "findings": [
+        {
+          "file": "pandas/core/arrays/period.py",
+          "line": 351,
+          "severity": "low",
+          "confidence": "high",
+          "body": "新增的 PeriodArray.__setitem__ 在 list-like 赋值时先执行 len(key)，但 key 也可能是 slice；slice 没有 __len__，会抛 TypeError。长度不匹配校验和空 key 提前返回都建立在“key 可求长度”的假设上。",
+          "evidence": "if is_list_like(value):\n            if len(key) != len(value) and not com.is_bool_indexer(key):",
+          "trigger": "period_array(['2000','2001','2002'], freq='D')[0:2] = [pd.Period('1999','D'), pd.Period('2000','D')]（或 Series 上 ser[0:2] = [Period, Period] 经 Block.setitem 落到 PeriodArray.__setitem__）→ len(slice(...)) 抛 TypeError: object of type 'slice' has no len()。标量值 arr[1:3] = Period(...) 走另一分支，不受影响。",
+          "impact": "PeriodArray 上的切片赋值（ndarray 风格用法）直接失败，且报错信息与真实原因无关；只有 list-like 值触发，因此不会在现有测试（仅用 [0]、[0,1,2] 整数键）中被发现。",
+          "suggestion": "先规范化 key（如 key = check_array_indexer(self, key) 或对 slice 用 np.asarray(self._data[key]) 求长度），长度校验改为 np.asarray(key).size 或先判 isinstance(key, slice)，并补充 arr[0:2] = [...] 的切片赋值用例验证。",
+          "verification_status": "second_pass_review_passed",
+          "verification_reason": "新增的 PeriodArray.__setitem__ 在 value 为 list-like 时，第一个动作就是 len(key)（第352行）。而 Python 中 slice 对象没有 __len__，len(slice(...)) 会抛 TypeError: object of type 'slice' has no len()。由于 PeriodArray 直接定义了 __setitem__（第117行类定义、第340行方法），使用 arr[0:2] = [...] 时 Python 会把 key 作为 slice 传入该分支，必然在 len(key) 处崩溃，且报错信息与真实原因（不支持 slice key）无关。该路径可达且由代码直接可推导，无需运行时验证。",
+          "trace_id": "e0d6eade82f53c81"
+        }
+      ],
+      "reference_verdicts": [
+        {
+          "index": 0,
+          "verdict": "missed",
+          "reason": "The human flags constructor __init__ not copying values (mutable internals when copy=False), but the only system finding is about __setitem__ and len(key); nothing addresses the copy semantics of __init__/the constructor."
+        },
+        {
+          "index": 1,
+          "verdict": "quiet",
+          "reason": "Audit marks this as already fixed in the snapshot (returning NotImplemented / handling ABCDataFrame). No system finding re-asserts this issue, so it is quiet."
+        },
+        {
+          "index": 2,
+          "verdict": "missed",
+          "reason": "The suggestion to simplify the constructor by delegating to period_array() at line ~147 is not addressed by any system finding."
+        }
+      ],
+      "finding_verdicts": [
+        {
+          "index": 0,
+          "verdict": "valid_new_issue",
+          "reason": "The added __setitem__ code calls len(key) once value is list-like; if key is a slice (a valid setitem key) this raises TypeError before the length/shape validation, so the observation is a genuine, actionable concern on the added code that humans did not raise."
+        }
+      ],
+      "pair_scores": [],
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 1,
+      "coverage_score": 0,
+      "core_refs": 1,
+      "fixed_refs": 1,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 1,
+      "suggestion_covered": 0,
+      "suggestion_missed": 1,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 1,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 1,
+      "invalid_lines": 0,
+      "trace_events": 83,
+      "complete_trace_events": 83,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "gin-4224",
+      "scenario": "negative",
+      "language": "Go",
+      "pr_url": "https://github.com/gin-gonic/gin/pull/4224",
+      "title": "refactor: replace magic number 128 with unicode.MaxASCII in AsciiJSON render",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [],
+      "findings": [],
+      "reference_verdicts": null,
+      "finding_verdicts": null,
+      "pair_scores": null,
+      "judge_error": "nothing to judge",
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 0,
+      "coverage_score": 0,
+      "core_refs": 0,
+      "fixed_refs": 0,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 0,
+      "suggestion_covered": 0,
+      "suggestion_missed": 0,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 0,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 0,
+      "invalid_lines": 0,
+      "trace_events": 15,
+      "complete_trace_events": 15,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    },
+    {
+      "id": "etcd-2009",
+      "scenario": "negative",
+      "language": "Go",
+      "pr_url": "https://github.com/etcd-io/etcd/pull/2009",
+      "title": "etcdserver: remove unused containsUint64()",
+      "status": "completed",
+      "duration_ms": 0,
+      "references": [],
+      "findings": [],
+      "reference_verdicts": null,
+      "finding_verdicts": null,
+      "pair_scores": null,
+      "judge_error": "nothing to judge",
+      "covered_refs": 0,
+      "partial_refs": 0,
+      "missed_refs": 0,
+      "coverage_score": 0,
+      "core_refs": 0,
+      "fixed_refs": 0,
+      "fixed_issue_reflags": 0,
+      "suggestion_refs": 0,
+      "suggestion_covered": 0,
+      "suggestion_missed": 0,
+      "skipped_refs": 0,
+      "matched_findings": 0,
+      "novel_findings": 0,
+      "false_positive_findings": 0,
+      "nitpick_findings": 0,
+      "unjudged_findings": 0,
+      "valid_lines": 0,
+      "invalid_lines": 0,
+      "trace_events": 43,
+      "complete_trace_events": 43,
+      "model_json_valid": false,
+      "redaction_canary_leaked": false,
+      "model_usage": {
+        "forwarded_requests": 0,
+        "budget_rejections": 0,
+        "reported_tokens": 0,
+        "responses_without_usage": 0
+      }
+    }
+  ],
+  "total_reference_comments": 49,
+  "core_reference_comments": 3,
+  "covered_reference_comments": 0,
+  "partial_reference_comments": 0,
+  "missed_reference_comments": 3,
+  "suggestion_reference_comments": 13,
+  "suggestion_covered_weight": 0,
+  "suggestion_missed": 13,
+  "suggestion_coverage": 0,
+  "fixed_in_snapshot_refs": 33,
+  "fixed_issue_reflags": 0,
+  "skipped_refs": 0,
+  "total_findings": 8,
+  "matched_findings": 0,
+  "novel_findings": 8,
+  "false_positive_findings": 0,
+  "nitpick_findings": 0,
+  "unjudged_findings": 0,
+  "valid_lines": 8,
+  "invalid_lines": 0,
+  "trace_events": 719,
+  "complete_trace_events": 719,
+  "forwarded_requests": 0,
+  "budget_rejections": 0,
+  "reported_tokens": 0,
+  "responses_without_usage": 0,
+  "scored_pairs": 0,
+  "reference_coverage": 0,
+  "finding_precision": 1,
+  "valid_line_rate": 1,
+  "trace_completeness": 1,
+  "mean_accuracy": 0,
+  "mean_relevance": 0,
+  "mean_usefulness": 0,
+  "redaction_canary_leaked": false,
+  "dimension_coverage": {
+    "correctness": {
+      "references": 3,
+      "covered_weight": 0,
+      "recall": 0
+    }
+  },
+  "scenario_metrics": {
+    "bugfix": {
+      "cases": 3,
+      "references": 15,
+      "covered_weight": 0,
+      "recall": 0,
+      "findings": 5,
+      "matched": 0,
+      "novel": 5,
+      "false_positives": 0,
+      "precision": 1
+    },
+    "feature": {
+      "cases": 4,
+      "references": 16,
+      "covered_weight": 0,
+      "recall": 0,
+      "findings": 2,
+      "matched": 0,
+      "novel": 2,
+      "false_positives": 0,
+      "precision": 1
+    },
+    "negative": {
+      "cases": 2,
+      "references": 0,
+      "covered_weight": 0,
+      "recall": 0,
+      "findings": 0,
+      "matched": 0,
+      "novel": 0,
+      "false_positives": 0,
+      "precision": 0
+    },
+    "performance": {
+      "cases": 2,
+      "references": 9,
+      "covered_weight": 0,
+      "recall": 0,
+      "findings": 0,
+      "matched": 0,
+      "novel": 0,
+      "false_positives": 0,
+      "precision": 0
+    },
+    "refactor": {
+      "cases": 2,
+      "references": 9,
+      "covered_weight": 0,
+      "recall": 0,
+      "findings": 1,
+      "matched": 0,
+      "novel": 1,
+      "false_positives": 0,
+      "precision": 1
+    }
+  }
+}

@@ -1,0 +1,83 @@
+{
+    "id":  "be45dd4e005838a7",
+    "task_id":  "task_63991d6d",
+    "background_task_id":  "bg_813fec32",
+    "status":  "queued",
+    "review_scope":  {
+                         "files_reviewed":  0,
+                         "added_lines":  0,
+                         "tests_ran":  false,
+                         "checks":  [
+
+                                    ]
+                     },
+    "source":  "https://github.com/gin-gonic/gin/pull/2632",
+    "comments":  [
+
+                 ],
+    "todos":  [
+                  {
+                      "content":  "扫描并解析代码变更",
+                      "status":  "pending",
+                      "order":  0
+                  },
+                  {
+                      "content":  "执行单 Agent 代码审查",
+                      "status":  "pending",
+                      "order":  1
+                  },
+                  {
+                      "content":  "核对代码证据、第二轮复核并去重审查发现",
+                      "status":  "pending",
+                      "order":  2
+                  }
+              ],
+    "trace":  [
+                  {
+                      "id":  "02e68fe8e516c9f5",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_create",
+                      "input":  "代码审查: https://github.com/gin-gonic/gin/pull/2632",
+                      "output":  "task_63991d6d",
+                      "at":  "2026-09-27T08:14:18.066373871Z",
+                      "started_at":  "2026-09-27T08:14:18.054061677Z",
+                      "ended_at":  "2026-09-27T08:14:18.066373871Z",
+                      "duration_ms":  12,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "d9bf2060a34c2f77",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "task_claim",
+                      "input":  "task_63991d6d",
+                      "output":  "owner=review-agent",
+                      "at":  "2026-09-27T08:14:18.077417437Z",
+                      "started_at":  "2026-09-27T08:14:18.06656665Z",
+                      "ended_at":  "2026-09-27T08:14:18.077417437Z",
+                      "duration_ms":  10,
+                      "phase":  "task"
+                  },
+                  {
+                      "id":  "8458df3feb2bd277",
+                      "kind":  "input",
+                      "status":  "succeeded",
+                      "tool":  "background_create",
+                      "input":  "代码审查",
+                      "output":  "bg_813fec32",
+                      "at":  "2026-09-27T08:14:18.087164733Z",
+                      "started_at":  "2026-09-27T08:14:18.077509468Z",
+                      "ended_at":  "2026-09-27T08:14:18.087164733Z",
+                      "duration_ms":  9,
+                      "phase":  "background"
+                  }
+              ],
+    "team_events":  [
+
+                    ],
+    "budget_yuan":  10,
+    "spent_yuan":  0,
+    "started_at":  "2026-09-27T08:14:18.053923349Z",
+    "updated_at":  "2026-09-27T08:14:18.053923349Z"
+}
